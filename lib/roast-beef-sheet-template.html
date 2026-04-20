@@ -813,7 +813,19 @@ function applyDailyTotalsFromRows(dateStr, rows) {
   }
 }
 
+function dailyTotalsWholesaleCost(dt) {
+  if (!dt) return 0;
+  const amSales = Number(dt.am) || 0;
+  const pmSales = Number(dt.pm) || 0;
+  return amSales + pmSales;
+}
+
 function totalForecastSalesForTemperingDay(sheetDateStr) {
+  const dt = dailyTotalsSales[sheetDateStr];
+  const dailyTotalsSalesDollars = dailyTotalsWholesaleCost(dt);
+  if (dailyTotalsSalesDollars > 0) {
+    return dailyTotalsSalesDollars;
+  }
   const forecasts = forecastsForSheetDate(sheetDateStr);
   const projected = forecasts.reduce((sum, n) => sum + (Number(n) || 0), 0);
   if (projected > 0) {
