@@ -830,10 +830,10 @@ function dailyTotalsWholesaleCost(dt) {
 }
 
 function totalForecastSalesForTemperingDay(sheetDateStr) {
-  const dt = dailyTotalsSales[sheetDateStr];
-  const wholesale = dailyTotalsWholesaleCost(dt);
-  if (wholesale > 0) {
-    return wholesale;
+  const forecasts = forecastsForSheetDate(sheetDateStr);
+  const projected = forecasts.reduce((sum, n) => sum + (Number(n) || 0), 0);
+  if (projected > 0) {
+    return projected;
   }
   const basis = toDateStr(addDays(new Date(sheetDateStr + 'T12:00:00'), -7));
   return dayTotal(basis);
@@ -849,9 +849,9 @@ function totalCookedSumPriorWeek(priorDateStr) {
 function blendedDollarPerRoastForTemper(priorDateStr, ratesFallback) {
   const dt = dailyTotalsSales[priorDateStr];
   const ckSum = totalCookedSumPriorWeek(priorDateStr);
-  const wholesale = dailyTotalsWholesaleCost(dt);
-  if (wholesale > 0 && ckSum > 0) {
-    return wholesale / ckSum;
+  if (dt && ckSum > 0) {
+    const totalSales = (Number(dt.am) || 0) + (Number(dt.pm) || 0);
+    if (totalSales > 0) return totalSales / ckSum;
   }
   return (ratesFallback.am + ratesFallback.pm) / 2;
 }
