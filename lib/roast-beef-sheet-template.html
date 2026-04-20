@@ -593,6 +593,8 @@ const PREV_FALLBACK = {
   total: 3598,
   roasts: 7,
 };
+const OUNCES_PER_ROAST = 160;
+const WHOLESALE_COST_PER_ROAST = 44.41;
 
 let salesByDate = { ...DEFAULT_SALES };
 /** Optional per-daypart forecasts restored from Supabase (overrides hourly rollup). */
@@ -813,10 +815,25 @@ function applyDailyTotalsFromRows(dateStr, rows) {
   }
 }
 
+function ouncesToRoasts(oz) {
+  const n = Number(oz);
+  return Number.isFinite(n) && n > 0 ? n / OUNCES_PER_ROAST : 0;
+}
+
+function ouncesToWholesaleCost(oz) {
+  return ouncesToRoasts(oz) * WHOLESALE_COST_PER_ROAST;
+}
+
+function dailyTotalsWholesaleCost(dt) {
+  if (!dt) return 0;
+  return ouncesToWholesaleCost(dt.am) + ouncesToWholesaleCost(dt.pm);
+}
+
 function totalForecastSalesForTemperingDay(sheetDateStr) {
   const dt = dailyTotalsSales[sheetDateStr];
-  if (dt && dt.am + dt.pm > 0) {
-    return dt.am + dt.pm;
+  const wholesale = dailyTotalsWholesaleCost(dt);
+  if (wholesale > 0) {
+    return wholesale;
   }
   const basis = toDateStr(addDays(new Date(sheetDateStr + 'T12:00:00'), -7));
   return dayTotal(basis);
@@ -828,12 +845,13 @@ function totalCookedSumPriorWeek(priorDateStr) {
   return DAYPARTS.reduce((s, _, i) => s + st.rows[i].cooked, 0);
 }
 
-/** Blended $/roast for tempering: (daily_totals am+pm) ÷ sum(cooked), else avg of locked AM/PM. */
+/** Blended $/roast for tempering: daily_totals ounces -> roasts -> wholesale $ before dividing by sum(cooked). */
 function blendedDollarPerRoastForTemper(priorDateStr, ratesFallback) {
   const dt = dailyTotalsSales[priorDateStr];
   const ckSum = totalCookedSumPriorWeek(priorDateStr);
-  if (dt && ckSum > 0) {
-    return (dt.am + dt.pm) / ckSum;
+  const wholesale = dailyTotalsWholesaleCost(dt);
+  if (wholesale > 0 && ckSum > 0) {
+    return wholesale / ckSum;
   }
   return (ratesFallback.am + ratesFallback.pm) / 2;
 }
@@ -884,8 +902,10 @@ function deriveLockedRatesFromPriorWeek(priorDateStr) {
   let fPm = fcPrior[2] + fcPrior[3];
   const dtot = dailyTotalsSales[priorDateStr];
   if (dtot) {
-    fAm = dtot.am;
-    fPm = dtot.pm;
+    const amCost = ouncesToWholesaleCost(dtot.am);
+    const pmCost = ouncesToWholesaleCost(dtot.pm);
+    if (amCost > 0) fAm = amCost;
+    if (pmCost > 0) fPm = pmCost;
   }
 
   const act = DAYPARTS.map((_, i) => {
@@ -1511,7 +1531,7 @@ function buildSheetCard(idx, day, dateStr) {
       <div class="temper-breakdown" id="t-breakdown-${idx}"></div>
       <div class="temper-grid">
         <div class="temper-box">
-          <div class="temper-box-label">4-day projected sales (combined)</div>
+          <div class="temper-box-label">4-day projected dollars (combined)</div>
           <div class="temper-box-val" id="t-proj-${idx}">$0</div>
         </div>
         <div class="temper-box">
@@ -1541,7 +1561,7 @@ function buildSheetCard(idx, day, dateStr) {
       · Needs = forecast ÷ locked AM or PM $/roast (ceil).<br>
       · Used = (previous on hand + previous cooked) − current on hand; first drop shows —.<br>
       · Suggested = max(0, needs − on hand).<br>
-      · Tempering: four-day projected sales ÷ average of locked AM &amp; PM rates; roasts to temper = needed − (tempering now + holding + cooking).
+      · Tempering: four-day projected dollars ÷ average of locked AM &amp; PM rates; roasts to temper = needed − (tempering now + holding + cooking).
     </div>
 
     <div class="eod-summary" id="eod-summary-${idx}">

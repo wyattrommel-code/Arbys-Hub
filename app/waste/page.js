@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getSupabase } from "@/lib/supabase";
 
@@ -314,22 +313,7 @@ export default function WastePage() {
 
   if (confirmation) {
     return (
-      <div className="flex min-h-full flex-1 flex-col bg-zinc-50 dark:bg-zinc-950">
-        <header className="border-b border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-900">
-          <div className="mx-auto flex max-w-md items-center justify-between gap-3">
-            <Link
-              href="/"
-              className="text-sm font-medium text-zinc-600 underline-offset-2 hover:underline dark:text-zinc-400"
-            >
-              Home
-            </Link>
-            <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
-              Waste logged
-            </h1>
-            <span className="w-10" aria-hidden />
-          </div>
-        </header>
-        <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-6 px-4 py-8">
+      <div className="mx-auto flex w-full max-w-md flex-1 flex-col gap-6 px-4 py-8">
           <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
             <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">
               Submission recorded
@@ -376,32 +360,15 @@ export default function WastePage() {
               Submit Another
             </button>
           </div>
-        </main>
       </div>
     );
   }
 
   return (
-    <div className="flex min-h-full flex-1 flex-col bg-zinc-50 dark:bg-zinc-950">
-      <header className="border-b border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-900">
-        <div className="mx-auto flex max-w-md items-center justify-between gap-3">
-          <Link
-            href="/"
-            className="text-sm font-medium text-zinc-600 underline-offset-2 hover:underline dark:text-zinc-400"
-          >
-            Home
-          </Link>
-          <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
-            Waste
-          </h1>
-          <span className="w-10" aria-hidden />
-        </div>
-      </header>
-
-      <form
-        onSubmit={handleSubmit}
-        className="mx-auto flex w-full max-w-md flex-1 flex-col"
-      >
+    <form
+      onSubmit={handleSubmit}
+      className="mx-auto flex w-full max-w-md flex-1 flex-col"
+    >
         <div className="flex-1 space-y-6 px-4 pb-44 pt-6">
           {loadState.status === "loading" && (
             <div className="rounded-xl border border-zinc-200 bg-white p-5 text-center shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
@@ -666,7 +633,6 @@ export default function WastePage() {
             </button>
           </div>
         </footer>
-      </form>
-    </div>
+    </form>
   );
 }
