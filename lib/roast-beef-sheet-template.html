@@ -593,8 +593,6 @@ const PREV_FALLBACK = {
   total: 3598,
   roasts: 7,
 };
-const OUNCES_PER_ROAST = 160;
-const WHOLESALE_COST_PER_ROAST = 44.41;
 
 let salesByDate = { ...DEFAULT_SALES };
 /** Optional per-daypart forecasts restored from Supabase (overrides hourly rollup). */
@@ -815,20 +813,6 @@ function applyDailyTotalsFromRows(dateStr, rows) {
   }
 }
 
-function ouncesToRoasts(oz) {
-  const n = Number(oz);
-  return Number.isFinite(n) && n > 0 ? n / OUNCES_PER_ROAST : 0;
-}
-
-function ouncesToWholesaleCost(oz) {
-  return ouncesToRoasts(oz) * WHOLESALE_COST_PER_ROAST;
-}
-
-function dailyTotalsWholesaleCost(dt) {
-  if (!dt) return 0;
-  return ouncesToWholesaleCost(dt.am) + ouncesToWholesaleCost(dt.pm);
-}
-
 function totalForecastSalesForTemperingDay(sheetDateStr) {
   const forecasts = forecastsForSheetDate(sheetDateStr);
   const projected = forecasts.reduce((sum, n) => sum + (Number(n) || 0), 0);
@@ -845,7 +829,7 @@ function totalCookedSumPriorWeek(priorDateStr) {
   return DAYPARTS.reduce((s, _, i) => s + st.rows[i].cooked, 0);
 }
 
-/** Blended $/roast for tempering: daily_totals ounces -> roasts -> wholesale $ before dividing by sum(cooked). */
+/** Blended $/roast for tempering: prior-week sales dollars / prior-week roasts used. */
 function blendedDollarPerRoastForTemper(priorDateStr, ratesFallback) {
   const dt = dailyTotalsSales[priorDateStr];
   const ckSum = totalCookedSumPriorWeek(priorDateStr);
@@ -902,10 +886,10 @@ function deriveLockedRatesFromPriorWeek(priorDateStr) {
   let fPm = fcPrior[2] + fcPrior[3];
   const dtot = dailyTotalsSales[priorDateStr];
   if (dtot) {
-    const amCost = ouncesToWholesaleCost(dtot.am);
-    const pmCost = ouncesToWholesaleCost(dtot.pm);
-    if (amCost > 0) fAm = amCost;
-    if (pmCost > 0) fPm = pmCost;
+    const amSales = Number(dtot.am) || 0;
+    const pmSales = Number(dtot.pm) || 0;
+    if (amSales > 0) fAm = amSales;
+    if (pmSales > 0) fPm = pmSales;
   }
 
   const act = DAYPARTS.map((_, i) => {
