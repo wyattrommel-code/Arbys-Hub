@@ -1,0 +1,1715 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5, viewport-fit=cover">
+<title>Arby's #07462 — Roast Beef Daily Sheet</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<style>
+  :root {
+    --arby-red: #C8102E;
+    --arby-dark: #1a1a1a;
+    --arby-tan: #F5F0E8;
+    --arby-gold: #E8A020;
+    --arby-light-red: #fdf0f2;
+    --arby-border: #e0d8ce;
+    --white: #ffffff;
+    --text-main: #1a1a1a;
+    --text-muted: #6b6b6b;
+    --text-light: #9a9a9a;
+    --green: #2a7a3b;
+    --orange: #c85a00;
+    --shadow: 0 2px 8px rgba(0,0,0,0.08);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: system-ui, -apple-system, 'Segoe UI', Arial, sans-serif;
+    background: var(--arby-tan);
+    color: var(--text-main);
+    min-height: 100vh;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .site-header {
+    background: var(--arby-red);
+    color: white;
+    padding: 0 1rem 0 1.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 64px;
+    flex-wrap: wrap;
+    box-shadow: 0 2px 12px rgba(200,16,46,0.28);
+  }
+  .logo-area { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .logo-hat {
+    width: 40px; height: 40px;
+    background: white;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .logo-hat svg { width: 26px; height: 26px; }
+  .store-name { font-size: 16px; font-weight: 700; letter-spacing: 0.01em; }
+  .store-sub { font-size: 11px; opacity: 0.85; margin-top: 1px; }
+
+  .header-right {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+  .header-date { font-size: 12px; opacity: 0.92; line-height: 1.35; }
+  .sync-pill {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.2);
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+  .sync-pill.saving { background: rgba(255,255,255,0.28); }
+  .sync-pill.saved { background: rgba(42,122,59,0.35); }
+  .sync-pill.offline { background: rgba(0,0,0,0.35); }
+
+  .upload-section {
+    max-width: 960px;
+    margin: 1.25rem auto;
+    padding: 0 1rem;
+  }
+  .upload-card {
+    background: white;
+    border-radius: 12px;
+    border: 2px dashed var(--arby-border);
+    padding: 1.25rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+    box-shadow: var(--shadow);
+  }
+  .upload-card.dragover { border-color: var(--arby-red); background: var(--arby-light-red); }
+  .upload-icon {
+    width: 42px; height: 42px; flex-shrink: 0;
+    background: var(--arby-light-red);
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .upload-icon svg { width: 20px; height: 20px; color: var(--arby-red); }
+  .upload-text { flex: 1; min-width: 200px; }
+  .upload-text strong { font-size: 14px; display: block; margin-bottom: 4px; }
+  .upload-text span { font-size: 12px; color: var(--text-muted); }
+  .upload-btn {
+    background: var(--arby-red);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 18px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .upload-btn:hover { background: #a50d26; }
+  input[type="file"] { display: none; }
+
+  .upload-status {
+    margin-top: 0.65rem;
+    font-size: 12px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    display: none;
+  }
+  .upload-status.success { background: #e8f5eb; color: #1a5c28; display: block; }
+  .upload-status.error { background: #fdf0f2; color: var(--arby-red); display: block; }
+
+  .main { max-width: 960px; margin: 0 auto 2rem; padding: 0 1rem; }
+
+  .tabs-wrapper {
+    display: flex;
+    gap: 4px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 4px;
+    scrollbar-width: thin;
+  }
+  .day-tab {
+    padding: 10px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-muted);
+    background: white;
+    border: 1px solid var(--arby-border);
+    border-bottom: none;
+    border-radius: 8px 8px 0 0;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .day-tab:hover { color: var(--arby-red); }
+  .day-tab.active {
+    color: var(--arby-red);
+    border-color: var(--arby-border);
+    background: white;
+    margin-bottom: -1px;
+    padding-bottom: 11px;
+    position: relative;
+    z-index: 1;
+    font-weight: 700;
+  }
+  .today-dot {
+    display: inline-block;
+    width: 6px; height: 6px;
+    background: var(--arby-red);
+    border-radius: 50%;
+    margin-right: 5px;
+    vertical-align: middle;
+  }
+
+  .sheet-card {
+    background: white;
+    border-radius: 0 8px 12px 12px;
+    border: 1px solid var(--arby-border);
+    box-shadow: var(--shadow);
+    display: none;
+    padding: 1.1rem 1rem 1.25rem;
+  }
+  .sheet-card.active { display: block; }
+
+  .sheet-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+  }
+  .sheet-title { font-size: 16px; font-weight: 700; }
+  .sheet-sub { font-size: 12px; color: var(--text-muted); margin-top: 3px; }
+
+  .print-btn {
+    background: var(--arby-red);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 9px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    touch-action: manipulation;
+  }
+  .print-btn:hover { background: #a50d26; }
+  .print-btn svg { width: 15px; height: 15px; }
+
+  .top-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px;
+    margin-bottom: 1rem;
+  }
+  .info-box {
+    background: var(--arby-tan);
+    border-radius: 8px;
+    padding: 10px 12px;
+    border: 1px solid var(--arby-border);
+  }
+  .info-label {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 4px;
+  }
+  .info-val { font-size: 18px; font-weight: 700; }
+  .info-sub { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+
+  .rates-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px 20px;
+    background: var(--arby-light-red);
+    border: 1px solid #f0c0ca;
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 1rem;
+    font-size: 12px;
+  }
+  .rates-row strong { color: var(--arby-red); font-size: 12px; }
+  .rate-chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+    font-weight: 700;
+    color: var(--text-main);
+    font-size: 14px;
+  }
+  .rate-chip span.meta { font-size: 11px; font-weight: 600; color: var(--text-muted); }
+
+  .section-head {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--arby-red);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    margin-bottom: 8px;
+    padding-bottom: 6px;
+    border-bottom: 2px solid var(--arby-red);
+  }
+
+  .table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin: 0 -4px;
+    padding: 0 4px;
+  }
+
+  table.cook-table {
+    width: 100%;
+    min-width: 820px;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  table.cook-table th {
+    background: var(--arby-dark);
+    color: white;
+    padding: 8px 6px;
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    text-align: center;
+    line-height: 1.2;
+  }
+  table.cook-table th:first-child { text-align: left; border-radius: 6px 0 0 0; }
+  table.cook-table th:last-child { border-radius: 0 6px 0 0; }
+  table.cook-table td {
+    padding: 8px 6px;
+    text-align: center;
+    border-bottom: 1px solid var(--arby-border);
+    vertical-align: middle;
+  }
+  table.cook-table td:first-child { text-align: left; }
+  table.cook-table tr:last-child td { border-bottom: none; }
+  table.cook-table tbody tr:hover td { background: #fafaf8; }
+
+  .time-cell { font-weight: 700; font-size: 13px; white-space: nowrap; }
+  .window-cell { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+
+  .num-input {
+    width: 56px;
+    padding: 6px 4px;
+    font-size: 14px;
+    font-weight: 600;
+    text-align: center;
+    border: 1px solid var(--arby-border);
+    border-radius: 6px;
+    background: #fafff8;
+    color: var(--text-main);
+  }
+  .num-input.actual-input { background: #f0f8ff; width: 64px; }
+  .num-input:focus { outline: none; border-color: var(--arby-red); background: white; }
+  .num-input.inv-input {
+    width: 62px;
+    min-height: 42px;
+    padding: 8px 6px;
+    font-size: 16px;
+    background: var(--white);
+    border: 2px solid var(--arby-dark);
+  }
+  .num-input.inv-input:focus {
+    border-color: var(--arby-red);
+    box-shadow: 0 0 0 2px rgba(200, 16, 46, 0.12);
+  }
+
+  .used-val { font-weight: 700; font-variant-numeric: tabular-nums; }
+
+  .needs-val { font-size: 14px; font-weight: 700; }
+  .needs-low { color: var(--green); }
+  .needs-med { color: var(--orange); }
+  .needs-high { color: var(--arby-red); }
+
+  .variance-pos { color: var(--green); font-weight: 600; }
+  .variance-neg { color: var(--arby-red); font-weight: 600; }
+
+  .beefs-running {
+    margin-top: 0.75rem;
+    padding: 10px 12px;
+    background: var(--arby-light-red);
+    border: 1px solid #f0c0ca;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--arby-red);
+  }
+
+  .totals-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 0.85rem;
+    flex-wrap: wrap;
+  }
+  .total-pill {
+    background: var(--arby-dark);
+    color: white;
+    border-radius: 20px;
+    padding: 6px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .total-pill span { opacity: 0.72; font-weight: 400; }
+
+  .temper-card {
+    background: var(--arby-tan);
+    border: 1px solid var(--arby-border);
+    border-radius: 10px;
+    padding: 1rem 1rem 1.1rem;
+    margin-top: 1.1rem;
+  }
+  .temper-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 12px;
+    margin-top: 10px;
+  }
+  .temper-box { text-align: center; }
+  .temper-box-label {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 6px;
+  }
+  .temper-box-val { font-size: 20px; font-weight: 700; }
+  .temper-box-val.big-red { color: var(--arby-red); font-size: 26px; }
+  .temper-box .num-input { width: 72px; font-size: 16px; padding: 8px 6px; }
+  .temper-blended-line { font-size: 11px; color: var(--text-muted); margin-bottom: 6px; }
+  .temper-breakdown {
+    font-size: 12px;
+    color: var(--text-main);
+    line-height: 1.45;
+    margin-bottom: 10px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--arby-border);
+  }
+  .temper-day-line {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 5px;
+  }
+  .temper-day-line span:last-child { font-weight: 700; color: var(--arby-red); }
+
+  .eod-summary {
+    margin-top: 1.15rem;
+    padding: 12px;
+    background: var(--arby-tan);
+    border: 1px solid var(--arby-border);
+    border-radius: 8px;
+    border-left: 4px solid var(--arby-red);
+  }
+  .eod-summary-title {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--arby-red);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 10px;
+  }
+  .eod-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+  }
+  .eod-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    display: block;
+    margin-bottom: 4px;
+  }
+  .eod-val { font-size: 18px; font-weight: 700; }
+
+  .footnotes {
+    margin-top: 0.9rem;
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.65;
+    border-top: 1px solid var(--arby-border);
+    padding-top: 10px;
+  }
+
+  @media (max-width: 600px) {
+    .site-header { padding: 10px 12px; }
+    table.cook-table { font-size: 11px; min-width: 760px; }
+    .num-input { width: 50px; font-size: 13px; }
+    .num-input.inv-input { width: 56px; min-height: 44px; }
+  }
+
+  @media print {
+    body { background: white; }
+    .site-header { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+    .upload-section, .tabs-wrapper { display: none !important; }
+    .sheet-card {
+      display: none !important;
+      border: none;
+      box-shadow: none;
+      padding: 0;
+    }
+    .sheet-card.print-only {
+      display: block !important;
+      page-break-after: always;
+    }
+    table.cook-table { min-width: 0; }
+    table.cook-table th { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+    .print-btn { display: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="logo-area">
+    <div class="logo-hat">
+      <svg viewBox="0 0 40 30" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path d="M4 22 C4 22 8 6 20 6 C32 6 36 22 36 22 Z" fill="#C8102E"/>
+        <rect x="2" y="22" width="36" height="5" rx="2.5" fill="#C8102E"/>
+      </svg>
+    </div>
+    <div>
+      <div class="store-name">Arby's #07462</div>
+      <div class="store-sub">Roast Beef Daily Sheet</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="header-date" id="header-date"></div>
+    <div class="sync-pill saved" id="sync-status" role="status">Saved ✓</div>
+  </div>
+</header>
+
+<div class="upload-section">
+  <div class="upload-card" id="drop-zone">
+    <div class="upload-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+      </svg>
+    </div>
+    <div class="upload-text">
+      <strong>Upload BrinkPOS Hourly Sales CSV</strong>
+      <span>Date is read from the file; hourly totals fill <em>forecasts</em> for the same weekday <strong>next week</strong>.</span>
+    </div>
+    <button type="button" class="upload-btn" id="pick-csv">Choose File</button>
+    <input type="file" id="csv-input" accept=".csv,text/csv">
+  </div>
+  <div class="upload-status" id="upload-status"></div>
+</div>
+
+<div class="main">
+  <div class="tabs-wrapper" id="tabs"></div>
+  <div id="sheets"></div>
+</div>
+
+<script>
+/**
+ * Arby's #07462 roast sheet — single-file app with Supabase sync.
+ *
+ * Required Postgres (run in Supabase SQL editor):
+ *
+ * create table if not exists roast_entries (
+ *   sheet_date date not null,
+ *   daypart text not null check (daypart in ('6am','10am','2pm','5pm','daily_totals')),
+ *   forecasted_sales numeric default 0,
+ *   actual_sales numeric,
+ *   on_hand text,
+ *   cooked integer default 0,
+ *   updated_at timestamptz default now(),
+ *   primary key (sheet_date, daypart)
+ * );
+ *
+ * create table if not exists sheet_tempering (
+ *   sheet_date date primary key,
+ *   tempering_now integer default 0,
+ *   in_holding_oven integer default 0,
+ *   in_cooking_oven integer default 0,
+ *   updated_at timestamptz default now()
+ * );
+ *
+ * create table if not exists hourly_sales (
+ *   sale_date date not null,
+ *   hour_of_day integer not null,
+ *   net_sales numeric not null,
+ *   primary key (sale_date, hour_of_day)
+ * );
+ */
+
+const SUPABASE_URL = __NEXT_PUBLIC_SUPABASE_URL_JSON__;
+const SUPABASE_ANON_KEY = __NEXT_PUBLIC_SUPABASE_ANON_KEY_JSON__;
+
+const DAYPARTS = [
+  { key: '6am', label: '6:00 AM', window: '6am – 2pm', start: 6, end: 14, rate: 'am' },
+  { key: '10am', label: '10:00 AM', window: '10am – 6pm', start: 10, end: 18, rate: 'am' },
+  { key: '2pm', label: '2:00 PM', window: '2pm – 10pm', start: 14, end: 22, rate: 'pm' },
+  {
+    key: '5pm',
+    label: '5:00 PM',
+    window: '5pm – 1am',
+    start: 17,
+    end: 24,
+    nextEnd: 1,
+    rate: 'pm',
+  },
+];
+
+const DEFAULT_SALES = {
+  '2026-03-28': { h8: 72, h9: 85, h10: 312, h11: 498, h12: 428, h13: 418, h14: 328, h15: 166, h16: 124, h17: 241, h18: 587, h19: 310, h20: 202, h21: 208, h22: 0 },
+  '2026-03-29': { h8: 25, h9: 1, h10: 115, h11: 376, h12: 274, h13: 200, h14: 152, h15: 319, h16: 471, h17: 389, h18: 202, h19: 186, h20: 143, h21: 174, h22: 151 },
+  '2026-03-30': { h8: 48, h9: 72, h10: 298, h11: 452, h12: 412, h13: 380, h14: 265, h15: 198, h16: 312, h17: 340, h18: 380, h19: 240, h20: 210, h21: 195, h22: 88 },
+  '2026-03-31': { h8: 68, h9: 108, h10: 343, h11: 476, h12: 500, h13: 0, h14: 177, h15: 180, h16: 356, h17: 361, h18: 406, h19: 254, h20: 279, h21: 184, h22: 114 },
+  '2026-04-01': { h8: 107, h9: 138, h10: 420, h11: 560, h12: 599, h13: 0, h14: 152, h15: 271, h16: 336, h17: 368, h18: 393, h19: 314, h20: 256, h21: 189, h22: 71 },
+  '2026-04-02': { h8: 46, h9: 141, h10: 142, h11: 279, h12: 478, h13: 431, h14: 329, h15: 166, h16: 158, h17: 241, h18: 587, h19: 310, h20: 202, h21: 208, h22: 0 },
+  '2026-04-03': { h8: 25, h9: 56, h10: 78, h11: 334, h12: 461, h13: 613, h14: 322, h15: 399, h16: 244, h17: 719, h18: 553, h19: 369, h20: 414, h21: 194, h22: 281 },
+};
+
+const PREV_FALLBACK = {
+  total: 3598,
+  roasts: 7,
+};
+
+let salesByDate = { ...DEFAULT_SALES };
+/** Optional per-daypart forecasts restored from Supabase (overrides hourly rollup). */
+const dbForecast = Object.create(null);
+/** sheet_date -> { daypartKey: forecasted_sales from DB } for tempering 4-day totals (may include 0). */
+const dbEntryForecasts = Object.create(null);
+/** sheet_date -> { am, pm } from roast_entries daypart = daily_totals (open–2pm / 2pm–close sales); for $/roast only. */
+const dailyTotalsSales = Object.create(null);
+let hub = null;
+let syncTimer = null;
+let temperTimer = null;
+let online = true;
+
+/** sheetDate -> { am: number, pm: number } locked at first render */
+const lockedDprBySheet = Object.create(null);
+
+/** in-memory row state before DOM bind */
+const sheetState = Object.create(null);
+const temperState = Object.create(null);
+
+function createHub() {
+  const g = globalThis;
+  const lib = g.supabase;
+  if (!lib || typeof lib.createClient !== 'function') return null;
+  return lib.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+}
+
+function setSyncStatus(mode) {
+  const el = document.getElementById('sync-status');
+  if (!el) return;
+  el.className = 'sync-pill';
+  if (mode === 'saving') {
+    el.classList.add('saving');
+    el.textContent = 'Saving...';
+  } else if (mode === 'offline') {
+    el.classList.add('offline');
+    el.textContent = 'Offline';
+  } else {
+    el.classList.add('saved');
+    el.textContent = 'Saved ✓';
+  }
+}
+
+function toDateStr(d) {
+  return (
+    d.getFullYear() +
+    '-' +
+    String(d.getMonth() + 1).padStart(2, '0') +
+    '-' +
+    String(d.getDate()).padStart(2, '0')
+  );
+}
+
+/** Normalize DB `date` / timestamptz to YYYY-MM-DD for sheetState keys. */
+function sheetDateKey(v) {
+  if (v == null || v === '') return '';
+  if (v instanceof Date && !isNaN(v.getTime())) return toDateStr(v);
+  const s = String(v);
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? s : toDateStr(d);
+}
+
+function addDays(d, n) {
+  const r = new Date(d);
+  r.setDate(r.getDate() + n);
+  return r;
+}
+
+function formatDisplay(d) {
+  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+function formatFull(d) {
+  return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+}
+
+function parseHand(str) {
+  const n = parseFloat(String(str ?? '').replace(/,/g, ''));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function parseOnHandOrNull(str) {
+  if (str == null || String(str).trim() === '') return null;
+  const n = parseFloat(String(str).replace(/,/g, ''));
+  return Number.isFinite(n) ? n : null;
+}
+
+function clampDpr(v) {
+  return Math.max(50, Math.min(2000, Math.round(v)));
+}
+
+/** Sum net sales for [startH, endH) on dateStr; if nextDayExclusiveEnd > 0, add [0, nextDayExclusiveEnd) on the following calendar day. */
+function windowSales(dateStr, startH, endH, nextDayExclusiveEnd) {
+  const day = salesByDate[dateStr];
+  let total = 0;
+  if (day) {
+    const cap = Math.min(endH, 24);
+    for (let h = startH; h < cap; h++) total += day['h' + h] || 0;
+  }
+  const nx =
+    nextDayExclusiveEnd != null && Number.isFinite(nextDayExclusiveEnd) ? nextDayExclusiveEnd : 0;
+  if (nx > 0) {
+    const nextStr = toDateStr(addDays(new Date(dateStr + 'T12:00:00'), 1));
+    const nextDay = salesByDate[nextStr];
+    if (nextDay) {
+      for (let h = 0; h < nx; h++) total += nextDay['h' + h] || 0;
+    }
+  }
+  return total;
+}
+
+function dayTotal(dateStr) {
+  const day = salesByDate[dateStr];
+  if (!day) return 0;
+  return Object.values(day).reduce((a, b) => a + b, 0);
+}
+
+/** Apply hourly_sales rows from Supabase; salesByDate[date] replaces defaults for that date. */
+function mergeHourlySalesRowsIntoSalesByDate(rows) {
+  const byDate = Object.create(null);
+  for (const r of rows || []) {
+    const d = sheetDateKey(r.sale_date);
+    if (!d) continue;
+    const h = Number(r.hour_of_day);
+    if (!Number.isFinite(h)) continue;
+    const net = Number(r.net_sales);
+    if (!Number.isFinite(net)) continue;
+    if (!byDate[d]) byDate[d] = {};
+    byDate[d]['h' + h] = net;
+  }
+  for (const d of Object.keys(byDate)) {
+    salesByDate[d] = byDate[d];
+  }
+}
+
+async function upsertHourlySalesFromCsv(saleDateStr, hourData) {
+  if (!hub) return false;
+  const ops = [];
+  for (const k of Object.keys(hourData)) {
+    if (!/^h\d+$/.test(k)) continue;
+    const hour = parseInt(k.slice(1), 10);
+    if (!Number.isFinite(hour)) continue;
+    const net = Number(hourData[k]);
+    if (!Number.isFinite(net)) continue;
+    ops.push({ sale_date: saleDateStr, hour_of_day: hour, net_sales: net });
+  }
+  if (ops.length === 0) return true;
+  try {
+    const { error } = await hub.from('hourly_sales').upsert(ops, { onConflict: 'sale_date,hour_of_day' });
+    if (error) throw error;
+    return true;
+  } catch (e) {
+    console.error(e);
+    return false;
+  }
+}
+
+function ensureSheetState(dateStr) {
+  if (!sheetState[dateStr]) {
+    sheetState[dateStr] = {
+      rows: DAYPARTS.map(() => ({ onHandStr: '', cooked: 0, actualStr: '' })),
+    };
+  }
+}
+
+function ensureTemperState(dateStr) {
+  if (!temperState[dateStr]) {
+    temperState[dateStr] = { temperingNow: 0, holding: 0, cooking: 0 };
+  }
+}
+
+function rowFromDb(r) {
+  return {
+    onHandStr: r.on_hand != null && r.on_hand !== '' ? String(r.on_hand) : '',
+    cooked: Number.isFinite(Number(r.cooked)) ? Math.max(0, Math.round(Number(r.cooked))) : 0,
+    actualStr:
+      r.actual_sales != null && r.actual_sales !== ''
+        ? String(r.actual_sales)
+        : '',
+  };
+}
+
+function applyFetchedRows(dateStr, rows) {
+  ensureSheetState(dateStr);
+  const st = sheetState[dateStr];
+  const byKey = Object.create(null);
+  dbForecast[dateStr] = Object.create(null);
+  dbEntryForecasts[dateStr] = Object.create(null);
+  for (const r of rows || []) {
+    if (r.daypart) byKey[r.daypart] = r;
+  }
+  DAYPARTS.forEach((dp, i) => {
+    const rec = byKey[dp.key];
+    if (!rec) return;
+    st.rows[i] = rowFromDb(rec);
+    const f = rec.forecasted_sales != null ? Number(rec.forecasted_sales) : null;
+    if (f != null && Number.isFinite(f) && f > 0) {
+      dbForecast[dateStr][dp.key] = f;
+    }
+    const fDb = rec.forecasted_sales != null ? Number(rec.forecasted_sales) : null;
+    dbEntryForecasts[dateStr][dp.key] = fDb != null && Number.isFinite(fDb) ? fDb : null;
+  });
+  applyDailyTotalsFromRows(dateStr, rows);
+}
+
+function applyDailyTotalsFromRows(dateStr, rows) {
+  delete dailyTotalsSales[dateStr];
+  for (const r of rows || []) {
+    if (r.daypart !== 'daily_totals') continue;
+    const am = parseFloat(String(r.on_hand ?? '').replace(/[$,]/g, ''));
+    const pm = Number(r.cooked);
+    dailyTotalsSales[dateStr] = {
+      am: Number.isFinite(am) ? am : 0,
+      pm: Number.isFinite(pm) ? pm : 0,
+    };
+    break;
+  }
+}
+
+function totalForecastSalesForTemperingDay(sheetDateStr) {
+  const dt = dailyTotalsSales[sheetDateStr];
+  if (dt && dt.am + dt.pm > 0) {
+    return dt.am + dt.pm;
+  }
+  const basis = toDateStr(addDays(new Date(sheetDateStr + 'T12:00:00'), -7));
+  return dayTotal(basis);
+}
+
+function totalCookedSumPriorWeek(priorDateStr) {
+  ensureSheetState(priorDateStr);
+  const st = sheetState[priorDateStr];
+  return DAYPARTS.reduce((s, _, i) => s + st.rows[i].cooked, 0);
+}
+
+/** Blended $/roast for tempering: (daily_totals am+pm) ÷ sum(cooked), else avg of locked AM/PM. */
+function blendedDollarPerRoastForTemper(priorDateStr, ratesFallback) {
+  const dt = dailyTotalsSales[priorDateStr];
+  const ckSum = totalCookedSumPriorWeek(priorDateStr);
+  if (dt && ckSum > 0) {
+    return (dt.am + dt.pm) / ckSum;
+  }
+  return (ratesFallback.am + ratesFallback.pm) / 2;
+}
+
+function forecastsForSheetDate(dateStr) {
+  const basis = toDateStr(addDays(new Date(dateStr + 'T12:00:00'), -7));
+  const slot = dbForecast[dateStr];
+  return DAYPARTS.map((dp) => {
+    const v = slot && slot[dp.key] != null ? Number(slot[dp.key]) : NaN;
+    if (Number.isFinite(v) && v > 0) {
+      return Math.round(v);
+    }
+    return Math.round(windowSales(basis, dp.start, dp.end, dp.nextEnd));
+  });
+}
+
+function computeUsedChain(st) {
+  return DAYPARTS.map((_, di) => {
+    if (di === 0) return null;
+    const prevRow = st.rows[di - 1];
+    const curRow = st.rows[di];
+    const prevOh = parseOnHandOrNull(prevRow.onHandStr);
+    const curOh = parseOnHandOrNull(curRow.onHandStr);
+    if (prevOh === null || curOh === null) return null;
+    return prevOh + prevRow.cooked - curOh;
+  });
+}
+
+/** Derive locked AM/PM $/roast from prior-week same weekday saved rows + that week’s forecasts. */
+function deriveLockedRatesFromPriorWeek(priorDateStr) {
+  ensureSheetState(priorDateStr);
+  const stP = sheetState[priorDateStr];
+  const oh6 = parseOnHandOrNull(stP.rows[0].onHandStr);
+  const oh10 = parseOnHandOrNull(stP.rows[1].onHandStr);
+  const oh2 = parseOnHandOrNull(stP.rows[2].onHandStr);
+  const ck6 = stP.rows[0].cooked;
+  const ck10 = stP.rows[1].cooked;
+  const ck2 = stP.rows[2].cooked;
+  const ck5 = stP.rows[3].cooked;
+  let amUsed = 0;
+  if (oh6 !== null && oh10 !== null && oh2 !== null) {
+    amUsed = Math.max(0, oh6 + ck6 - oh10 + (oh10 + ck10 - oh2));
+  }
+  const pmUsed = Math.max(0, ck2 + ck5);
+
+  const fcPrior = forecastsForSheetDate(priorDateStr);
+  let fAm = fcPrior[0] + fcPrior[1];
+  let fPm = fcPrior[2] + fcPrior[3];
+  const dtot = dailyTotalsSales[priorDateStr];
+  if (dtot) {
+    fAm = dtot.am;
+    fPm = dtot.pm;
+  }
+
+  const act = DAYPARTS.map((_, i) => {
+    const x = parseFloat(String(stP.rows[i].actualStr ?? '').replace(/,/g, ''));
+    return Number.isFinite(x) ? x : 0;
+  });
+  let aAm = act[0] + act[1];
+  let aPm = act[2] + act[3];
+  if (aAm <= 0) aAm = fAm;
+  if (aPm <= 0) aPm = fPm;
+
+  const am = amUsed > 0 ? clampDpr(aAm / amUsed) : clampDpr(PREV_FALLBACK.total / PREV_FALLBACK.roasts);
+  const pm = pmUsed > 0 ? clampDpr(aPm / pmUsed) : clampDpr(PREV_FALLBACK.total / PREV_FALLBACK.roasts);
+  return { am, pm, amUsed, pmUsed };
+}
+
+function scheduleRowSave(sheetDate, daypartKey, payload) {
+  if (!hub) return;
+  if (syncTimer) clearTimeout(syncTimer);
+  setSyncStatus('saving');
+  syncTimer = setTimeout(async () => {
+    syncTimer = null;
+    try {
+      const row = {
+        sheet_date: sheetDate,
+        daypart: daypartKey,
+        on_hand: payload.on_hand,
+        cooked: payload.cooked,
+        actual_sales: payload.actual_sales,
+        forecasted_sales: payload.forecasted_sales,
+      };
+      const { error } = await hub.from('roast_entries').upsert(row, {
+        onConflict: 'sheet_date,daypart',
+      });
+      if (error) throw error;
+      online = true;
+      setSyncStatus('saved');
+    } catch (e) {
+      console.error(e);
+      online = false;
+      setSyncStatus('offline');
+    }
+  }, 420);
+}
+
+function scheduleTemperSave(sheetDate) {
+  if (!hub) return;
+  if (temperTimer) clearTimeout(temperTimer);
+  setSyncStatus('saving');
+  temperTimer = setTimeout(async () => {
+    temperTimer = null;
+    const t = temperState[sheetDate];
+    if (!t) return;
+    try {
+      const { error } = await hub.from('sheet_tempering').upsert(
+        {
+          sheet_date: sheetDate,
+          tempering_now: t.temperingNow,
+          in_holding_oven: t.holding,
+          in_cooking_oven: t.cooking,
+        },
+        { onConflict: 'sheet_date' }
+      );
+      if (error) throw error;
+      online = true;
+      setSyncStatus('saved');
+    } catch (e) {
+      console.error(e);
+      online = false;
+      setSyncStatus('offline');
+    }
+  }, 420);
+}
+
+async function loadRemoteForRange(startStr, endStr) {
+  if (!hub) return;
+  setSyncStatus('saving');
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const hourlyFrom = toDateStr(addDays(today, -14));
+    const hourlyTo = toDateStr(today);
+
+    const { data: hourlyRows, error: e0 } = await hub
+      .from('hourly_sales')
+      .select('sale_date,hour_of_day,net_sales')
+      .gte('sale_date', hourlyFrom)
+      .lte('sale_date', hourlyTo);
+    if (e0) throw e0;
+    mergeHourlySalesRowsIntoSalesByDate(hourlyRows);
+
+    const { data: rows, error: e1 } = await hub
+      .from('roast_entries')
+      .select('*')
+      .gte('sheet_date', startStr)
+      .lte('sheet_date', endStr);
+    if (e1) throw e1;
+    const byDate = Object.create(null);
+    for (const r of rows || []) {
+      const d = sheetDateKey(r.sheet_date);
+      if (!d) continue;
+      if (!byDate[d]) byDate[d] = [];
+      byDate[d].push(r);
+    }
+    for (const d of Object.keys(byDate)) {
+      applyFetchedRows(d, byDate[d]);
+    }
+
+    for (const k of Object.keys(lockedDprBySheet)) delete lockedDprBySheet[k];
+
+    const { data: temps, error: e2 } = await hub
+      .from('sheet_tempering')
+      .select('*')
+      .gte('sheet_date', startStr)
+      .lte('sheet_date', endStr);
+    if (e2) throw e2;
+    for (const t of temps || []) {
+      const d = sheetDateKey(t.sheet_date);
+      if (!d) continue;
+      ensureTemperState(d);
+      temperState[d] = {
+        temperingNow: Math.max(0, Math.round(Number(t.tempering_now) || 0)),
+        holding: Math.max(0, Math.round(Number(t.in_holding_oven) || 0)),
+        cooking: Math.max(0, Math.round(Number(t.in_cooking_oven) || 0)),
+      };
+    }
+    online = true;
+    setSyncStatus('saved');
+  } catch (e) {
+    console.error(e);
+    online = false;
+    setSyncStatus('offline');
+  }
+}
+
+function captureInputFocusForSheet(idx) {
+  const ae = document.activeElement;
+  if (!ae || !ae.id) return null;
+  if (ae.tagName !== 'INPUT') return null;
+  const id = ae.id;
+  if (!new RegExp('-' + idx + '(-|$)').test(id)) return null;
+  return {
+    id,
+    start: typeof ae.selectionStart === 'number' ? ae.selectionStart : null,
+    end: typeof ae.selectionEnd === 'number' ? ae.selectionEnd : null,
+  };
+}
+
+function restoreInputFocus(snap) {
+  if (!snap || !snap.id) return;
+  requestAnimationFrame(() => {
+    const el = document.getElementById(snap.id);
+    if (!el || el.tagName !== 'INPUT') return;
+    el.focus({ preventScroll: true });
+    if (snap.start != null && typeof el.setSelectionRange === 'function') {
+      const len = el.value.length;
+      const a = Math.max(0, Math.min(snap.start, len));
+      const b = Math.max(0, Math.min(snap.end != null ? snap.end : snap.start, len));
+      try {
+        el.setSelectionRange(a, b);
+      } catch (_) {}
+    }
+  });
+}
+
+function captureSheetStateFromDom(idx, dateStr) {
+  ensureSheetState(dateStr);
+  const st = sheetState[dateStr];
+  DAYPARTS.forEach((dp, di) => {
+    const oh = document.getElementById(`oh-${idx}-${di}`);
+    const ck = document.getElementById(`cooked-${idx}-${di}`);
+    const ac = document.getElementById(`actual-${idx}-${di}`);
+    if (oh) st.rows[di].onHandStr = oh.value;
+    if (ck) st.rows[di].cooked = parseInt(ck.value, 10) || 0;
+    if (ac) st.rows[di].actualStr = ac.value;
+  });
+}
+
+function parseHour(str) {
+  const m = String(str).match(/(\d+):(\d+)\s*(AM|PM)/i);
+  if (!m) return null;
+  let h = parseInt(m[1], 10);
+  const ap = m[3].toUpperCase();
+  if (ap === 'PM' && h !== 12) h += 12;
+  if (ap === 'AM' && h === 12) h = 0;
+  return h;
+}
+
+function parseSales(str) {
+  return parseFloat(String(str).replace(/[$,]/g, '')) || 0;
+}
+
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim());
+  let csvDate = null;
+  for (let i = 0; i < Math.min(6, lines.length); i++) {
+    const m = lines[i].match(
+      /(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}/i
+    );
+    if (m) {
+      csvDate = new Date(m[0]);
+      break;
+    }
+  }
+  let headerIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const low = lines[i].toLowerCase();
+    if (low.includes('hour') && low.includes('net sales')) {
+      headerIdx = i;
+      break;
+    }
+  }
+  if (headerIdx === -1) return { error: 'Could not find Hour / Net Sales columns in this CSV.' };
+  const hourData = {};
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    const cols = lines[i].split(',').map((c) => c.replace(/"/g, '').trim());
+    if (!cols[0] || cols[0].toLowerCase() === 'summary' || cols[0].toLowerCase() === 'page') break;
+    const h = parseHour(cols[0]);
+    const s = parseSales(cols[1]);
+    if (h !== null) hourData['h' + h] = s;
+  }
+  return { date: csvDate, hourData };
+}
+
+/**
+ * Persist CSV-derived window totals for targetDateStr (next week) from basisDateStr (CSV day).
+ * Does not read dbForecast — always uses current salesByDate[basisDateStr] hour rollup.
+ */
+function sumHourlyOpenTo2pm(dateStr) {
+  const day = salesByDate[dateStr];
+  if (!day) return 0;
+  let t = 0;
+  for (let h = 6; h <= 13; h++) t += day['h' + h] || 0;
+  return Math.round(t);
+}
+
+function sumHourly2pmToClose(dateStr) {
+  const day = salesByDate[dateStr];
+  if (!day) return 0;
+  let t = 0;
+  for (let h = 14; h <= 23; h++) t += day['h' + h] || 0;
+  return Math.round(t);
+}
+
+async function upsertDailyTotalsForCsvDate(saleDateStr) {
+  if (!hub) return false;
+  const am = sumHourlyOpenTo2pm(saleDateStr);
+  const pm = sumHourly2pmToClose(saleDateStr);
+  try {
+    const { error } = await hub.from('roast_entries').upsert(
+      {
+        sheet_date: saleDateStr,
+        daypart: 'daily_totals',
+        on_hand: String(am),
+        cooked: pm,
+        forecasted_sales: 0,
+      },
+      { onConflict: 'sheet_date,daypart' }
+    );
+    if (error) throw error;
+    dailyTotalsSales[saleDateStr] = { am, pm };
+    return true;
+  } catch (e) {
+    console.error(e);
+    return false;
+  }
+}
+
+async function upsertForecastsFromCsvBasis(targetDateStr, basisDateStr) {
+  if (!hub) return false;
+  const ops = DAYPARTS.map((dp) => ({
+    sheet_date: targetDateStr,
+    daypart: dp.key,
+    forecasted_sales: Math.round(windowSales(basisDateStr, dp.start, dp.end, dp.nextEnd)),
+  }));
+  try {
+    setSyncStatus('saving');
+    const { error } = await hub.from('roast_entries').upsert(ops, { onConflict: 'sheet_date,daypart' });
+    if (error) throw error;
+    online = true;
+    setSyncStatus('saved');
+    return true;
+  } catch (e) {
+    console.error(e);
+    online = false;
+    setSyncStatus('offline');
+    return false;
+  }
+}
+
+function recalcSheet(idx) {
+  const focusSnap = captureInputFocusForSheet(idx);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const day = addDays(today, idx);
+  const dateStr = toDateStr(day);
+  const basisStr = toDateStr(addDays(day, -7));
+
+  captureSheetStateFromDom(idx, dateStr);
+  ensureSheetState(dateStr);
+  const st = sheetState[dateStr];
+
+  if (!lockedDprBySheet[dateStr]) {
+    lockedDprBySheet[dateStr] = deriveLockedRatesFromPriorWeek(basisStr);
+  }
+  const rates = lockedDprBySheet[dateStr];
+
+  const forecasts = forecastsForSheetDate(dateStr);
+  const used = computeUsedChain(st);
+
+  const tbody = document.getElementById(`tbody-${idx}`);
+  if (!tbody) return;
+
+  let totalForecast = 0;
+  let totalCooked = 0;
+  let totalBeefsUsed = 0;
+
+  tbody.innerHTML = '';
+
+  DAYPARTS.forEach((dp, di) => {
+    const forecast = forecasts[di];
+    totalForecast += forecast;
+    const dpr = dp.rate === 'am' ? rates.am : rates.pm;
+    const needs = dpr > 0 ? Math.ceil(forecast / dpr) : 0;
+
+    const onHand = parseHand(st.rows[di].onHandStr);
+    const suggested = Math.max(0, needs - onHand);
+
+    const actualStr = st.rows[di].actualStr;
+    const actual = parseFloat(actualStr) || 0;
+    const variance = actual ? actual - forecast : null;
+    const cooked = st.rows[di].cooked;
+    totalCooked += cooked;
+
+    const u = used[di];
+    if (u !== null) totalBeefsUsed += u;
+
+    const nc = suggested <= 1 ? 'needs-low' : suggested <= 3 ? 'needs-med' : 'needs-high';
+    const varHTML =
+      variance === null
+        ? '<span style="color:var(--text-light)">—</span>'
+        : `<span class="${variance >= 0 ? 'variance-pos' : 'variance-neg'}">${variance >= 0 ? '+' : ''}$${Math.round(Math.abs(variance)).toLocaleString()}</span>`;
+
+    const usedHTML =
+      u === null
+        ? '<span style="color:var(--text-light)">—</span>'
+        : `<span class="used-val">${Number.isInteger(u) ? u : Number(u).toFixed(1)}</span>`;
+
+    const onHandValAttr = String(st.rows[di].onHandStr ?? '').replace(/"/g, '&quot;');
+    const actualValAttr =
+      actualStr === '' || actualStr == null ? '' : String(actualStr).replace(/"/g, '&quot;');
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><span class="time-cell">${dp.label}</span></td>
+      <td><span class="window-cell">${dp.window}</span></td>
+      <td><strong>$${forecast.toLocaleString()}</strong></td>
+      <td><input class="num-input actual-input" type="number" inputmode="decimal" id="actual-${idx}-${di}" value="${actualValAttr}" placeholder="—" data-sheet="${dateStr}" data-dp="${dp.key}"></td>
+      <td>${varHTML}</td>
+      <td><span class="needs-val ${nc}">${needs}</span></td>
+      <td><input class="num-input inv-input" type="text" inputmode="decimal" autocomplete="off" id="oh-${idx}-${di}" value="${onHandValAttr}" placeholder="0" data-sheet="${dateStr}" data-dp="${dp.key}"></td>
+      <td><span class="needs-val ${nc}">${Number.isInteger(suggested) ? suggested : suggested.toFixed(1)}</span></td>
+      <td><input class="num-input inv-input cooked-input" type="number" inputmode="numeric" id="cooked-${idx}-${di}" value="${cooked}" min="0" placeholder="0" data-sheet="${dateStr}" data-dp="${dp.key}"></td>
+      <td>${usedHTML}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  const refresh = () => recalcSheet(idx);
+
+  DAYPARTS.forEach((dp, di) => {
+    const oh = document.getElementById(`oh-${idx}-${di}`);
+    const ck = document.getElementById(`cooked-${idx}-${di}`);
+    const ac = document.getElementById(`actual-${idx}-${di}`);
+    const bind = (el, field) => {
+      if (!el) return;
+      el.addEventListener('input', () => {
+        captureSheetStateFromDom(idx, dateStr);
+        ensureSheetState(dateStr);
+        const cur = sheetState[dateStr].rows[di];
+        const forecasts = forecastsForSheetDate(dateStr);
+        const f = forecasts[di];
+        let actualNum = null;
+        if (field === 'actual_sales') {
+          const v = el.value.trim();
+          if (v !== '') {
+            const p = parseFloat(v);
+            actualNum = Number.isFinite(p) ? p : null;
+          }
+        }
+        const curActualStr = String(cur.actualStr ?? '').trim();
+        const curActualParsed = curActualStr === '' ? null : parseFloat(curActualStr);
+        const payload = {
+          on_hand: cur.onHandStr,
+          cooked: cur.cooked,
+          actual_sales: Number.isFinite(curActualParsed) ? curActualParsed : null,
+          forecasted_sales: f,
+        };
+        if (field === 'actual_sales' && el.value.trim() === '') payload.actual_sales = null;
+        scheduleRowSave(dateStr, dp.key, payload);
+        refresh();
+      });
+    };
+    bind(oh, 'on_hand');
+    bind(ck, 'cooked');
+    bind(ac, 'actual_sales');
+  });
+
+  const prevTotal = dayTotal(basisStr) || PREV_FALLBACK.total;
+  document.getElementById(`prev-sales-${idx}`).textContent = '$' + Math.round(prevTotal).toLocaleString();
+  document.getElementById(`prev-label-${idx}`).textContent = formatDisplay(new Date(basisStr + 'T12:00:00'));
+
+  document.getElementById(`rate-am-${idx}`).textContent = '$' + rates.am.toLocaleString();
+  document.getElementById(`rate-pm-${idx}`).textContent = '$' + rates.pm.toLocaleString();
+
+  const drEl = document.getElementById(`daily-total-roasts-${idx}`);
+  if (drEl) drEl.textContent = totalCooked;
+
+  const beefsRun = document.getElementById(`beefs-running-${idx}`);
+  if (beefsRun) {
+    const bu = Number.isInteger(totalBeefsUsed) ? String(totalBeefsUsed) : totalBeefsUsed.toFixed(1);
+    beefsRun.textContent = 'Total roasts used (sum of Used column): ' + bu;
+  }
+
+  const totRow = document.getElementById(`totals-row-${idx}`);
+  if (totRow) {
+    totRow.innerHTML = `
+      <div class="total-pill"><span>Forecasted total</span> $${totalForecast.toLocaleString()}</div>
+      <div class="total-pill"><span>Total cooked</span> ${totalCooked}</div>
+    `;
+  }
+
+  const amActual = (parseFloat(st.rows[0].actualStr) || 0) + (parseFloat(st.rows[1].actualStr) || 0);
+  const pmActual = (parseFloat(st.rows[2].actualStr) || 0) + (parseFloat(st.rows[3].actualStr) || 0);
+  const amUsedAct = used[1] == null ? 0 : Math.max(0, used[1]);
+  const pmUsedAct =
+    (used[2] == null ? 0 : Math.max(0, used[2])) + (used[3] == null ? 0 : Math.max(0, used[3]));
+
+  const eodUsed = document.getElementById(`eod-used-${idx}`);
+  const eodAm = document.getElementById(`eod-am-${idx}`);
+  const eodPm = document.getElementById(`eod-pm-${idx}`);
+  if (eodUsed) {
+    const bu = Number.isInteger(totalBeefsUsed) ? String(totalBeefsUsed) : totalBeefsUsed.toFixed(1);
+    eodUsed.textContent = bu;
+  }
+  if (eodAm) {
+    eodAm.textContent = amUsedAct > 0 && amActual > 0 ? '$' + Math.round(amActual / amUsedAct).toLocaleString() : '—';
+  }
+  if (eodPm) {
+    eodPm.textContent = pmUsedAct > 0 && pmActual > 0 ? '$' + Math.round(pmActual / pmUsedAct).toLocaleString() : '—';
+  }
+
+  recalcTemper(idx);
+  restoreInputFocus(focusSnap);
+}
+
+function recalcTemper(idx) {
+  const todayRef = new Date();
+  todayRef.setHours(0, 0, 0, 0);
+  const tabAnchor = new Date();
+  tabAnchor.setHours(0, 0, 0, 0);
+  const day = addDays(tabAnchor, idx);
+  const dateStr = toDateStr(day);
+
+  const priorBlendStr = toDateStr(addDays(todayRef, -7));
+  const rates = lockedDprBySheet[dateStr] || { am: 500, pm: 500 };
+  const blended = blendedDollarPerRoastForTemper(priorBlendStr, rates);
+
+  let combinedSales = 0;
+  let totalRoastsNeeded = 0;
+  const breakdownLines = [];
+  for (let off = 0; off < 4; off++) {
+    const d = addDays(todayRef, off);
+    const ds = toDateStr(d);
+    const salesTot = totalForecastSalesForTemperingDay(ds);
+    combinedSales += salesTot;
+    const dayNeed = blended > 0 ? Math.ceil(salesTot / blended) : 0;
+    totalRoastsNeeded += dayNeed;
+    breakdownLines.push(
+      '<div class="temper-day-line"><span>' +
+        formatDisplay(d) +
+        '</span><span>$' +
+        Math.round(salesTot).toLocaleString() +
+        ' · ' +
+        dayNeed +
+        ' roasts</span></div>'
+    );
+  }
+
+  ensureTemperState(dateStr);
+  const tt = temperState[dateStr];
+  const t1 = document.getElementById(`t-temp-${idx}`);
+  const t2 = document.getElementById(`t-hold-${idx}`);
+  const t3 = document.getElementById(`t-cook-${idx}`);
+  if (t1 && document.activeElement !== t1) t1.value = String(tt.temperingNow);
+  if (t2 && document.activeElement !== t2) t2.value = String(tt.holding);
+  if (t3 && document.activeElement !== t3) t3.value = String(tt.cooking);
+
+  const tempering = parseInt(t1?.value, 10) || 0;
+  const holding = parseInt(t2?.value, 10) || 0;
+  const cooking = parseInt(t3?.value, 10) || 0;
+  const onHand = tempering + holding + cooking;
+  const toTemper = Math.max(0, totalRoastsNeeded - onHand);
+
+  const blendedEl = document.getElementById(`t-blended-${idx}`);
+  if (blendedEl) {
+    blendedEl.textContent =
+      'Blended $/roast (prior week same weekday): ~$' + Math.round(blended).toLocaleString();
+  }
+  const breakdownEl = document.getElementById(`t-breakdown-${idx}`);
+  if (breakdownEl) breakdownEl.innerHTML = breakdownLines.join('');
+
+  const projEl = document.getElementById(`t-proj-${idx}`);
+  if (projEl) projEl.textContent = '$' + Math.round(combinedSales).toLocaleString();
+  const needEl = document.getElementById(`t-need-${idx}`);
+  const resEl = document.getElementById(`t-result-${idx}`);
+  if (needEl) needEl.textContent = String(totalRoastsNeeded);
+  if (resEl) {
+    resEl.textContent = String(toTemper);
+    resEl.style.color = toTemper > 5 ? 'var(--arby-red)' : toTemper > 2 ? 'var(--orange)' : 'var(--green)';
+  }
+
+  const bindTemper = (el, key) => {
+    if (!el || el.dataset.bound === '1') return;
+    el.dataset.bound = '1';
+    el.addEventListener('input', () => {
+      ensureTemperState(dateStr);
+      temperState[dateStr][key] = Math.max(0, parseInt(el.value, 10) || 0);
+      scheduleTemperSave(dateStr);
+      recalcTemper(idx);
+    });
+  };
+  bindTemper(t1, 'temperingNow');
+  bindTemper(t2, 'holding');
+  bindTemper(t3, 'cooking');
+}
+
+function wirePrint(idx) {
+  const btn = document.getElementById(`print-${idx}`);
+  if (!btn || btn.dataset.bound === '1') return;
+  btn.dataset.bound = '1';
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.sheet-card').forEach((c) => c.classList.remove('print-only'));
+    const card = document.getElementById(`sheet-${idx}`);
+    if (card) card.classList.add('print-only');
+    window.print();
+    if (card) card.classList.remove('print-only');
+  });
+}
+
+function buildSheetCard(idx, day, dateStr) {
+  const basisStr = toDateStr(addDays(day, -7));
+  const prevTotal = dayTotal(basisStr) || PREV_FALLBACK.total;
+  const proj4 = Math.round(prevTotal * 4);
+
+  const card = document.createElement('div');
+  card.className = 'sheet-card' + (idx === 0 ? ' active' : '');
+  card.id = 'sheet-' + idx;
+  card.innerHTML = `
+    <div class="sheet-head">
+      <div>
+        <div class="sheet-title">${formatFull(day)}</div>
+        <div class="sheet-sub">Forecasts from ${formatDisplay(new Date(basisStr + 'T12:00:00'))} — same weekday last week</div>
+      </div>
+      <button type="button" class="print-btn" id="print-${idx}" title="Print this day">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2M6 14h12v8H6z"/></svg>
+        Print sheet
+      </button>
+    </div>
+
+    <div class="top-row">
+      <div class="info-box">
+        <div class="info-label">Basis day sales</div>
+        <div class="info-val" id="prev-sales-${idx}">$${Math.round(prevTotal).toLocaleString()}</div>
+        <div class="info-sub" id="prev-label-${idx}">${formatDisplay(new Date(basisStr + 'T12:00:00'))}</div>
+      </div>
+      <div class="info-box">
+        <div class="info-label">4× basis (tempering)</div>
+        <div class="info-val">$${proj4.toLocaleString()}</div>
+        <div class="info-sub">Projected four-day sales $</div>
+      </div>
+      <div class="info-box">
+        <div class="info-label">Total cooked (today)</div>
+        <div class="info-val" id="daily-total-roasts-${idx}">0</div>
+        <div class="info-sub">Sum of Cooked column</div>
+      </div>
+    </div>
+
+    <div class="rates-row">
+      <strong>Locked $ / roast</strong>
+      <span class="rate-chip"><span class="meta">AM (6am + 10am drops)</span> <span id="rate-am-${idx}">—</span></span>
+      <span class="rate-chip"><span class="meta">PM (2pm + 5pm drops)</span> <span id="rate-pm-${idx}">—</span></span>
+      <span style="color:var(--text-muted);font-size:11px;max-width:420px">Set once when this tab first calculates, from last week’s same weekday sheet. Does not change until you refresh the page.</span>
+    </div>
+
+    <div class="section-head">Sales &amp; cooking</div>
+    <div class="table-wrap">
+      <table class="cook-table" aria-label="Roast sheet">
+        <thead>
+          <tr>
+            <th>Drop time</th>
+            <th>Window</th>
+            <th>Forecasted sales</th>
+            <th>Actual sales</th>
+            <th>Variance</th>
+            <th>Needs</th>
+            <th>On hand</th>
+            <th>Suggested</th>
+            <th>Cooked</th>
+            <th>Used</th>
+          </tr>
+        </thead>
+        <tbody id="tbody-${idx}"></tbody>
+      </table>
+    </div>
+
+    <div class="beefs-running" id="beefs-running-${idx}"></div>
+    <div class="totals-row" id="totals-row-${idx}"></div>
+
+    <div class="section-head" style="margin-top:1.2rem">Tempering</div>
+    <div class="temper-card">
+      <div class="temper-blended-line" id="t-blended-${idx}"></div>
+      <div class="temper-breakdown" id="t-breakdown-${idx}"></div>
+      <div class="temper-grid">
+        <div class="temper-box">
+          <div class="temper-box-label">4-day projected sales (combined)</div>
+          <div class="temper-box-val" id="t-proj-${idx}">$0</div>
+        </div>
+        <div class="temper-box">
+          <div class="temper-box-label">Total roasts needed</div>
+          <div class="temper-box-val" id="t-need-${idx}">—</div>
+        </div>
+        <div class="temper-box">
+          <div class="temper-box-label">Roasts to temper</div>
+          <div class="temper-box-val big-red" id="t-result-${idx}">—</div>
+        </div>
+        <div class="temper-box">
+          <div class="temper-box-label">Tempering now</div>
+          <input class="num-input" type="number" id="t-temp-${idx}" min="0" value="0">
+        </div>
+        <div class="temper-box">
+          <div class="temper-box-label">In holding oven</div>
+          <input class="num-input" type="number" id="t-hold-${idx}" min="0" value="0">
+        </div>
+        <div class="temper-box">
+          <div class="temper-box-label">In cooking oven</div>
+          <input class="num-input" type="number" id="t-cook-${idx}" min="0" value="0">
+        </div>
+      </div>
+    </div>
+
+    <div class="footnotes">
+      · Needs = forecast ÷ locked AM or PM $/roast (ceil).<br>
+      · Used = (previous on hand + previous cooked) − current on hand; first drop shows —.<br>
+      · Suggested = max(0, needs − on hand).<br>
+      · Tempering: four-day projected sales ÷ average of locked AM &amp; PM rates; roasts to temper = needed − (tempering now + holding + cooking).
+    </div>
+
+    <div class="eod-summary" id="eod-summary-${idx}">
+      <div class="eod-summary-title">End of day</div>
+      <div class="eod-summary-grid">
+        <div>
+          <span class="eod-label">Total roasts used</span>
+          <span class="eod-val" id="eod-used-${idx}">—</span>
+        </div>
+        <div>
+          <span class="eod-label">Actual AM $ / roast</span>
+          <span class="eod-val" id="eod-am-${idx}">—</span>
+        </div>
+        <div>
+          <span class="eod-label">Actual PM $ / roast</span>
+          <span class="eod-val" id="eod-pm-${idx}">—</span>
+        </div>
+      </div>
+    </div>
+  `;
+  return card;
+}
+
+function buildTabsAndSheets() {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  document.getElementById('header-date').innerHTML =
+    formatFull(today) +
+    '<br><span style="font-size:11px;opacity:0.78">Local time ' +
+    new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) +
+    '</span>';
+
+  const tabsEl = document.getElementById('tabs');
+  const sheetsEl = document.getElementById('sheets');
+  tabsEl.innerHTML = '';
+  sheetsEl.innerHTML = '';
+
+  for (let idx = 0; idx < 7; idx++) {
+    const day = addDays(today, idx);
+    const dateStr = toDateStr(day);
+
+    const tab = document.createElement('button');
+    tab.type = 'button';
+    tab.className = 'day-tab' + (idx === 0 ? ' active' : '');
+    tab.innerHTML = (idx === 0 ? '<span class="today-dot" aria-hidden="true"></span>' : '') + formatDisplay(day);
+    tab.addEventListener('click', () => {
+      tabsEl.querySelectorAll('.day-tab').forEach((t) => t.classList.remove('active'));
+      sheetsEl.querySelectorAll('.sheet-card').forEach((s) => s.classList.remove('active'));
+      tab.classList.add('active');
+      document.getElementById('sheet-' + idx).classList.add('active');
+    });
+    tabsEl.appendChild(tab);
+
+    sheetsEl.appendChild(buildSheetCard(idx, day, dateStr));
+  }
+
+  for (let idx = 0; idx < 7; idx++) {
+    recalcSheet(idx);
+    wirePrint(idx);
+  }
+}
+
+function handleCsvFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    const result = parseCSV(e.target.result);
+    const status = document.getElementById('upload-status');
+    if (result.error) {
+      status.className = 'upload-status error';
+      status.textContent = result.error;
+      return;
+    }
+    if (!result.date || !(result.date instanceof Date) || isNaN(result.date.getTime())) {
+      status.className = 'upload-status error';
+      status.textContent = 'Could not read a valid date from this CSV.';
+      return;
+    }
+    const srcDateStr = toDateStr(result.date);
+    salesByDate[srcDateStr] = result.hourData;
+    const targetD = addDays(result.date, 7);
+    const targetStr = toDateStr(targetD);
+    status.className = 'upload-status success';
+    status.textContent =
+      'Loaded ' +
+      result.date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) +
+      ' → forecasts staged for ' +
+      targetD.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) +
+      ' (next week).';
+
+    const hourlySaved = await upsertHourlySalesFromCsv(srcDateStr, result.hourData);
+    if (!hourlySaved) {
+      status.className = 'upload-status error';
+      status.textContent =
+        'CSV parsed, but hourly sales could not be saved to the server. Check connection and try again.';
+      return;
+    }
+
+    const dailyTotalsSaved = await upsertDailyTotalsForCsvDate(srcDateStr);
+    if (!dailyTotalsSaved) {
+      status.className = 'upload-status error';
+      status.textContent =
+        'CSV parsed, but daily totals could not be saved to the server. Check connection and try again.';
+      return;
+    }
+
+    const saved = await upsertForecastsFromCsvBasis(targetStr, srcDateStr);
+    if (!saved) {
+      status.className = 'upload-status error';
+      status.textContent =
+        'CSV parsed, but forecasts could not be saved to the server. Check connection and try again.';
+      return;
+    }
+
+    dbForecast[targetStr] = Object.create(null);
+    for (const dp of DAYPARTS) {
+      const n = Math.round(windowSales(srcDateStr, dp.start, dp.end, dp.nextEnd));
+      if (n > 0) dbForecast[targetStr][dp.key] = n;
+    }
+
+    for (const k of Object.keys(lockedDprBySheet)) delete lockedDprBySheet[k];
+    for (let i = 0; i < 7; i++) recalcSheet(i);
+  };
+  reader.readAsText(file);
+}
+
+async function init() {
+  hub = createHub();
+  if (!hub) setSyncStatus('offline');
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const endStr = toDateStr(addDays(today, 6));
+  const loadStart = toDateStr(addDays(today, -14));
+
+  await loadRemoteForRange(loadStart, endStr);
+
+  buildTabsAndSheets();
+
+  document.getElementById('pick-csv').addEventListener('click', () => {
+    document.getElementById('csv-input').click();
+  });
+  document.getElementById('csv-input').addEventListener('change', (ev) => {
+    const f = ev.target.files && ev.target.files[0];
+    if (f) handleCsvFile(f);
+    ev.target.value = '';
+  });
+  const zone = document.getElementById('drop-zone');
+  zone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    zone.classList.add('dragover');
+  });
+  zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+  zone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    zone.classList.remove('dragover');
+    const f = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) handleCsvFile(f);
+  });
+
+  window.addEventListener('online', () => {
+    if (!online) setSyncStatus('saving');
+  });
+  window.addEventListener('offline', () => setSyncStatus('offline'));
+}
+
+init();
+</script>
+</body>
+</html>
