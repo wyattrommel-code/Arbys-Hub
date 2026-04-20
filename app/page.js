@@ -1,47 +1,55 @@
 import Link from "next/link";
 
-const nav = [
-  { href: "/waste", label: "Waste" },
-  { href: "/inventory", label: "Inventory" },
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/roast-beef", label: "Roast beef (fullscreen)" },
+const navCards = [
+  {
+    href: "/waste",
+    title: "Waste Tracker",
+    description: "Log food waste with shift and retail-loss totals.",
+  },
+  {
+    href: "/roast-beef",
+    title: "Roast Beef",
+    description: "Open the daily roast beef sheet and forecast view.",
+  },
+  {
+    href: "/inventory",
+    title: "Inventory",
+    description: "Inventory tools placeholder page.",
+  },
+  {
+    href: "/dashboard",
+    title: "Dashboard",
+    description: "GM dashboard placeholder page.",
+  },
 ];
 
 export default function Home() {
   return (
-    <div className="flex min-h-full flex-1 flex-col bg-zinc-50 dark:bg-zinc-950">
-      <header className="border-b border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900">
-        <h1 className="text-center text-xl font-semibold tracking-tight text-zinc-900 sm:text-2xl dark:text-zinc-50">
-          Arby&apos;s Ops
-        </h1>
-        <p className="mt-1 text-center text-xs text-zinc-600 dark:text-zinc-400">
-          Roast beef sheet below; other sections open in their own pages.
-        </p>
-      </header>
+    <section className="mx-auto flex w-full max-w-4xl flex-1 flex-col px-4 py-6 sm:px-6 sm:py-8">
+      <p className="mb-5 text-sm text-zinc-600 dark:text-zinc-400">
+        Choose a section to open.
+      </p>
 
       <nav
-        className="flex flex-wrap items-center justify-center gap-2 border-b border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900"
-        aria-label="Other sections"
+        className="grid gap-3 sm:grid-cols-2"
+        aria-label="Operations sections"
       >
-        {nav.map(({ href, label }) => (
+        {navCards.map(({ href, title, description }) => (
           <Link
             key={href}
             href={href}
-            className="rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-medium text-zinc-900 transition-colors hover:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-50 dark:hover:bg-zinc-700 sm:text-sm"
+            className="group rounded-xl border border-[#C8102E]/20 bg-white p-4 shadow-sm transition hover:border-[#C8102E] hover:shadow-md active:translate-y-px dark:bg-zinc-900"
           >
-            {label}
+            <p className="text-lg font-semibold text-[#C8102E]">{title}</p>
+            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+              {description}
+            </p>
+            <p className="mt-3 text-sm font-medium text-zinc-700 group-hover:text-[#C8102E] dark:text-zinc-300">
+              Open section →
+            </p>
           </Link>
         ))}
       </nav>
-
-      <main className="flex min-h-[min(100dvh,900px)] flex-1 flex-col">
-        <h2 className="sr-only">Roast beef daily sheet</h2>
-        <iframe
-          title="Roast beef daily sheet"
-          src="/roast-beef/embed"
-          className="min-h-0 w-full flex-1 border-0"
-        />
-      </main>
-    </div>
+    </section>
   );
 }

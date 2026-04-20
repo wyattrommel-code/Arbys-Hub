@@ -5,7 +5,7 @@ export const metadata = {
 
 export default function RoastBeefPage() {
   return (
-    <div className="flex h-[100dvh] flex-col bg-zinc-100 dark:bg-zinc-950">
+    <div className="flex min-h-0 flex-1 flex-col bg-zinc-100 dark:bg-zinc-950">
       <iframe
         title="Roast beef daily sheet"
         src="/roast-beef/embed"
