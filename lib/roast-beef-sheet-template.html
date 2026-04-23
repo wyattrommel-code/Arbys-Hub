@@ -1293,7 +1293,7 @@ function recalcSheet(idx) {
         <td><span class="needs-val ${nc}">${needs}</span></td>
         <td><input class="num-input inv-input" type="text" inputmode="decimal" autocomplete="off" id="oh-${idx}-${di}" value="${onHandValAttr}" placeholder="0" data-sheet="${dateStr}" data-dp="${dp.key}"></td>
         <td><span class="needs-val ${nc}">${Number.isInteger(suggested) ? suggested : suggested.toFixed(1)}</span></td>
-        <td><input class="num-input inv-input cooked-input" type="number" inputmode="numeric" id="cooked-${idx}-${di}" value="${cooked}" min="0" placeholder="0" data-sheet="${dateStr}" data-dp="${dp.key}"></td>
+        <td><input class="num-input inv-input cooked-input" type="number" inputmode="numeric" id="cooked-${idx}-${di}" value="${cooked}" min="0" placeholder="0" aria-label="Put in" data-sheet="${dateStr}" data-dp="${dp.key}"></td>
         <td>${usedHTML}</td>
       `;
     }
@@ -1361,7 +1361,7 @@ function recalcSheet(idx) {
   if (totRow) {
     totRow.innerHTML = `
       <div class="total-pill"><span>Forecasted total</span> $${totalForecast.toLocaleString()}</div>
-      <div class="total-pill"><span>Total cooked</span> ${totalCooked}</div>
+      <div class="total-pill"><span>Total put in</span> ${totalCooked}</div>
     `;
   }
 
@@ -1515,9 +1515,9 @@ function buildSheetCard(idx, day, dateStr) {
         <div class="info-sub">Projected four-day sales $</div>
       </div>
       <div class="info-box">
-        <div class="info-label">Total cooked (today)</div>
+        <div class="info-label">Total put in (today)</div>
         <div class="info-val" id="daily-total-roasts-${idx}">0</div>
-        <div class="info-sub">Sum of Cooked column</div>
+        <div class="info-sub">Sum of Put in column</div>
       </div>
     </div>
 
@@ -1541,7 +1541,7 @@ function buildSheetCard(idx, day, dateStr) {
             <th>Needs</th>
             <th>On hand</th>
             <th>Suggested</th>
-            <th>Cooked</th>
+            <th>Put in</th>
             <th>Used</th>
           </tr>
         </thead>
@@ -1586,7 +1586,7 @@ function buildSheetCard(idx, day, dateStr) {
 
     <div class="footnotes">
       · Needs = forecast ÷ locked AM or PM $/roast (ceil).<br>
-      · Used = (previous on hand + previous cooked) − current on hand; first drop shows —.<br>
+      · Used = (previous on hand + previous put in) − current on hand; first drop shows —.<br>
       · Suggested = max(0, needs − on hand).<br>
       · Tempering: four-day projected dollars ÷ average of locked AM &amp; PM rates; roasts to temper = needed − (tempering now + holding + cooking).
     </div>
