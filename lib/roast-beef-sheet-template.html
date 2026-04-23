@@ -257,6 +257,13 @@
     font-size: 14px;
   }
   .rate-chip span.meta { font-size: 11px; font-weight: 600; color: var(--text-muted); }
+  .rate-est {
+    margin-left: 6px;
+    color: var(--orange);
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: lowercase;
+  }
 
   .section-head {
     font-size: 11px;
@@ -599,6 +606,9 @@ const PREV_FALLBACK = {
   total: 3598,
   roasts: 7,
 };
+const MIN_DPR_REALISTIC = 300;
+const MAX_DPR_REALISTIC = 800;
+const SAFE_DPR_FALLBACK = 500;
 
 let salesByDate = { ...DEFAULT_SALES };
 /** Optional per-daypart forecasts restored from Supabase (overrides hourly rollup). */
@@ -689,6 +699,10 @@ function parseOnHandOrNull(str) {
 
 function clampDpr(v) {
   return Math.max(50, Math.min(2000, Math.round(v)));
+}
+
+function isRealisticDpr(v) {
+  return Number.isFinite(v) && v >= MIN_DPR_REALISTIC && v <= MAX_DPR_REALISTIC;
 }
 
 /** Sum net sales for [startH, endH) on dateStr; if nextDayExclusiveEnd > 0, add [0, nextDayExclusiveEnd) on the following calendar day. */
@@ -927,9 +941,30 @@ function deriveLockedRatesFromPriorWeek(priorDateStr) {
   if (aAm <= 0) aAm = fAm;
   if (aPm <= 0) aPm = fPm;
 
-  const am = amUsed > 0 ? clampDpr(aAm / amUsed) : clampDpr(PREV_FALLBACK.total / PREV_FALLBACK.roasts);
-  const pm = pmUsed > 0 ? clampDpr(aPm / pmUsed) : clampDpr(PREV_FALLBACK.total / PREV_FALLBACK.roasts);
-  return { am, pm, amUsed, pmUsed };
+  const amRaw = amUsed > 0 ? aAm / amUsed : NaN;
+  const pmRaw = pmUsed > 0 ? aPm / pmUsed : NaN;
+  const totalUsed = amUsed + pmUsed;
+  const blendedRaw = totalUsed > 0 ? (aAm + aPm) / totalUsed : NaN;
+  const blendedSafe = isRealisticDpr(blendedRaw) ? blendedRaw : SAFE_DPR_FALLBACK;
+
+  let amEstimated = false;
+  let pmEstimated = false;
+
+  let amFinal = amRaw;
+  if (!isRealisticDpr(amRaw)) {
+    amEstimated = true;
+    amFinal = blendedSafe;
+  }
+
+  let pmFinal = pmRaw;
+  if (!isRealisticDpr(pmRaw)) {
+    pmEstimated = true;
+    pmFinal = blendedSafe;
+  }
+
+  const am = clampDpr(amFinal);
+  const pm = clampDpr(pmFinal);
+  return { am, pm, amUsed, pmUsed, amEstimated, pmEstimated };
 }
 
 function scheduleRowSave(sheetDate, daypartKey, payload) {
@@ -1345,8 +1380,14 @@ function recalcSheet(idx) {
   document.getElementById(`prev-sales-${idx}`).textContent = '$' + Math.round(prevTotal).toLocaleString();
   document.getElementById(`prev-label-${idx}`).textContent = formatDisplay(new Date(basisStr + 'T12:00:00'));
 
-  document.getElementById(`rate-am-${idx}`).textContent = '$' + rates.am.toLocaleString();
-  document.getElementById(`rate-pm-${idx}`).textContent = '$' + rates.pm.toLocaleString();
+  const amRateEl = document.getElementById(`rate-am-${idx}`);
+  const pmRateEl = document.getElementById(`rate-pm-${idx}`);
+  if (amRateEl) {
+    amRateEl.innerHTML = '$' + rates.am.toLocaleString() + (rates.amEstimated ? '<span class="rate-est">est.</span>' : '');
+  }
+  if (pmRateEl) {
+    pmRateEl.innerHTML = '$' + rates.pm.toLocaleString() + (rates.pmEstimated ? '<span class="rate-est">est.</span>' : '');
+  }
 
   const drEl = document.getElementById(`daily-total-roasts-${idx}`);
   if (drEl) drEl.textContent = totalPutIn;
