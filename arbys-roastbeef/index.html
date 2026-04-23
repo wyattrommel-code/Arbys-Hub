@@ -304,11 +304,6 @@
   table.cook-table td:first-child { text-align: left; }
   table.cook-table tr:last-child td { border-bottom: none; }
   table.cook-table tbody tr:hover td { background: #fafaf8; }
-  table.cook-table tr.close-row td {
-    border-top: 3px solid var(--arby-dark);
-    background: #f3f3f1;
-    font-weight: 700;
-  }
 
   .time-cell { font-weight: 700; font-size: 13px; white-space: nowrap; }
   .window-cell { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
@@ -541,11 +536,11 @@
  *
  * create table if not exists roast_entries (
  *   sheet_date date not null,
- *   daypart text not null check (daypart in ('6am','10am','2pm','5pm','close','daily_totals')),
+ *   daypart text not null check (daypart in ('6am','10am','2pm','5pm','daily_totals')),
  *   forecasted_sales numeric default 0,
  *   actual_sales numeric,
  *   on_hand text,
- *   put_in integer default 0,
+ *   cooked integer default 0,
  *   updated_at timestamptz default now(),
  *   primary key (sheet_date, daypart)
  * );
@@ -566,8 +561,9 @@
  * );
  */
 
-const SUPABASE_URL = __NEXT_PUBLIC_SUPABASE_URL_JSON__;
-const SUPABASE_ANON_KEY = __NEXT_PUBLIC_SUPABASE_ANON_KEY_JSON__;
+const SUPABASE_URL = 'https://vtsefahwsluutqazphzn.supabase.co';
+const SUPABASE_ANON_KEY =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ0c2VmYWh3c2x1dXRxYXpwaHpuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU2NTg0NDgsImV4cCI6MjA5MTIzNDQ0OH0.gzSn2JNpsBCFXyrre6Kri2zhxeCOu6j0sD2RLUxNDjE';
 
 const DAYPARTS = [
   { key: '6am', label: '6:00 AM', window: '6am – 2pm', start: 6, end: 14, rate: 'am' },
@@ -582,7 +578,6 @@ const DAYPARTS = [
     nextEnd: 1,
     rate: 'pm',
   },
-  { key: 'close', label: 'Close', window: 'End of day count', start: 21, end: 24, rate: 'pm', isClose: true },
 ];
 
 const DEFAULT_SALES = {
@@ -760,7 +755,7 @@ async function upsertHourlySalesFromCsv(saleDateStr, hourData) {
 function ensureSheetState(dateStr) {
   if (!sheetState[dateStr]) {
     sheetState[dateStr] = {
-      rows: DAYPARTS.map(() => ({ onHandStr: '', putIn: 0, actualStr: '' })),
+      rows: DAYPARTS.map(() => ({ onHandStr: '', cooked: 0, actualStr: '' })),
     };
   }
 }
@@ -774,7 +769,7 @@ function ensureTemperState(dateStr) {
 function rowFromDb(r) {
   return {
     onHandStr: r.on_hand != null && r.on_hand !== '' ? String(r.on_hand) : '',
-    putIn: Number.isFinite(Number(r.put_in)) ? Math.max(0, Math.round(Number(r.put_in))) : 0,
+    cooked: Number.isFinite(Number(r.cooked)) ? Math.max(0, Math.round(Number(r.cooked))) : 0,
     actualStr:
       r.actual_sales != null && r.actual_sales !== ''
         ? String(r.actual_sales)
@@ -810,7 +805,7 @@ function applyDailyTotalsFromRows(dateStr, rows) {
   for (const r of rows || []) {
     if (r.daypart !== 'daily_totals') continue;
     const am = parseFloat(String(r.on_hand ?? '').replace(/[$,]/g, ''));
-    const pm = Number(r.put_in);
+    const pm = Number(r.cooked);
     dailyTotalsSales[dateStr] = {
       am: Number.isFinite(am) ? am : 0,
       pm: Number.isFinite(pm) ? pm : 0,
@@ -819,41 +814,27 @@ function applyDailyTotalsFromRows(dateStr, rows) {
   }
 }
 
-function dailyTotalsWholesaleCost(dt) {
-  if (!dt) return 0;
-  const amSales = Number(dt.am) || 0;
-  const pmSales = Number(dt.pm) || 0;
-  return amSales + pmSales;
-}
-
 function totalForecastSalesForTemperingDay(sheetDateStr) {
   const dt = dailyTotalsSales[sheetDateStr];
-  const dailyTotalsSalesDollars = dailyTotalsWholesaleCost(dt);
-  if (dailyTotalsSalesDollars > 0) {
-    return dailyTotalsSalesDollars;
-  }
-  const forecasts = forecastsForSheetDate(sheetDateStr);
-  const projected = forecasts.reduce((sum, n) => sum + (Number(n) || 0), 0);
-  if (projected > 0) {
-    return projected;
+  if (dt && dt.am + dt.pm > 0) {
+    return dt.am + dt.pm;
   }
   const basis = toDateStr(addDays(new Date(sheetDateStr + 'T12:00:00'), -7));
   return dayTotal(basis);
 }
 
-function totalPutInSumPriorWeek(priorDateStr) {
+function totalCookedSumPriorWeek(priorDateStr) {
   ensureSheetState(priorDateStr);
   const st = sheetState[priorDateStr];
-  return DAYPARTS.reduce((s, _, i) => s + st.rows[i].putIn, 0);
+  return DAYPARTS.reduce((s, _, i) => s + st.rows[i].cooked, 0);
 }
 
-/** Blended $/roast for tempering: prior-week sales dollars / prior-week roasts used. */
+/** Blended $/roast for tempering: (daily_totals am+pm) ÷ sum(cooked), else avg of locked AM/PM. */
 function blendedDollarPerRoastForTemper(priorDateStr, ratesFallback) {
   const dt = dailyTotalsSales[priorDateStr];
-  const ckSum = totalPutInSumPriorWeek(priorDateStr);
+  const ckSum = totalCookedSumPriorWeek(priorDateStr);
   if (dt && ckSum > 0) {
-    const totalSales = (Number(dt.am) || 0) + (Number(dt.pm) || 0);
-    if (totalSales > 0) return totalSales / ckSum;
+    return (dt.am + dt.pm) / ckSum;
   }
   return (ratesFallback.am + ratesFallback.pm) / 2;
 }
@@ -862,7 +843,6 @@ function forecastsForSheetDate(dateStr) {
   const basis = toDateStr(addDays(new Date(dateStr + 'T12:00:00'), -7));
   const slot = dbForecast[dateStr];
   return DAYPARTS.map((dp) => {
-    if (dp.isClose) return 0;
     const v = slot && slot[dp.key] != null ? Number(slot[dp.key]) : NaN;
     if (Number.isFinite(v) && v > 0) {
       return Math.round(v);
@@ -879,7 +859,7 @@ function computeUsedChain(st) {
     const prevOh = parseOnHandOrNull(prevRow.onHandStr);
     const curOh = parseOnHandOrNull(curRow.onHandStr);
     if (prevOh === null || curOh === null) return null;
-    return prevOh + prevRow.putIn - curOh;
+    return prevOh + prevRow.cooked - curOh;
   });
 }
 
@@ -890,32 +870,23 @@ function deriveLockedRatesFromPriorWeek(priorDateStr) {
   const oh6 = parseOnHandOrNull(stP.rows[0].onHandStr);
   const oh10 = parseOnHandOrNull(stP.rows[1].onHandStr);
   const oh2 = parseOnHandOrNull(stP.rows[2].onHandStr);
-  const oh5 = parseOnHandOrNull(stP.rows[3].onHandStr);
-  const ohClose = parseOnHandOrNull(stP.rows[4].onHandStr);
-  const ck6 = stP.rows[0].putIn;
-  const ck10 = stP.rows[1].putIn;
-  const ck2 = stP.rows[2].putIn;
-  const ck5 = stP.rows[3].putIn;
+  const ck6 = stP.rows[0].cooked;
+  const ck10 = stP.rows[1].cooked;
+  const ck2 = stP.rows[2].cooked;
+  const ck5 = stP.rows[3].cooked;
   let amUsed = 0;
   if (oh6 !== null && oh10 !== null && oh2 !== null) {
     amUsed = Math.max(0, oh6 + ck6 - oh10 + (oh10 + ck10 - oh2));
   }
-  let pmUsed = Math.max(0, ck2 + ck5);
-  if (oh2 !== null && oh5 !== null && ohClose !== null) {
-    const used2To5 = Math.max(0, oh2 + ck2 - oh5);
-    const used5ToClose = Math.max(0, oh5 + ck5 - ohClose);
-    pmUsed = used2To5 + used5ToClose;
-  }
+  const pmUsed = Math.max(0, ck2 + ck5);
 
   const fcPrior = forecastsForSheetDate(priorDateStr);
   let fAm = fcPrior[0] + fcPrior[1];
   let fPm = fcPrior[2] + fcPrior[3];
   const dtot = dailyTotalsSales[priorDateStr];
   if (dtot) {
-    const amSales = Number(dtot.am) || 0;
-    const pmSales = Number(dtot.pm) || 0;
-    if (amSales > 0) fAm = amSales;
-    if (pmSales > 0) fPm = pmSales;
+    fAm = dtot.am;
+    fPm = dtot.pm;
   }
 
   const act = DAYPARTS.map((_, i) => {
@@ -943,7 +914,7 @@ function scheduleRowSave(sheetDate, daypartKey, payload) {
         sheet_date: sheetDate,
         daypart: daypartKey,
         on_hand: payload.on_hand,
-        put_in: payload.put_in,
+        cooked: payload.cooked,
         actual_sales: payload.actual_sales,
         forecasted_sales: payload.forecasted_sales,
       };
@@ -1086,10 +1057,10 @@ function captureSheetStateFromDom(idx, dateStr) {
   const st = sheetState[dateStr];
   DAYPARTS.forEach((dp, di) => {
     const oh = document.getElementById(`oh-${idx}-${di}`);
-    const putInEl = document.getElementById(`put_in-${idx}-${di}`);
+    const ck = document.getElementById(`cooked-${idx}-${di}`);
     const ac = document.getElementById(`actual-${idx}-${di}`);
     if (oh) st.rows[di].onHandStr = oh.value;
-    if (putInEl) st.rows[di].putIn = parseInt(putInEl.value, 10) || 0;
+    if (ck) st.rows[di].cooked = parseInt(ck.value, 10) || 0;
     if (ac) st.rows[di].actualStr = ac.value;
   });
 }
@@ -1170,7 +1141,7 @@ async function upsertDailyTotalsForCsvDate(saleDateStr) {
         sheet_date: saleDateStr,
         daypart: 'daily_totals',
         on_hand: String(am),
-        put_in: pm,
+        cooked: pm,
         forecasted_sales: 0,
       },
       { onConflict: 'sheet_date,daypart' }
@@ -1186,7 +1157,7 @@ async function upsertDailyTotalsForCsvDate(saleDateStr) {
 
 async function upsertForecastsFromCsvBasis(targetDateStr, basisDateStr) {
   if (!hub) return false;
-  const ops = DAYPARTS.filter((dp) => !dp.isClose).map((dp) => ({
+  const ops = DAYPARTS.map((dp) => ({
     sheet_date: targetDateStr,
     daypart: dp.key,
     forecasted_sales: Math.round(windowSales(basisDateStr, dp.start, dp.end, dp.nextEnd)),
@@ -1230,7 +1201,7 @@ function recalcSheet(idx) {
   if (!tbody) return;
 
   let totalForecast = 0;
-  let totalPutIn = 0;
+  let totalCooked = 0;
   let totalBeefsUsed = 0;
 
   tbody.innerHTML = '';
@@ -1247,8 +1218,8 @@ function recalcSheet(idx) {
     const actualStr = st.rows[di].actualStr;
     const actual = parseFloat(actualStr) || 0;
     const variance = actual ? actual - forecast : null;
-    const putIn = st.rows[di].putIn;
-    totalPutIn += putIn;
+    const cooked = st.rows[di].cooked;
+    totalCooked += cooked;
 
     const u = used[di];
     if (u !== null) totalBeefsUsed += u;
@@ -1269,34 +1240,18 @@ function recalcSheet(idx) {
       actualStr === '' || actualStr == null ? '' : String(actualStr).replace(/"/g, '&quot;');
 
     const tr = document.createElement('tr');
-    if (dp.isClose) {
-      tr.className = 'close-row';
-      tr.innerHTML = `
-        <td><span class="time-cell">${dp.label}</span></td>
-        <td><span class="window-cell">${dp.window}</span></td>
-        <td><span style="color:var(--text-light)">—</span></td>
-        <td><span style="color:var(--text-light)">—</span></td>
-        <td><span style="color:var(--text-light)">—</span></td>
-        <td><span style="color:var(--text-light)">—</span></td>
-        <td><input class="num-input inv-input" type="text" inputmode="decimal" autocomplete="off" id="oh-${idx}-${di}" value="${onHandValAttr}" placeholder="0" data-sheet="${dateStr}" data-dp="${dp.key}"></td>
-        <td><span style="color:var(--text-light)">—</span></td>
-        <td><span style="color:var(--text-light)">—</span></td>
-        <td>${usedHTML}</td>
-      `;
-    } else {
-      tr.innerHTML = `
-        <td><span class="time-cell">${dp.label}</span></td>
-        <td><span class="window-cell">${dp.window}</span></td>
-        <td><strong>$${forecast.toLocaleString()}</strong></td>
-        <td><input class="num-input actual-input" type="number" inputmode="decimal" id="actual-${idx}-${di}" value="${actualValAttr}" placeholder="—" data-sheet="${dateStr}" data-dp="${dp.key}"></td>
-        <td>${varHTML}</td>
-        <td><span class="needs-val ${nc}">${needs}</span></td>
-        <td><input class="num-input inv-input" type="text" inputmode="decimal" autocomplete="off" id="oh-${idx}-${di}" value="${onHandValAttr}" placeholder="0" data-sheet="${dateStr}" data-dp="${dp.key}"></td>
-        <td><span class="needs-val ${nc}">${Number.isInteger(suggested) ? suggested : suggested.toFixed(1)}</span></td>
-        <td><input class="num-input inv-input put-in-input" type="number" inputmode="numeric" id="put_in-${idx}-${di}" value="${putIn}" min="0" placeholder="0" aria-label="Put in" data-sheet="${dateStr}" data-dp="${dp.key}"></td>
-        <td>${usedHTML}</td>
-      `;
-    }
+    tr.innerHTML = `
+      <td><span class="time-cell">${dp.label}</span></td>
+      <td><span class="window-cell">${dp.window}</span></td>
+      <td><strong>$${forecast.toLocaleString()}</strong></td>
+      <td><input class="num-input actual-input" type="number" inputmode="decimal" id="actual-${idx}-${di}" value="${actualValAttr}" placeholder="—" data-sheet="${dateStr}" data-dp="${dp.key}"></td>
+      <td>${varHTML}</td>
+      <td><span class="needs-val ${nc}">${needs}</span></td>
+      <td><input class="num-input inv-input" type="text" inputmode="decimal" autocomplete="off" id="oh-${idx}-${di}" value="${onHandValAttr}" placeholder="0" data-sheet="${dateStr}" data-dp="${dp.key}"></td>
+      <td><span class="needs-val ${nc}">${Number.isInteger(suggested) ? suggested : suggested.toFixed(1)}</span></td>
+      <td><input class="num-input inv-input cooked-input" type="number" inputmode="numeric" id="cooked-${idx}-${di}" value="${cooked}" min="0" placeholder="0" data-sheet="${dateStr}" data-dp="${dp.key}"></td>
+      <td>${usedHTML}</td>
+    `;
     tbody.appendChild(tr);
   });
 
@@ -1304,7 +1259,7 @@ function recalcSheet(idx) {
 
   DAYPARTS.forEach((dp, di) => {
     const oh = document.getElementById(`oh-${idx}-${di}`);
-    const putInEl = document.getElementById(`put_in-${idx}-${di}`);
+    const ck = document.getElementById(`cooked-${idx}-${di}`);
     const ac = document.getElementById(`actual-${idx}-${di}`);
     const bind = (el, field) => {
       if (!el) return;
@@ -1324,12 +1279,11 @@ function recalcSheet(idx) {
         }
         const curActualStr = String(cur.actualStr ?? '').trim();
         const curActualParsed = curActualStr === '' ? null : parseFloat(curActualStr);
-        const isClose = !!dp.isClose;
         const payload = {
           on_hand: cur.onHandStr,
-          put_in: isClose ? 0 : cur.putIn,
-          actual_sales: isClose ? null : (Number.isFinite(curActualParsed) ? curActualParsed : null),
-          forecasted_sales: isClose ? 0 : f,
+          cooked: cur.cooked,
+          actual_sales: Number.isFinite(curActualParsed) ? curActualParsed : null,
+          forecasted_sales: f,
         };
         if (field === 'actual_sales' && el.value.trim() === '') payload.actual_sales = null;
         scheduleRowSave(dateStr, dp.key, payload);
@@ -1337,7 +1291,7 @@ function recalcSheet(idx) {
       });
     };
     bind(oh, 'on_hand');
-    bind(putInEl, 'put_in');
+    bind(ck, 'cooked');
     bind(ac, 'actual_sales');
   });
 
@@ -1349,7 +1303,7 @@ function recalcSheet(idx) {
   document.getElementById(`rate-pm-${idx}`).textContent = '$' + rates.pm.toLocaleString();
 
   const drEl = document.getElementById(`daily-total-roasts-${idx}`);
-  if (drEl) drEl.textContent = totalPutIn;
+  if (drEl) drEl.textContent = totalCooked;
 
   const beefsRun = document.getElementById(`beefs-running-${idx}`);
   if (beefsRun) {
@@ -1361,7 +1315,7 @@ function recalcSheet(idx) {
   if (totRow) {
     totRow.innerHTML = `
       <div class="total-pill"><span>Forecasted total</span> $${totalForecast.toLocaleString()}</div>
-      <div class="total-pill"><span>Total put in</span> ${totalPutIn}</div>
+      <div class="total-pill"><span>Total cooked</span> ${totalCooked}</div>
     `;
   }
 
@@ -1369,7 +1323,7 @@ function recalcSheet(idx) {
   const pmActual = (parseFloat(st.rows[2].actualStr) || 0) + (parseFloat(st.rows[3].actualStr) || 0);
   const amUsedAct = used[1] == null ? 0 : Math.max(0, used[1]);
   const pmUsedAct =
-    (used[3] == null ? 0 : Math.max(0, used[3])) + (used[4] == null ? 0 : Math.max(0, used[4]));
+    (used[2] == null ? 0 : Math.max(0, used[2])) + (used[3] == null ? 0 : Math.max(0, used[3]));
 
   const eodUsed = document.getElementById(`eod-used-${idx}`);
   const eodAm = document.getElementById(`eod-am-${idx}`);
@@ -1515,9 +1469,9 @@ function buildSheetCard(idx, day, dateStr) {
         <div class="info-sub">Projected four-day sales $</div>
       </div>
       <div class="info-box">
-        <div class="info-label">Total put in (today)</div>
+        <div class="info-label">Total cooked (today)</div>
         <div class="info-val" id="daily-total-roasts-${idx}">0</div>
-        <div class="info-sub">Sum of Put in column</div>
+        <div class="info-sub">Sum of Cooked column</div>
       </div>
     </div>
 
@@ -1541,7 +1495,7 @@ function buildSheetCard(idx, day, dateStr) {
             <th>Needs</th>
             <th>On hand</th>
             <th>Suggested</th>
-            <th>Put in</th>
+            <th>Cooked</th>
             <th>Used</th>
           </tr>
         </thead>
@@ -1558,7 +1512,7 @@ function buildSheetCard(idx, day, dateStr) {
       <div class="temper-breakdown" id="t-breakdown-${idx}"></div>
       <div class="temper-grid">
         <div class="temper-box">
-          <div class="temper-box-label">4-day projected dollars (combined)</div>
+          <div class="temper-box-label">4-day projected sales (combined)</div>
           <div class="temper-box-val" id="t-proj-${idx}">$0</div>
         </div>
         <div class="temper-box">
@@ -1586,10 +1540,9 @@ function buildSheetCard(idx, day, dateStr) {
 
     <div class="footnotes">
       · Needs = forecast ÷ locked AM or PM $/roast (ceil).<br>
-      · Put In = number of raw roasts loaded into the oven at that drop time.<br>
-      · Used = (previous on hand + previous put in) − current on hand; first drop shows —.<br>
+      · Used = (previous on hand + previous cooked) − current on hand; first drop shows —.<br>
       · Suggested = max(0, needs − on hand).<br>
-      · Tempering: four-day projected dollars ÷ average of locked AM &amp; PM rates; roasts to temper = needed − (tempering now + holding + cooking).
+      · Tempering: four-day projected sales ÷ average of locked AM &amp; PM rates; roasts to temper = needed − (tempering now + holding + cooking).
     </div>
 
     <div class="eod-summary" id="eod-summary-${idx}">
@@ -1706,7 +1659,7 @@ function handleCsvFile(file) {
     }
 
     dbForecast[targetStr] = Object.create(null);
-    for (const dp of DAYPARTS.filter((x) => !x.isClose)) {
+    for (const dp of DAYPARTS) {
       const n = Math.round(windowSales(srcDateStr, dp.start, dp.end, dp.nextEnd));
       if (n > 0) dbForecast[targetStr][dp.key] = n;
     }
