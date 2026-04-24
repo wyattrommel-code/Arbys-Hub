@@ -68,11 +68,15 @@ function casesLooseValue(item, entry) {
   return (cases * bagsPerCase + loose) * bagCost;
 }
 
-function fullHalfValue(item, selection) {
+function isFullHalfStyle(item) {
+  return item.count_type === "full_half" || toNumber(item.bags_per_case) === 1;
+}
+
+function fullHalfValue(item, entry) {
+  const fullCases = toNonNegInt(entry?.cases);
+  const halfYes = (entry?.fullHalf ?? "no") === "yes";
   const caseCost = toNumber(item.case_wholesale_cost);
-  if (selection === "full") return caseCost;
-  if (selection === "half") return caseCost / 2;
-  return 0;
+  return fullCases * caseCost + (halfYes ? caseCost / 2 : 0);
 }
 
 function groupByCategory(items) {
@@ -171,10 +175,10 @@ export default function InventoryPage() {
 
     for (const item of items) {
       let itemTotal = 0;
-      if (item.count_type === "cases_loose") {
+      if (isFullHalfStyle(item)) {
+        itemTotal = fullHalfValue(item, fullHalfById[item.id] || {});
+      } else if (item.count_type === "cases_loose") {
         itemTotal = casesLooseValue(item, casesLooseById[item.id]);
-      } else if (item.count_type === "full_half") {
-        itemTotal = fullHalfValue(item, fullHalfById[item.id] || "");
       }
       const cat = itemCategory(item);
       byCategory[cat] += itemTotal;
@@ -224,6 +228,25 @@ export default function InventoryPage() {
         submitted_by: submittedBy.trim(),
       };
 
+      if (isFullHalfStyle(item)) {
+        const entry = fullHalfById[item.id] || {};
+        const casesCounted = toNonNegInt(entry.cases);
+        const fullHalf = (entry.fullHalf ?? "no") === "yes" ? "yes" : "no";
+        if (casesCounted <= 0 && fullHalf === "no") continue;
+
+        const caseCost = toNumber(item.case_wholesale_cost);
+        const totalValue =
+          casesCounted * caseCost + (fullHalf === "yes" ? caseCost / 2 : 0);
+        rows.push({
+          ...base,
+          cases_counted: casesCounted,
+          full_half: fullHalf,
+          total_value: totalValue,
+        });
+        totalForSubmission += totalValue;
+        continue;
+      }
+
       if (item.count_type === "cases_loose") {
         const entry = casesLooseById[item.id] || {};
         const casesCounted = toNonNegInt(entry.cases);
@@ -246,17 +269,7 @@ export default function InventoryPage() {
         continue;
       }
 
-      if (item.count_type === "full_half") {
-        const fullHalf = fullHalfById[item.id] || "";
-        if (!fullHalf) continue;
-        const totalValue = fullHalfValue(item, fullHalf);
-        rows.push({
-          ...base,
-          full_half: fullHalf,
-          total_value: totalValue,
-        });
-        totalForSubmission += totalValue;
-      }
+      // Unknown item count_type is ignored.
     }
 
     if (rows.length === 0) {
@@ -454,7 +467,7 @@ export default function InventoryPage() {
                     const name = itemName(item);
                     const countType = item.count_type;
 
-                    if (countType === "cases_loose") {
+                    if (!isFullHalfStyle(item) && countType === "cases_loose") {
                       const entry = casesLooseById[id] || { cases: "", loose: "" };
                       const value = casesLooseValue(item, entry);
                       return (
@@ -511,8 +524,8 @@ export default function InventoryPage() {
                       );
                     }
 
-                    const selection = fullHalfById[id] || "";
-                    const value = fullHalfValue(item, selection);
+                    const entry = fullHalfById[id] || { cases: "", fullHalf: "no" };
+                    const value = fullHalfValue(item, entry);
                     return (
                       <li
                         key={id}
@@ -521,23 +534,50 @@ export default function InventoryPage() {
                         <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
                           {name}
                         </p>
-                        <div className="mt-3 grid grid-cols-3 gap-2">
-                          {["full", "half", "empty"].map((opt) => (
-                            <button
-                              key={opt}
-                              type="button"
-                              onClick={() =>
-                                setFullHalfById((prev) => ({ ...prev, [id]: opt }))
+                        <div className="mt-3 flex items-end gap-2">
+                          <label className="min-w-0 flex-1 text-xs text-zinc-500 dark:text-zinc-400">
+                            Full Cases
+                            <input
+                              type="number"
+                              min={0}
+                              step={1}
+                              inputMode="numeric"
+                              value={entry.cases}
+                              onChange={(e) =>
+                                setFullHalfById((prev) => ({
+                                  ...prev,
+                                  [id]: { ...entry, cases: e.target.value },
+                                }))
                               }
-                              className={`rounded-lg border py-2.5 text-sm font-semibold capitalize ${
-                                selection === opt
-                                  ? "border-[#C8102E] bg-[#C8102E] text-white"
-                                  : "border-zinc-200 bg-white text-zinc-800 active:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
-                              }`}
-                            >
-                              {opt}
-                            </button>
-                          ))}
+                              className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-base text-zinc-900 focus:border-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-400/30 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50"
+                            />
+                          </label>
+                          <div className="min-w-[9.5rem]">
+                            <span className="block text-xs text-zinc-500 dark:text-zinc-400">
+                              1/2 Case?
+                            </span>
+                            <div className="mt-1 grid grid-cols-2 gap-1.5">
+                              {["yes", "no"].map((opt) => (
+                                <button
+                                  key={opt}
+                                  type="button"
+                                  onClick={() =>
+                                    setFullHalfById((prev) => ({
+                                      ...prev,
+                                      [id]: { ...entry, fullHalf: opt },
+                                    }))
+                                  }
+                                  className={`rounded-lg border py-2 text-xs font-semibold uppercase ${
+                                    (entry.fullHalf ?? "no") === opt
+                                      ? "border-[#C8102E] bg-[#C8102E] text-white"
+                                      : "border-zinc-200 bg-white text-zinc-800 active:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                                  }`}
+                                >
+                                  {opt}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
                         </div>
                         <p className="mt-3 text-right text-sm font-semibold tabular-nums text-zinc-500 dark:text-zinc-400">
                           {formatMoney(value)}
