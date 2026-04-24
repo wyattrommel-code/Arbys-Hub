@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getSupabase } from "@/lib/supabase";
 
-const CATEGORY_ORDER = [
+const DAILY_CATEGORY_ORDER = [
   "Protein",
   "Bread",
   "Sides",
@@ -12,6 +12,15 @@ const CATEGORY_ORDER = [
   "Syrup",
   "Beverage",
   "LTO",
+];
+
+const WEEKLY_CATEGORY_ORDER = [
+  "Packaging",
+  "Paper",
+  "Dry",
+  "Packets",
+  "Chemical",
+  "Supplies",
 ];
 
 const COUNT_TYPES = ["Daily", "Weekly", "Monthly"];
@@ -56,8 +65,14 @@ function itemName(item) {
   return item.item_name ?? item.name ?? "Item";
 }
 
-function itemCategory(item) {
-  return CATEGORY_ORDER.includes(item.category) ? item.category : "LTO";
+function categoryOrderForFrequency(freq) {
+  if (freq === "Weekly") return WEEKLY_CATEGORY_ORDER;
+  return DAILY_CATEGORY_ORDER;
+}
+
+function itemCategory(item, categoryOrder) {
+  const fallback = categoryOrder[categoryOrder.length - 1] ?? "Other";
+  return categoryOrder.includes(item.category) ? item.category : fallback;
 }
 
 function casesLooseValue(item, entry) {
@@ -69,7 +84,7 @@ function casesLooseValue(item, entry) {
 }
 
 function isFullHalfStyle(item) {
-  return item.count_type === "full_half" || toNumber(item.bags_per_case) === 1;
+  return toNumber(item.bags_per_case) > 20;
 }
 
 function fullHalfValue(item, entry) {
@@ -79,12 +94,13 @@ function fullHalfValue(item, entry) {
   return fullCases * caseCost + (halfYes ? caseCost / 2 : 0);
 }
 
-function groupByCategory(items) {
-  const buckets = new Map(CATEGORY_ORDER.map((cat) => [cat, []]));
+function groupByCategory(items, categoryOrder) {
+  const buckets = new Map(categoryOrder.map((cat) => [cat, []]));
   for (const item of items) {
-    buckets.get(itemCategory(item)).push(item);
+    const cat = itemCategory(item, categoryOrder);
+    buckets.get(cat).push(item);
   }
-  return CATEGORY_ORDER.filter((cat) => buckets.get(cat).length > 0).map(
+  return categoryOrder.filter((cat) => buckets.get(cat).length > 0).map(
     (cat) => [cat, buckets.get(cat)]
   );
 }
@@ -95,7 +111,7 @@ export default function InventoryPage() {
   const [fetchKey, setFetchKey] = useState(0);
 
   const [logDate, setLogDate] = useState(todayLocalISODate);
-  const [countFrequency, setCountFrequency] = useState("");
+  const [countFrequency, setCountFrequency] = useState("Daily");
   const [submittedBy, setSubmittedBy] = useState("");
 
   const [casesLooseById, setCasesLooseById] = useState({});
@@ -104,6 +120,11 @@ export default function InventoryPage() {
   const [submitError, setSubmitError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [confirmation, setConfirmation] = useState(null);
+
+  const activeCategoryOrder = useMemo(
+    () => categoryOrderForFrequency(countFrequency),
+    [countFrequency]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -129,6 +150,7 @@ export default function InventoryPage() {
           .from("inventory_items")
           .select("*")
           .eq("is_active", true)
+          .eq("count_frequency", countFrequency.toLowerCase())
           .order("sort_order", { ascending: true });
 
         if (cancelled) return;
@@ -143,7 +165,7 @@ export default function InventoryPage() {
           setLoadState({
             status: "empty",
             message:
-              "inventory_items returned no rows. The table may be empty, or Row Level Security may be blocking SELECT.",
+              `inventory_items returned no ${countFrequency.toLowerCase()} rows. The table may be empty, or Row Level Security may be blocking SELECT.`,
           });
           return;
         }
@@ -163,15 +185,18 @@ export default function InventoryPage() {
     return () => {
       cancelled = true;
     };
-  }, [fetchKey]);
+  }, [fetchKey, countFrequency]);
 
   const retryFetch = useCallback(() => setFetchKey((k) => k + 1), []);
 
-  const grouped = useMemo(() => groupByCategory(items), [items]);
+  const grouped = useMemo(
+    () => groupByCategory(items, activeCategoryOrder),
+    [items, activeCategoryOrder]
+  );
 
   const totals = useMemo(() => {
     let totalValue = 0;
-    const byCategory = Object.fromEntries(CATEGORY_ORDER.map((cat) => [cat, 0]));
+    const byCategory = Object.fromEntries(activeCategoryOrder.map((cat) => [cat, 0]));
 
     for (const item of items) {
       let itemTotal = 0;
@@ -180,16 +205,16 @@ export default function InventoryPage() {
       } else if (item.count_type === "cases_loose") {
         itemTotal = casesLooseValue(item, casesLooseById[item.id]);
       }
-      const cat = itemCategory(item);
+      const cat = itemCategory(item, activeCategoryOrder);
       byCategory[cat] += itemTotal;
       totalValue += itemTotal;
     }
     return { totalValue, byCategory };
-  }, [items, casesLooseById, fullHalfById]);
+  }, [items, casesLooseById, fullHalfById, activeCategoryOrder]);
 
   const resetForm = useCallback(() => {
     setLogDate(todayLocalISODate());
-    setCountFrequency("");
+    setCountFrequency("Daily");
     setSubmittedBy("");
     setCasesLooseById({});
     setFullHalfById({});
@@ -221,7 +246,7 @@ export default function InventoryPage() {
       const base = {
         item_id: item.id,
         item_name: itemName(item),
-        category: itemCategory(item),
+        category: itemCategory(item, activeCategoryOrder),
         count_type: item.count_type,
         log_date: logDate,
         count_frequency: countFrequency.toLowerCase(),
@@ -610,7 +635,7 @@ export default function InventoryPage() {
           </div>
 
           <div className="overflow-x-auto whitespace-nowrap text-xs text-zinc-600 dark:text-zinc-400">
-            {CATEGORY_ORDER.map((cat) => (
+            {activeCategoryOrder.map((cat) => (
               <span key={cat} className="mr-3 inline-block">
                 {cat} {formatMoney(totals.byCategory[cat] || 0)}
               </span>
