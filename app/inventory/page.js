@@ -84,7 +84,7 @@ function casesLooseValue(item, entry) {
 }
 
 function isFullHalfStyle(item) {
-  return toNumber(item.bags_per_case) > 20;
+  return item.count_type === "full_half" || toNumber(item.bags_per_case) > 20;
 }
 
 function fullHalfValue(item, entry) {
