@@ -123,11 +123,11 @@ function getLaborCost(row) {
 }
 
 function getWasteRetail(row) {
-  return toNum(row?.retail_loss ?? row?.retail ?? row?.loss);
+  return toNum(row?.total_retail_loss);
 }
 
 function getWasteWholesale(row) {
-  return toNum(row?.wholesale_cost ?? row?.wholesale ?? row?.cost);
+  return toNum(row?.total_wholesale_cost);
 }
 
 function getDtSeconds(row) {
@@ -251,9 +251,9 @@ export default function DashboardPage() {
       const { start: weekStart, end: weekEnd } = getWeekBounds();
       const supabase = getSupabase();
 
-      const readDate = async (table, key, dateVal) => {
+      const readDate = async (table, key, dateVal, selectColumns = "*") => {
         try {
-          const { data, error } = await supabase.from(table).select("*").eq(key, dateVal);
+          const { data, error } = await supabase.from(table).select(selectColumns).eq(key, dateVal);
           if (error) return { rows: [], disconnected: true };
           return { rows: data ?? [], disconnected: false };
         } catch {
@@ -261,9 +261,9 @@ export default function DashboardPage() {
         }
       };
 
-      const readRange = async (table, key, start, end) => {
+      const readRange = async (table, key, start, end, selectColumns = "*") => {
         try {
-          const { data, error } = await supabase.from(table).select("*").gte(key, start).lte(key, end);
+          const { data, error } = await supabase.from(table).select(selectColumns).gte(key, start).lte(key, end);
           if (error) return { rows: [], disconnected: true };
           return { rows: data ?? [], disconnected: false };
         } catch {
@@ -284,13 +284,24 @@ export default function DashboardPage() {
       ] = await Promise.all([
         readDate("sales_logs", "log_date", selectedDate),
         readDate("labor_logs", "log_date", selectedDate),
-        readDate("waste_logs", "log_date", selectedDate),
+        readDate(
+          "waste_logs",
+          "log_date",
+          selectedDate,
+          "log_date,shift,submitted_by,item_name,quantity,unit,total_retail_loss,total_wholesale_cost"
+        ),
         readDate("inventory_logs", "log_date", selectedDate),
         readDate("roast_entries", "sheet_date", selectedDate),
         readDate("dt_logs", "log_date", selectedDate),
         readRange("sales_logs", "log_date", weekStart, weekEnd),
         readRange("labor_logs", "log_date", weekStart, weekEnd),
-        readRange("waste_logs", "log_date", weekStart, weekEnd),
+        readRange(
+          "waste_logs",
+          "log_date",
+          weekStart,
+          weekEnd,
+          "log_date,shift,submitted_by,item_name,quantity,unit,total_retail_loss,total_wholesale_cost"
+        ),
       ]);
 
       if (cancelled) return;
@@ -328,9 +339,9 @@ export default function DashboardPage() {
     async function loadReports() {
       setReportState((s) => ({ ...s, loading: true }));
       const supabase = getSupabase();
-      const readRange = async (table, key) => {
+      const readRange = async (table, key, selectColumns = "*") => {
         try {
-          const { data, error } = await supabase.from(table).select("*").gte(key, reportStart).lte(key, reportEnd);
+          const { data, error } = await supabase.from(table).select(selectColumns).gte(key, reportStart).lte(key, reportEnd);
           if (error) return { rows: [], disconnected: true };
           return { rows: data ?? [], disconnected: false };
         } catch {
@@ -340,7 +351,11 @@ export default function DashboardPage() {
       const [sales, labor, waste, inventory, roast, dt] = await Promise.all([
         readRange("sales_logs", "log_date"),
         readRange("labor_logs", "log_date"),
-        readRange("waste_logs", "log_date"),
+        readRange(
+          "waste_logs",
+          "log_date",
+          "log_date,shift,submitted_by,item_name,quantity,unit,total_retail_loss,total_wholesale_cost"
+        ),
         readRange("inventory_logs", "log_date"),
         readRange("roast_entries", "sheet_date"),
         readRange("dt_logs", "log_date"),
@@ -490,7 +505,9 @@ export default function DashboardPage() {
     const daily = dates.map((date) => {
       const sales = reportState.salesRows.filter((r) => r.log_date === date).reduce((s, r) => s + getSalesValue(r), 0);
       const laborCost = reportState.laborRows.filter((r) => r.log_date === date).reduce((s, r) => s + getLaborCost(r), 0);
-      const waste = reportState.wasteRows.filter((r) => r.log_date === date).reduce((s, r) => s + getWasteRetail(r), 0);
+      const waste = reportState.wasteRows
+        .filter((r) => r.log_date === date)
+        .reduce((s, r) => s + toNum(r.total_retail_loss), 0);
       const dtRows = reportState.dtRows.filter((r) => r.log_date === date);
       const dtAvg = dtRows.length ? dtRows.reduce((s, r) => s + getDtSeconds(r), 0) / dtRows.length : 0;
       const laborPct = sales > 0 ? (laborCost / sales) * 100 : 0;
@@ -518,12 +535,37 @@ export default function DashboardPage() {
       id: `${r.log_date}-${idx}`,
       date: r.log_date,
       shift: r.shift ?? "—",
-      item: r.item_name ?? r.item ?? "Unknown",
-      qty: toNum(r.qty ?? r.quantity),
+      submittedBy: r.submitted_by ?? "—",
+      item: r.item_name ?? "Unknown",
+      qty: toNum(r.quantity),
       unit: r.unit ?? "ea",
-      retail: getWasteRetail(r),
-      wholesale: getWasteWholesale(r),
+      retail: toNum(r.total_retail_loss),
+      wholesale: toNum(r.total_wholesale_cost),
     }));
+
+    const wasteByDate = new Map();
+    for (const row of wasteLog) {
+      if (!wasteByDate.has(row.date)) {
+        wasteByDate.set(row.date, {
+          date: row.date,
+          rows: [],
+          retailTotal: 0,
+          wholesaleTotal: 0,
+        });
+      }
+      const group = wasteByDate.get(row.date);
+      group.rows.push(row);
+      group.retailTotal += row.retail;
+      group.wholesaleTotal += row.wholesale;
+    }
+    const wasteLogByDate = [...wasteByDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+    const wasteGrandTotals = wasteLogByDate.reduce(
+      (acc, day) => ({
+        retail: acc.retail + day.retailTotal,
+        wholesale: acc.wholesale + day.wholesaleTotal,
+      }),
+      { retail: 0, wholesale: 0 }
+    );
 
     const inventory = reportState.inventoryRows.map((r, idx) => ({
       id: `${r.log_date}-${idx}`,
@@ -560,7 +602,7 @@ export default function DashboardPage() {
     }
     const roast = [...roastByDate.values()].sort((a, b) => a.date.localeCompare(b.date));
 
-    return { daily, salesDetail, laborDetail, wasteLog, inventory, roast };
+    return { daily, salesDetail, laborDetail, wasteLog, wasteLogByDate, wasteGrandTotals, inventory, roast };
   }, [reportState]);
 
   const printCurrent = () => {
@@ -643,12 +685,26 @@ export default function DashboardPage() {
     if (reportType === "Waste Log") {
       return (
         <table className="min-w-full text-left text-xs">
-          <thead className="bg-zinc-50 dark:bg-zinc-800"><tr><th className="px-3 py-2">Date</th><th className="px-3 py-2">Shift</th><th className="px-3 py-2">Item</th><th className="px-3 py-2">Qty</th><th className="px-3 py-2">Unit</th><th className="px-3 py-2">Retail Loss</th><th className="px-3 py-2">Wholesale</th></tr></thead>
+          <thead className="bg-zinc-50 dark:bg-zinc-800"><tr><th className="px-3 py-2">Date</th><th className="px-3 py-2">Shift</th><th className="px-3 py-2">Submitted By</th><th className="px-3 py-2">Item Name</th><th className="px-3 py-2">Quantity</th><th className="px-3 py-2">Unit</th><th className="px-3 py-2">Retail Loss</th><th className="px-3 py-2">Wholesale Cost</th></tr></thead>
           <tbody>
-            {reportRows.wasteLog.map((r) => (
-              <tr key={r.id} className="border-t border-zinc-100 dark:border-zinc-800"><td className="px-3 py-2">{r.date}</td><td className="px-3 py-2">{r.shift}</td><td className="px-3 py-2">{r.item}</td><td className="px-3 py-2">{r.qty}</td><td className="px-3 py-2">{r.unit}</td><td className="px-3 py-2">{fmtMoney2(r.retail)}</td><td className="px-3 py-2">{fmtMoney2(r.wholesale)}</td></tr>
-            ))}
-            {reportRows.wasteLog.length === 0 ? <tr><td className="px-3 py-3 text-zinc-500" colSpan={7}>Waste Log data not yet connected</td></tr> : null}
+            {reportRows.wasteLogByDate.flatMap((day) => [
+              ...day.rows.map((r, idx) => (
+                <tr key={r.id} className="border-t border-zinc-100 dark:border-zinc-800"><td className="px-3 py-2">{idx === 0 ? r.date : ""}</td><td className="px-3 py-2">{r.shift}</td><td className="px-3 py-2">{r.submittedBy}</td><td className="px-3 py-2">{r.item}</td><td className="px-3 py-2">{r.qty}</td><td className="px-3 py-2">{r.unit}</td><td className="px-3 py-2">{fmtMoney2(r.retail)}</td><td className="px-3 py-2">{fmtMoney2(r.wholesale)}</td></tr>
+              )),
+              <tr key={`subtotal-${day.date}`} className="border-t border-zinc-300 bg-zinc-50 font-semibold dark:border-zinc-700 dark:bg-zinc-800/70">
+                <td className="px-3 py-2" colSpan={6}>Subtotal for {day.date}</td>
+                <td className="px-3 py-2">{fmtMoney2(day.retailTotal)}</td>
+                <td className="px-3 py-2">{fmtMoney2(day.wholesaleTotal)}</td>
+              </tr>,
+            ])}
+            {reportRows.wasteLogByDate.length ? (
+              <tr className="border-t-2 border-zinc-400 font-semibold dark:border-zinc-600">
+                <td className="px-3 py-2" colSpan={6}>Grand Total</td>
+                <td className="px-3 py-2">{fmtMoney2(reportRows.wasteGrandTotals.retail)}</td>
+                <td className="px-3 py-2">{fmtMoney2(reportRows.wasteGrandTotals.wholesale)}</td>
+              </tr>
+            ) : null}
+            {reportRows.wasteLogByDate.length === 0 ? <tr><td className="px-3 py-3 text-zinc-500" colSpan={8}>Waste Log data not yet connected</td></tr> : null}
           </tbody>
         </table>
       );
