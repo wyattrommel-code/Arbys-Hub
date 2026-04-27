@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 
 const PAGE_TITLES = {
   "/": "Home",
+  "/import": "Import",
   "/waste": "Waste Tracker",
   "/inventory": "Inventory",
   "/dashboard": "Dashboard",

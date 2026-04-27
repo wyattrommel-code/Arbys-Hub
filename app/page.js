@@ -2,6 +2,11 @@ import Link from "next/link";
 
 const navCards = [
   {
+    href: "/import",
+    title: "Import",
+    description: "Upload labor and hourly sales CSV files.",
+  },
+  {
     href: "/waste",
     title: "Waste Tracker",
     description: "Log food waste with shift and retail-loss totals.",

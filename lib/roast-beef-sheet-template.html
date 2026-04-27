@@ -78,57 +78,6 @@
   .sync-pill.saved { background: rgba(42,122,59,0.35); }
   .sync-pill.offline { background: rgba(0,0,0,0.35); }
 
-  .upload-section {
-    max-width: 960px;
-    margin: 1.25rem auto;
-    padding: 0 1rem;
-  }
-  .upload-card {
-    background: white;
-    border-radius: 12px;
-    border: 2px dashed var(--arby-border);
-    padding: 1.25rem;
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    flex-wrap: wrap;
-    box-shadow: var(--shadow);
-  }
-  .upload-card.dragover { border-color: var(--arby-red); background: var(--arby-light-red); }
-  .upload-icon {
-    width: 42px; height: 42px; flex-shrink: 0;
-    background: var(--arby-light-red);
-    border-radius: 10px;
-    display: flex; align-items: center; justify-content: center;
-  }
-  .upload-icon svg { width: 20px; height: 20px; color: var(--arby-red); }
-  .upload-text { flex: 1; min-width: 200px; }
-  .upload-text strong { font-size: 14px; display: block; margin-bottom: 4px; }
-  .upload-text span { font-size: 12px; color: var(--text-muted); }
-  .upload-btn {
-    background: var(--arby-red);
-    color: white;
-    border: none;
-    border-radius: 8px;
-    padding: 10px 18px;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background 0.15s;
-  }
-  .upload-btn:hover { background: #a50d26; }
-  input[type="file"] { display: none; }
-
-  .upload-status {
-    margin-top: 0.65rem;
-    font-size: 12px;
-    padding: 8px 12px;
-    border-radius: 6px;
-    display: none;
-  }
-  .upload-status.success { background: #e8f5eb; color: #1a5c28; display: block; }
-  .upload-status.error { background: #fdf0f2; color: var(--arby-red); display: block; }
-
   .main { max-width: 960px; margin: 0 auto 2rem; padding: 0 1rem; }
 
   .tabs-wrapper {
@@ -480,7 +429,7 @@
   @media print {
     body { background: white; }
     .site-header { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
-    .upload-section, .tabs-wrapper { display: none !important; }
+    .tabs-wrapper { display: none !important; }
     .sheet-card {
       display: none !important;
       border: none;
@@ -517,23 +466,6 @@
     <div class="sync-pill saved" id="sync-status" role="status">Saved ✓</div>
   </div>
 </header>
-
-<div class="upload-section">
-  <div class="upload-card" id="drop-zone">
-    <div class="upload-icon">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
-      </svg>
-    </div>
-    <div class="upload-text">
-      <strong>Upload BrinkPOS Hourly Sales CSV</strong>
-      <span>Date is read from the file; hourly totals fill <em>forecasts</em> for the same weekday <strong>next week</strong>.</span>
-    </div>
-    <button type="button" class="upload-btn" id="pick-csv">Choose File</button>
-    <input type="file" id="csv-input" accept=".csv,text/csv">
-  </div>
-  <div class="upload-status" id="upload-status"></div>
-</div>
 
 <div class="main">
   <div class="tabs-wrapper" id="tabs"></div>
@@ -746,28 +678,6 @@ function mergeHourlySalesRowsIntoSalesByDate(rows) {
   }
   for (const d of Object.keys(byDate)) {
     salesByDate[d] = byDate[d];
-  }
-}
-
-async function upsertHourlySalesFromCsv(saleDateStr, hourData) {
-  if (!hub) return false;
-  const ops = [];
-  for (const k of Object.keys(hourData)) {
-    if (!/^h\d+$/.test(k)) continue;
-    const hour = parseInt(k.slice(1), 10);
-    if (!Number.isFinite(hour)) continue;
-    const net = Number(hourData[k]);
-    if (!Number.isFinite(net)) continue;
-    ops.push({ sale_date: saleDateStr, hour_of_day: hour, net_sales: net });
-  }
-  if (ops.length === 0) return true;
-  try {
-    const { error } = await hub.from('hourly_sales').upsert(ops, { onConflict: 'sale_date,hour_of_day' });
-    if (error) throw error;
-    return true;
-  } catch (e) {
-    console.error(e);
-    return false;
   }
 }
 
@@ -1127,118 +1037,6 @@ function captureSheetStateFromDom(idx, dateStr) {
     if (putInEl) st.rows[di].putIn = parseInt(putInEl.value, 10) || 0;
     if (ac) st.rows[di].actualStr = ac.value;
   });
-}
-
-function parseHour(str) {
-  const m = String(str).match(/(\d+):(\d+)\s*(AM|PM)/i);
-  if (!m) return null;
-  let h = parseInt(m[1], 10);
-  const ap = m[3].toUpperCase();
-  if (ap === 'PM' && h !== 12) h += 12;
-  if (ap === 'AM' && h === 12) h = 0;
-  return h;
-}
-
-function parseSales(str) {
-  return parseFloat(String(str).replace(/[$,]/g, '')) || 0;
-}
-
-function parseCSV(text) {
-  const lines = text.split(/\r?\n/).filter((l) => l.trim());
-  let csvDate = null;
-  for (let i = 0; i < Math.min(6, lines.length); i++) {
-    const m = lines[i].match(
-      /(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}/i
-    );
-    if (m) {
-      csvDate = new Date(m[0]);
-      break;
-    }
-  }
-  let headerIdx = -1;
-  for (let i = 0; i < lines.length; i++) {
-    const low = lines[i].toLowerCase();
-    if (low.includes('hour') && low.includes('net sales')) {
-      headerIdx = i;
-      break;
-    }
-  }
-  if (headerIdx === -1) return { error: 'Could not find Hour / Net Sales columns in this CSV.' };
-  const hourData = {};
-  for (let i = headerIdx + 1; i < lines.length; i++) {
-    const cols = lines[i].split(',').map((c) => c.replace(/"/g, '').trim());
-    if (!cols[0] || cols[0].toLowerCase() === 'summary' || cols[0].toLowerCase() === 'page') break;
-    const h = parseHour(cols[0]);
-    const s = parseSales(cols[1]);
-    if (h !== null) hourData['h' + h] = s;
-  }
-  return { date: csvDate, hourData };
-}
-
-/**
- * Persist CSV-derived window totals for targetDateStr (next week) from basisDateStr (CSV day).
- * Does not read dbForecast — always uses current salesByDate[basisDateStr] hour rollup.
- */
-function sumHourlyOpenTo2pm(dateStr) {
-  const day = salesByDate[dateStr];
-  if (!day) return 0;
-  let t = 0;
-  for (let h = 6; h <= 13; h++) t += day['h' + h] || 0;
-  return Math.round(t);
-}
-
-function sumHourly2pmToClose(dateStr) {
-  const day = salesByDate[dateStr];
-  if (!day) return 0;
-  let t = 0;
-  for (let h = 14; h <= 23; h++) t += day['h' + h] || 0;
-  return Math.round(t);
-}
-
-async function upsertDailyTotalsForCsvDate(saleDateStr) {
-  if (!hub) return false;
-  const am = sumHourlyOpenTo2pm(saleDateStr);
-  const pm = sumHourly2pmToClose(saleDateStr);
-  try {
-    const { error } = await hub.from('roast_entries').upsert(
-      {
-        sheet_date: saleDateStr,
-        daypart: 'daily_totals',
-        on_hand: String(am),
-        put_in: pm,
-        forecasted_sales: 0,
-      },
-      { onConflict: 'sheet_date,daypart' }
-    );
-    if (error) throw error;
-    dailyTotalsSales[saleDateStr] = { am, pm };
-    return true;
-  } catch (e) {
-    console.error(e);
-    return false;
-  }
-}
-
-async function upsertForecastsFromCsvBasis(targetDateStr, basisDateStr) {
-  if (!hub) return false;
-  const ops = DAYPARTS.filter((dp) => !dp.isClose).map((dp) => ({
-    sheet_date: targetDateStr,
-    daypart: dp.key,
-    forecasted_sales: Math.round(windowSales(basisDateStr, dp.start, dp.end, dp.nextEnd)),
-  }));
-  try {
-    setSyncStatus('saving');
-    const { error } = await hub.from('roast_entries').upsert(ops, { onConflict: 'sheet_date,daypart' });
-    if (error) throw error;
-    online = true;
-    setSyncStatus('saved');
-    return true;
-  } catch (e) {
-    console.error(e);
-    online = false;
-    setSyncStatus('offline');
-    return false;
-  }
 }
 
 function recalcSheet(idx) {
@@ -1694,70 +1492,6 @@ function buildTabsAndSheets() {
   }
 }
 
-function handleCsvFile(file) {
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = async (e) => {
-    const result = parseCSV(e.target.result);
-    const status = document.getElementById('upload-status');
-    if (result.error) {
-      status.className = 'upload-status error';
-      status.textContent = result.error;
-      return;
-    }
-    if (!result.date || !(result.date instanceof Date) || isNaN(result.date.getTime())) {
-      status.className = 'upload-status error';
-      status.textContent = 'Could not read a valid date from this CSV.';
-      return;
-    }
-    const srcDateStr = toDateStr(result.date);
-    salesByDate[srcDateStr] = result.hourData;
-    const targetD = addDays(result.date, 7);
-    const targetStr = toDateStr(targetD);
-    status.className = 'upload-status success';
-    status.textContent =
-      'Loaded ' +
-      result.date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) +
-      ' → forecasts staged for ' +
-      targetD.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) +
-      ' (next week).';
-
-    const hourlySaved = await upsertHourlySalesFromCsv(srcDateStr, result.hourData);
-    if (!hourlySaved) {
-      status.className = 'upload-status error';
-      status.textContent =
-        'CSV parsed, but hourly sales could not be saved to the server. Check connection and try again.';
-      return;
-    }
-
-    const dailyTotalsSaved = await upsertDailyTotalsForCsvDate(srcDateStr);
-    if (!dailyTotalsSaved) {
-      status.className = 'upload-status error';
-      status.textContent =
-        'CSV parsed, but daily totals could not be saved to the server. Check connection and try again.';
-      return;
-    }
-
-    const saved = await upsertForecastsFromCsvBasis(targetStr, srcDateStr);
-    if (!saved) {
-      status.className = 'upload-status error';
-      status.textContent =
-        'CSV parsed, but forecasts could not be saved to the server. Check connection and try again.';
-      return;
-    }
-
-    dbForecast[targetStr] = Object.create(null);
-    for (const dp of DAYPARTS.filter((x) => !x.isClose)) {
-      const n = Math.round(windowSales(srcDateStr, dp.start, dp.end, dp.nextEnd));
-      if (n > 0) dbForecast[targetStr][dp.key] = n;
-    }
-
-    for (const k of Object.keys(lockedDprBySheet)) delete lockedDprBySheet[k];
-    for (let i = 0; i < 7; i++) recalcSheet(i);
-  };
-  reader.readAsText(file);
-}
-
 async function init() {
   hub = createHub();
   if (!hub) setSyncStatus('offline');
@@ -1770,27 +1504,6 @@ async function init() {
   await loadRemoteForRange(loadStart, endStr);
 
   buildTabsAndSheets();
-
-  document.getElementById('pick-csv').addEventListener('click', () => {
-    document.getElementById('csv-input').click();
-  });
-  document.getElementById('csv-input').addEventListener('change', (ev) => {
-    const f = ev.target.files && ev.target.files[0];
-    if (f) handleCsvFile(f);
-    ev.target.value = '';
-  });
-  const zone = document.getElementById('drop-zone');
-  zone.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    zone.classList.add('dragover');
-  });
-  zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
-  zone.addEventListener('drop', (e) => {
-    e.preventDefault();
-    zone.classList.remove('dragover');
-    const f = e.dataTransfer.files && e.dataTransfer.files[0];
-    if (f) handleCsvFile(f);
-  });
 
   window.addEventListener('online', () => {
     if (!online) setSyncStatus('saving');
