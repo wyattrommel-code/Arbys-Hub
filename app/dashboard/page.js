@@ -284,24 +284,13 @@ export default function DashboardPage() {
       ] = await Promise.all([
         readDate("sales_logs", "log_date", selectedDate),
         readDate("labor_logs", "log_date", selectedDate),
-        readDate(
-          "waste_logs",
-          "log_date",
-          selectedDate,
-          "log_date,shift,submitted_by,item_name,quantity,unit,total_retail_loss,total_wholesale_cost"
-        ),
+        readDate("waste_logs", "log_date", selectedDate, "*"),
         readDate("inventory_logs", "log_date", selectedDate),
         readDate("roast_entries", "sheet_date", selectedDate),
         readDate("dt_logs", "log_date", selectedDate),
         readRange("sales_logs", "log_date", weekStart, weekEnd),
         readRange("labor_logs", "log_date", weekStart, weekEnd),
-        readRange(
-          "waste_logs",
-          "log_date",
-          weekStart,
-          weekEnd,
-          "log_date,shift,submitted_by,item_name,quantity,unit,total_retail_loss,total_wholesale_cost"
-        ),
+        readRange("waste_logs", "log_date", weekStart, weekEnd, "*"),
       ]);
 
       if (cancelled) return;
@@ -351,11 +340,7 @@ export default function DashboardPage() {
       const [sales, labor, waste, inventory, roast, dt] = await Promise.all([
         readRange("sales_logs", "log_date"),
         readRange("labor_logs", "log_date"),
-        readRange(
-          "waste_logs",
-          "log_date",
-          "log_date,shift,submitted_by,item_name,quantity,unit,total_retail_loss,total_wholesale_cost"
-        ),
+        readRange("waste_logs", "log_date", "*"),
         readRange("inventory_logs", "log_date"),
         readRange("roast_entries", "sheet_date"),
         readRange("dt_logs", "log_date"),
