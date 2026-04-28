@@ -34,6 +34,12 @@ function getWeekStartSunday(dateValue = new Date()) {
   return d;
 }
 
+function weekStartFromDateStr(dateStr) {
+  const d = new Date(`${dateStr}T00:00:00`);
+  d.setDate(d.getDate() - d.getDay());
+  return toDateStr(d);
+}
+
 function parseNameParts(name) {
   const full = String(name || "").trim();
   const parts = full.split(/\s+/).filter(Boolean);
@@ -294,12 +300,40 @@ export default function SchedulePage() {
   }, [rangeStart, rangeEnd]);
 
   const comparisonsByDay = useMemo(() => {
+    const otByShiftKey = new Map();
+    const scheduledRowsForOt = scheduleRows
+      .filter((r) => r.shift_date >= rangeStart && r.shift_date <= rangeEnd)
+      .sort((a, b) => {
+        const nameCmp = String(a.employee_name || "").localeCompare(String(b.employee_name || ""));
+        if (nameCmp !== 0) return nameCmp;
+        const dateCmp = String(a.shift_date || "").localeCompare(String(b.shift_date || ""));
+        if (dateCmp !== 0) return dateCmp;
+        return (parseTimeStringToMinutes(a.scheduled_start) ?? 0) - (parseTimeStringToMinutes(b.scheduled_start) ?? 0);
+      });
+    const runningByEmployeeWeek = new Map();
+    for (const shift of scheduledRowsForOt) {
+      const employeeKey = String(shift.employee_name || "").toLowerCase().trim();
+      const weekStart = weekStartFromDateStr(shift.shift_date);
+      const runKey = `${employeeKey}::${weekStart}`;
+      const prior = runningByEmployeeWeek.get(runKey) || 0;
+      const shiftHours = Number(shift.scheduled_hours) || 0;
+      const after = prior + shiftHours;
+      const otHours = Math.max(0, after - 40);
+      runningByEmployeeWeek.set(runKey, after);
+      const key = `${shift.employee_name}::${shift.shift_date}::${shift.scheduled_start}`;
+      otByShiftKey.set(key, otHours);
+    }
+
     const out = new Map();
     for (const day of comparisonDays) out.set(day, []);
     const schedInRange = scheduleRows.filter((r) => r.shift_date >= rangeStart && r.shift_date <= rangeEnd);
     for (const shift of schedInRange) {
       const laborMatch = getLaborMatchForShift(shift, laborByDate);
-      out.get(shift.shift_date)?.push(buildComparison(shift, laborMatch, todayStr));
+      const key = `${shift.employee_name}::${shift.shift_date}::${shift.scheduled_start}`;
+      out.get(shift.shift_date)?.push({
+        ...buildComparison(shift, laborMatch, todayStr),
+        otWarningHours: otByShiftKey.get(key) || 0,
+      });
     }
     for (const day of comparisonDays) {
       const list = out.get(day) || [];
@@ -329,6 +363,28 @@ export default function SchedulePage() {
     }
     return out;
   }, [scheduleRows, laborByDate, comparisonDays, rangeStart, rangeEnd, todayStr]);
+
+  const employeeWeekStats = useMemo(() => {
+    const currentWeekStart = toDateStr(getWeekStartSunday(new Date()));
+    const currentWeekEnd = toDateStr(addDays(new Date(`${currentWeekStart}T00:00:00`), 6));
+    const out = new Map();
+    for (const labor of laborRows) {
+      if (labor.log_date < currentWeekStart || labor.log_date > currentWeekEnd) continue;
+      const key = String(labor.employee_name || "").toLowerCase().trim();
+      if (!out.has(key)) out.set(key, { workedHours: 0, otHours: 0, scheduledRemainingHours: 0 });
+      const row = out.get(key);
+      row.workedHours += Number(labor.total_hours ?? labor.hours ?? 0) || 0;
+      row.otHours += Number(labor.overtime_hours ?? 0) || 0;
+    }
+    for (const shift of scheduleRows) {
+      if (shift.shift_date < currentWeekStart || shift.shift_date > currentWeekEnd) continue;
+      if (shift.shift_date < todayStr) continue;
+      const key = String(shift.employee_name || "").toLowerCase().trim();
+      if (!out.has(key)) out.set(key, { workedHours: 0, otHours: 0, scheduledRemainingHours: 0 });
+      out.get(key).scheduledRemainingHours += Number(shift.scheduled_hours) || 0;
+    }
+    return out;
+  }, [laborRows, scheduleRows, todayStr]);
 
   const employeeCards = useMemo(() => {
     const start = toDateStr(addDays(new Date(), -30));
@@ -407,10 +463,16 @@ export default function SchedulePage() {
         timeline: sorted.slice(0, 5).reverse(),
         history: sorted,
         patterns,
+        weekWorkedHours: employeeWeekStats.get(group.name.toLowerCase())?.workedHours || 0,
+        weekOtHours: employeeWeekStats.get(group.name.toLowerCase())?.otHours || 0,
+        headingToOt:
+          (employeeWeekStats.get(group.name.toLowerCase())?.workedHours || 0) +
+            (employeeWeekStats.get(group.name.toLowerCase())?.scheduledRemainingHours || 0) >
+          40,
       };
     });
     return cards.sort((a, b) => b.totalFlags - a.totalFlags || a.name.localeCompare(b.name));
-  }, [scheduleRows, laborByDate, todayStr]);
+  }, [scheduleRows, laborByDate, todayStr, employeeWeekStats]);
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 py-5">
@@ -538,7 +600,7 @@ export default function SchedulePage() {
                           <tr>
                             <th className="px-2 py-1">Employee</th><th className="px-2 py-1">Role</th><th className="px-2 py-1">Sched In</th>
                             <th className="px-2 py-1">Actual In</th><th className="px-2 py-1">Sched Out</th><th className="px-2 py-1">Actual Out</th>
-                            <th className="px-2 py-1">Sched Hrs</th><th className="px-2 py-1">Actual Hrs</th><th className="px-2 py-1">Status</th><th className="px-2 py-1">Flags</th>
+                            <th className="px-2 py-1">Sched Hrs</th><th className="px-2 py-1">Actual Hrs</th><th className="px-2 py-1">OT Warning</th><th className="px-2 py-1">Status</th><th className="px-2 py-1">Flags</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -552,6 +614,15 @@ export default function SchedulePage() {
                               <td className="px-2 py-1">{r.hasLabor ? fmtTime(`${String(Math.floor((r.actualOutMin ?? 0) / 60)).padStart(2, "0")}:${String((r.actualOutMin ?? 0) % 60).padStart(2, "0")}:00`) : "—"}</td>
                               <td className="px-2 py-1">{fmtHours(r.scheduledHours)}</td>
                               <td className="px-2 py-1">{fmtHours(r.actualHours)}</td>
+                              <td className="px-2 py-1">
+                                {r.shift && r.otWarningHours > 0 ? (
+                                  <span className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold text-amber-800">
+                                    OT: {r.otWarningHours.toFixed(1)} hrs
+                                  </span>
+                                ) : (
+                                  "—"
+                                )}
+                              </td>
                               <td className={`px-2 py-1 font-semibold ${r.status.color}`}>{r.status.label}</td>
                               <td className="px-2 py-1">
                                 <div className="flex flex-wrap gap-1">
@@ -602,6 +673,14 @@ export default function SchedulePage() {
                 <div className="mt-1 text-xs text-zinc-500">
                   Avg late arrival: {emp.lateIn ? `${Math.round(emp.avgLate)} min` : "—"} | Avg early departure: {emp.earlyOut ? `${Math.round(emp.avgEarly)} min` : "—"}
                 </div>
+                <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-300">
+                  Current week hours: {emp.weekWorkedHours.toFixed(1)} | OT this week: {emp.weekOtHours.toFixed(1)}
+                </div>
+                {emp.headingToOt ? (
+                  <div className="mt-1 rounded bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-800">
+                    Heading into OT this week
+                  </div>
+                ) : null}
                 <div className="mt-2 flex gap-1">
                   {emp.timeline.map((s, idx) => (
                     <span key={idx} title={`${s.shift.shift_date} - ${s.status.label}`} className={`h-3 w-3 rounded-full ${dotColorForComparison(s)}`} />

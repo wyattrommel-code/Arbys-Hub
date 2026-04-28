@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import { getSupabase } from "@/lib/supabase";
+import { calculateOvertimeForWeekRows, getWeekEndSaturday, getWeekStartSunday } from "@/lib/laborOvertime";
 
 const DEFAULT_HOURLY_WAGE = 10;
 const DEFAULT_STORE_ID = "payson";
@@ -167,6 +168,80 @@ function getWeekStartMonday(dateValue) {
   const day = (d.getDay() + 6) % 7;
   d.setDate(d.getDate() - day);
   return d;
+}
+
+async function upsertLaborOvertimeRows(supabase, updates) {
+  if (!updates.length) return;
+  const chunkSize = 500;
+  for (let i = 0; i < updates.length; i += chunkSize) {
+    const chunk = updates.slice(i, i + chunkSize);
+    const { error } = await supabase.from("labor_logs").upsert(chunk, { onConflict: "id" });
+    if (error) throw error;
+  }
+}
+
+async function recalcLaborOvertimeForEmployeeWeeks(supabase, employeeWeekKeys) {
+  if (!employeeWeekKeys.length) return [];
+  const byEmployee = new Map();
+  for (const key of employeeWeekKeys) {
+    const employeeName = String(key.employee_name || "").trim();
+    const weekStart = String(key.week_start_date || "").trim();
+    if (!employeeName || !weekStart) continue;
+    if (!byEmployee.has(employeeName)) byEmployee.set(employeeName, new Set());
+    byEmployee.get(employeeName).add(weekStart);
+  }
+
+  const updates = [];
+  for (const [employeeName, weekSet] of byEmployee.entries()) {
+    const weekStarts = [...weekSet].sort();
+    if (!weekStarts.length) continue;
+    const minWeek = weekStarts[0];
+    const maxWeekEnd = getWeekEndSaturday(weekStarts[weekStarts.length - 1]);
+    const { data, error } = await supabase
+      .from("labor_logs")
+      .select("id, employee_name, log_date, clock_in, total_hours, hourly_wage, week_start_date")
+      .eq("employee_name", employeeName)
+      .gte("log_date", minWeek)
+      .lte("log_date", maxWeekEnd);
+    if (error) throw error;
+    const rows = data || [];
+    const rowsByWeek = new Map();
+    for (const row of rows) {
+      const weekStart = getWeekStartSunday(row.log_date);
+      if (!weekSet.has(weekStart)) continue;
+      if (!rowsByWeek.has(weekStart)) rowsByWeek.set(weekStart, []);
+      rowsByWeek.get(weekStart).push({ ...row, week_start_date: weekStart });
+    }
+    for (const weekStart of weekStarts) {
+      const weekRows = rowsByWeek.get(weekStart) || [];
+      if (!weekRows.length) continue;
+      updates.push(...calculateOvertimeForWeekRows(weekRows));
+    }
+  }
+
+  await upsertLaborOvertimeRows(supabase, updates);
+  return updates;
+}
+
+async function recalcAllLaborOvertime(supabase) {
+  const { data, error } = await supabase
+    .from("labor_logs")
+    .select("id, employee_name, log_date, clock_in, total_hours, hourly_wage, week_start_date");
+  if (error) throw error;
+  const rows = data || [];
+  const grouped = new Map();
+  for (const row of rows) {
+    const weekStart = getWeekStartSunday(row.log_date);
+    const key = `${row.employee_name}::${weekStart}`;
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push({ ...row, week_start_date: weekStart });
+  }
+  const updates = [];
+  for (const weekRows of grouped.values()) {
+    updates.push(...calculateOvertimeForWeekRows(weekRows));
+  }
+  await upsertLaborOvertimeRows(supabase, updates);
+  return updates;
 }
 
 function parseClockTimeToMinutes(timeText) {
@@ -426,6 +501,11 @@ export default function ImportPage() {
     error: "",
     summary: null,
   });
+  const [backfillState, setBackfillState] = useState({
+    loading: false,
+    message: "",
+    error: "",
+  });
 
   const moneyFmt = useMemo(
     () =>
@@ -551,6 +631,7 @@ export default function ImportPage() {
       const invalidRows = [];
       const missingWages = new Map();
       const upsertRows = [];
+      const importedPunchIds = [];
       let totalCostImported = 0;
       const importedDates = [];
 
@@ -614,14 +695,20 @@ export default function ImportPage() {
         upsertRows.push({
           punch_id: punchId,
           log_date: logDate,
+          week_start_date: getWeekStartSunday(logDate),
           employee_name: `${firstName} ${lastName}`,
           clock_in: clockInDate.toISOString(),
           clock_out: clockOutDate.toISOString(),
           total_hours: paidHours,
+          regular_hours: paidHours,
+          overtime_hours: 0,
           hourly_wage: hourlyWage,
+          regular_cost: shiftCost,
+          overtime_cost: 0,
           shift_cost: shiftCost,
           store_id: DEFAULT_STORE_ID,
         });
+        importedPunchIds.push(punchId);
       }
 
       if (upsertRows.length > 0) {
@@ -629,10 +716,22 @@ export default function ImportPage() {
           .from("labor_logs")
           .upsert(upsertRows, { onConflict: "punch_id" });
         if (upsertError) throw upsertError;
+        const employeeWeekKeys = upsertRows.map((row) => ({
+          employee_name: row.employee_name,
+          week_start_date: getWeekStartSunday(row.log_date),
+        }));
+        await recalcLaborOvertimeForEmployeeWeeks(supabase, employeeWeekKeys);
         try {
           await recalcEmployeeAttendanceForNames(supabase, upsertRows.map((r) => r.employee_name));
         } catch {
           // Keep import success even if attendance cache update fails.
+        }
+        const { data: importedRowsWithCost, error: importedRowsErr } = await supabase
+          .from("labor_logs")
+          .select("shift_cost")
+          .in("punch_id", importedPunchIds);
+        if (!importedRowsErr) {
+          totalCostImported = (importedRowsWithCost || []).reduce((sum, row) => sum + (Number(row.shift_cost) || 0), 0);
         }
       }
 
@@ -663,6 +762,25 @@ export default function ImportPage() {
         loading: false,
         summary: null,
         error: error?.message || "Labor import failed.",
+      });
+    }
+  }
+
+  async function handleRecalculateAllLaborOt() {
+    setBackfillState({ loading: true, message: "", error: "" });
+    try {
+      const supabase = getSupabase();
+      const updates = await recalcAllLaborOvertime(supabase);
+      setBackfillState({
+        loading: false,
+        error: "",
+        message: `Recalculated overtime for ${updates.length} labor rows.`,
+      });
+    } catch (error) {
+      setBackfillState({
+        loading: false,
+        message: "",
+        error: error?.message || "Failed to recalculate labor overtime.",
       });
     }
   }
@@ -774,6 +892,16 @@ export default function ImportPage() {
           fileTypeLabel="CSV"
           onFile={handleLaborUpload}
         />
+        <button
+          type="button"
+          onClick={handleRecalculateAllLaborOt}
+          disabled={backfillState.loading || laborState.loading}
+          className="mt-3 h-10 rounded-lg border border-[#C8102E] px-4 text-xs font-semibold text-[#C8102E] disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {backfillState.loading ? "Recalculating..." : "Recalculate All Labor with OT"}
+        </button>
+        {backfillState.error ? <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{backfillState.error}</p> : null}
+        {backfillState.message ? <p className="mt-2 rounded-md bg-green-50 px-3 py-2 text-sm text-green-700">{backfillState.message}</p> : null}
         {laborState.error ? (
           <p className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{laborState.error}</p>
         ) : null}

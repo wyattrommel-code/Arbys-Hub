@@ -724,6 +724,12 @@ export default function PeoplePage() {
                           <p>
                             <span className="font-semibold">Current Wage 🔒:</span> {money(currentWage?.hourly_rate)}
                           </p>
+                          <p>
+                            <span className="font-semibold">Regular:</span> {money(currentWage?.hourly_rate)}
+                          </p>
+                          <p>
+                            <span className="font-semibold">Overtime:</span> {money((Number(currentWage?.hourly_rate) || 0) * 1.5)} (1.5x)
+                          </p>
                         </div>
                         <div className="mt-3 flex flex-wrap gap-2">
                           <button type="button" onClick={() => setWageHistoryEmployee(emp)} className="rounded-lg border border-zinc-300 px-3 py-2 text-xs font-semibold">

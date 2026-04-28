@@ -24,6 +24,7 @@ const RED = "#C8102E";
 
 const REPORT_TYPES = [
   "Daily Summary",
+  "Overtime Summary",
   "Sales Detail",
   "Labor Detail",
   "Waste Log",
@@ -51,6 +52,16 @@ function yesterdayLocalISODate() {
 function addDays(dateStr, delta) {
   const d = new Date(`${dateStr}T00:00:00`);
   d.setDate(d.getDate() + delta);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function currentWeekStartSundayISO() {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - d.getDay());
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
@@ -124,11 +135,18 @@ function getSalesValue(row) {
 }
 
 function getLaborHours(row) {
+  if (Number.isFinite(Number(row?.regular_hours)) || Number.isFinite(Number(row?.overtime_hours))) {
+    return toNum(row?.regular_hours) + toNum(row?.overtime_hours);
+  }
   return toNum(row?.hours ?? row?.total_hours ?? row?.regular_hours);
 }
 
 function getLaborCost(row) {
   return toNum(row?.labor_cost ?? row?.shift_cost ?? row?.cost);
+}
+
+function fullNameFromEmployeeRow(row) {
+  return `${String(row?.first_name || "").trim()} ${String(row?.last_name || "").trim()}`.trim();
 }
 
 function getWasteRetail(row) {
@@ -226,9 +244,10 @@ function getWeekBounds() {
 export default function DashboardPage() {
   const [tab, setTab] = useState("DASHBOARD");
   const [selectedDate, setSelectedDate] = useState(yesterdayLocalISODate);
-  const [reportStart, setReportStart] = useState(addDays(todayLocalISODate(), -7));
+  const [reportStart, setReportStart] = useState(currentWeekStartSundayISO);
   const [reportEnd, setReportEnd] = useState(todayLocalISODate);
   const [reportType, setReportType] = useState("Daily Summary");
+  const [otDayOpen, setOtDayOpen] = useState({});
   const [expanded, setExpanded] = useState({
     labor: false,
     sales: false,
@@ -273,6 +292,9 @@ export default function DashboardPage() {
     roastRows: [],
     dtRows: [],
     deploymentLogs: [],
+    scheduleRows: [],
+    employeeRows: [],
+    laborContextRows: [],
     disconnected: {
       sales: false,
       labor: false,
@@ -281,6 +303,9 @@ export default function DashboardPage() {
       roast: false,
       dt: false,
       deployment: false,
+      schedule: false,
+      employees: false,
+      laborContext: false,
     },
   });
 
@@ -398,16 +423,29 @@ export default function DashboardPage() {
     async function loadReports() {
       setReportState((s) => ({ ...s, loading: true }));
       const supabase = getSupabase();
-      const readRange = async (table, key, selectColumns = "*") => {
+      const readRange = async (table, key, selectColumns = "*", startOverride = reportStart, endOverride = reportEnd) => {
         try {
-          const { data, error } = await supabase.from(table).select(selectColumns).gte(key, reportStart).lte(key, reportEnd);
+          const { data, error } = await supabase.from(table).select(selectColumns).gte(key, startOverride).lte(key, endOverride);
           if (error) return { rows: [], disconnected: true };
           return { rows: data ?? [], disconnected: false };
         } catch {
           return { rows: [], disconnected: true };
         }
       };
-      const [sales, labor, waste, inventory, roast, dt, deployment] = await Promise.all([
+      const readAll = async (table, selectColumns = "*") => {
+        try {
+          const { data, error } = await supabase.from(table).select(selectColumns);
+          if (error) return { rows: [], disconnected: true };
+          return { rows: data ?? [], disconnected: false };
+        } catch {
+          return { rows: [], disconnected: true };
+        }
+      };
+      const currentWeekStart = currentWeekStartSundayISO();
+      const currentWeekEnd = addDays(currentWeekStart, 6);
+      const reportStartWeek = addDays(reportStart, -new Date(`${reportStart}T00:00:00`).getDay());
+      const reportEndWeek = addDays(reportEnd, 6 - new Date(`${reportEnd}T00:00:00`).getDay());
+      const [sales, labor, waste, inventory, roast, dt, deployment, scheduleCurrent, employees, laborContext] = await Promise.all([
         readRange("hourly_sales", "sale_date"),
         readRange("labor_logs", "log_date"),
         readRange("waste_logs", "log_date", "*"),
@@ -415,6 +453,9 @@ export default function DashboardPage() {
         readRange("roast_entries", "sheet_date"),
         readRange("dt_logs", "log_date"),
         readRange("deployment_logs", "log_date"),
+        readRange("schedule_shifts", "shift_date", "*", todayLocalISODate(), currentWeekEnd),
+        readAll("employees"),
+        readRange("labor_logs", "log_date", "*", reportStartWeek, reportEndWeek),
       ]);
       if (cancelled) return;
       setReportState({
@@ -426,6 +467,9 @@ export default function DashboardPage() {
         roastRows: roast.rows,
         dtRows: dt.rows,
         deploymentLogs: deployment.rows,
+        scheduleRows: scheduleCurrent.rows,
+        employeeRows: employees.rows,
+        laborContextRows: laborContext.rows,
         disconnected: {
           sales: sales.disconnected,
           labor: labor.disconnected,
@@ -434,6 +478,9 @@ export default function DashboardPage() {
           roast: roast.disconnected,
           dt: dt.disconnected,
           deployment: deployment.disconnected,
+          schedule: scheduleCurrent.disconnected,
+          employees: employees.disconnected,
+          laborContext: laborContext.disconnected,
         },
       });
     }
@@ -449,6 +496,8 @@ export default function DashboardPage() {
     const lastWeekSalesTotal = state.lastWeekSalesRows.reduce((sum, row) => sum + getSalesValue(row), 0);
     const laborCost = state.laborRows.reduce((sum, row) => sum + getLaborCost(row), 0);
     const laborHours = state.laborRows.reduce((sum, row) => sum + getLaborHours(row), 0);
+    const overtimeHours = state.laborRows.reduce((sum, row) => sum + toNum(row?.overtime_hours), 0);
+    const overtimeCost = state.laborRows.reduce((sum, row) => sum + toNum(row?.overtime_cost), 0);
     const wasteRetail = state.wasteRows.reduce((sum, row) => sum + getWasteRetail(row), 0);
     const wasteWholesale = state.wasteRows.reduce((sum, row) => sum + getWasteWholesale(row), 0);
     const dtHourlyMap = new Map();
@@ -563,6 +612,8 @@ export default function DashboardPage() {
       laborCost,
       laborHours,
       laborPct,
+      overtimeHours,
+      overtimeCost,
       wasteRetail,
       wasteWholesale,
       wastePct,
@@ -747,7 +798,190 @@ export default function DashboardPage() {
     }
     const roast = [...roastByDate.values()].sort((a, b) => a.date.localeCompare(b.date));
 
-    return { daily, salesDetailByDate, laborDetail, wasteLog, wasteLogByDate, wasteGrandTotals, inventory, roast };
+    const employeeRoleMap = new Map(
+      (reportState.employeeRows || []).map((row) => [fullNameFromEmployeeRow(row).toLowerCase(), row.primary_role || "—"])
+    );
+    const activeEmployeeNames = (reportState.employeeRows || [])
+      .filter((row) => String(row.status || "").toLowerCase() === "active")
+      .map((row) => fullNameFromEmployeeRow(row))
+      .filter(Boolean);
+    const activeSet = new Set(activeEmployeeNames.map((n) => n.toLowerCase()));
+
+    const otRows = (reportState.laborRows || []).filter((row) => toNum(row.overtime_hours) > 0 || toNum(row.overtime_cost) > 0);
+    const totalOtCost = otRows.reduce((sum, row) => sum + toNum(row.overtime_cost), 0);
+    const totalOtHours = otRows.reduce((sum, row) => sum + toNum(row.overtime_hours), 0);
+    const totalLaborCost = (reportState.laborRows || []).reduce((sum, row) => sum + getLaborCost(row), 0);
+    const otPctOfLabor = totalLaborCost > 0 ? (totalOtCost / totalLaborCost) * 100 : 0;
+    const otEmployees = [...new Set(otRows.map((r) => String(r.employee_name || "").trim()).filter(Boolean))];
+
+    const otByEmployeeMap = new Map();
+    for (const row of otRows) {
+      const name = String(row.employee_name || "").trim();
+      if (!name) continue;
+      if (!otByEmployeeMap.has(name)) {
+        otByEmployeeMap.set(name, {
+          name,
+          role: employeeRoleMap.get(name.toLowerCase()) || "—",
+          otHours: 0,
+          otCost: 0,
+          otDays: new Set(),
+          dayRows: [],
+        });
+      }
+      const bucket = otByEmployeeMap.get(name);
+      bucket.otHours += toNum(row.overtime_hours);
+      bucket.otCost += toNum(row.overtime_cost);
+      bucket.otDays.add(row.log_date);
+      bucket.dayRows.push({
+        date: row.log_date,
+        day: new Date(`${row.log_date}T00:00:00`).toLocaleDateString("en-US", { weekday: "short" }),
+        totalHours: getLaborHours(row),
+        regHours: toNum(row.regular_hours),
+        otHours: toNum(row.overtime_hours),
+        regCost: toNum(row.regular_cost),
+        otCost: toNum(row.overtime_cost),
+      });
+    }
+    const otByEmployee = [...otByEmployeeMap.values()]
+      .map((row) => ({ ...row, otDaysCount: row.otDays.size, dayRows: row.dayRows.sort((a, b) => a.date.localeCompare(b.date)) }))
+      .sort((a, b) => b.otCost - a.otCost);
+
+    const otByDayMap = new Map();
+    for (const row of reportState.laborRows || []) {
+      const date = row.log_date;
+      if (!date) continue;
+      if (!otByDayMap.has(date)) {
+        otByDayMap.set(date, { date, totalHours: 0, otHours: 0, otCost: 0, employees: new Set(), rows: [] });
+      }
+      const bucket = otByDayMap.get(date);
+      bucket.totalHours += getLaborHours(row);
+      bucket.otHours += toNum(row.overtime_hours);
+      bucket.otCost += toNum(row.overtime_cost);
+      if (toNum(row.overtime_hours) > 0) bucket.employees.add(String(row.employee_name || "").trim());
+      bucket.rows.push(row);
+    }
+    const otByDay = [...otByDayMap.values()]
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((row) => ({
+        ...row,
+        day: new Date(`${row.date}T00:00:00`).toLocaleDateString("en-US", { weekday: "short" }),
+        employeeCount: row.employees.size,
+      }));
+    let cursor = reportStart;
+    while (cursor <= reportEnd) {
+      if (!otByDay.find((d) => d.date === cursor)) {
+        otByDay.push({
+          date: cursor,
+          day: new Date(`${cursor}T00:00:00`).toLocaleDateString("en-US", { weekday: "short" }),
+          totalHours: 0,
+          otHours: 0,
+          otCost: 0,
+          employeeCount: 0,
+          rows: [],
+        });
+      }
+      cursor = addDays(cursor, 1);
+    }
+    otByDay.sort((a, b) => a.date.localeCompare(b.date));
+
+    const now = new Date();
+    const currentWeekStart = currentWeekStartSundayISO();
+    const currentWeekEnd = addDays(currentWeekStart, 6);
+    const today = todayLocalISODate();
+    const activeEmployeesForWeek = (reportState.employeeRows || []).filter((row) => String(row.status || "").toLowerCase() === "active");
+    const weekWorkedMap = new Map();
+    for (const labor of reportState.laborContextRows || []) {
+      if (labor.log_date < currentWeekStart || labor.log_date > currentWeekEnd) continue;
+      const key = String(labor.employee_name || "").trim().toLowerCase();
+      weekWorkedMap.set(key, (weekWorkedMap.get(key) || 0) + getLaborHours(labor));
+    }
+    const weekRemainingMap = new Map();
+    for (const shift of reportState.scheduleRows || []) {
+      if (shift.shift_date < today || shift.shift_date > currentWeekEnd) continue;
+      const key = String(shift.employee_name || "").trim().toLowerCase();
+      weekRemainingMap.set(key, (weekRemainingMap.get(key) || 0) + toNum(shift.scheduled_hours));
+    }
+    const weekStatusRows = activeEmployeesForWeek
+      .map((emp) => {
+        const name = fullNameFromEmployeeRow(emp);
+        const key = name.toLowerCase();
+        const worked = weekWorkedMap.get(key) || 0;
+        const remaining = weekRemainingMap.get(key) || 0;
+        const projected = worked + remaining;
+        let status = "SAFE";
+        if (projected > 40 && worked > 40) status = "IN OT NOW";
+        else if (projected > 40 && worked <= 40) status = "HEADING INTO OT";
+        else if (projected >= 38) status = "NEAR LIMIT";
+        return { name, worked, remaining, projected, status };
+      })
+      .sort((a, b) => b.projected - a.projected);
+
+    const weekTotals = weekStatusRows.reduce(
+      (acc, row) => ({
+        worked: acc.worked + row.worked,
+        remaining: acc.remaining + row.remaining,
+        projected: acc.projected + row.projected,
+      }),
+      { worked: 0, remaining: 0, projected: 0 }
+    );
+    const avgWage =
+      (reportState.laborContextRows || []).reduce((sum, row) => sum + toNum(row.hourly_wage), 0) /
+      Math.max(1, (reportState.laborContextRows || []).length);
+    const estimatedProjectedOtHours = weekStatusRows.reduce((sum, row) => sum + Math.max(0, row.projected - 40), 0);
+    const estimatedProjectedOtCost = estimatedProjectedOtHours * avgWage * 1.5;
+
+    const weekTotalByEmployee = new Map();
+    for (const row of reportState.laborContextRows || []) {
+      const key = `${String(row.employee_name || "").trim().toLowerCase()}::${row.week_start_date || ""}`;
+      weekTotalByEmployee.set(key, (weekTotalByEmployee.get(key) || 0) + getLaborHours(row));
+    }
+    const avoidabilityRows = otRows.map((row) => {
+      const rowEmployee = String(row.employee_name || "").trim();
+      const weekKeyBase = row.week_start_date || addDays(row.log_date, -new Date(`${row.log_date}T00:00:00`).getDay());
+      const candidates = activeEmployeeNames.filter((name) => name.toLowerCase() !== rowEmployee.toLowerCase());
+      const under30 = candidates.filter((name) => (weekTotalByEmployee.get(`${name.toLowerCase()}::${weekKeyBase}`) || 0) < 30);
+      const avoidable = under30.length > 0;
+      return {
+        date: row.log_date,
+        employee: rowEmployee,
+        otHours: toNum(row.overtime_hours),
+        otCost: toNum(row.overtime_cost),
+        avoidable,
+        suggestion: avoidable ? `Avoidable: Could have given hours to ${under30[0]}` : "Unavoidable: All staff at full hours",
+      };
+    });
+    const avoidableCount = avoidabilityRows.filter((r) => r.avoidable).length;
+    const unavoidableCount = avoidabilityRows.length - avoidableCount;
+    const avoidableCost = avoidabilityRows.filter((r) => r.avoidable).reduce((sum, r) => sum + r.otCost, 0);
+
+    return {
+      daily,
+      salesDetailByDate,
+      laborDetail,
+      wasteLog,
+      wasteLogByDate,
+      wasteGrandTotals,
+      inventory,
+      roast,
+      overtime: {
+        totalOtCost,
+        totalOtHours,
+        totalLaborCost,
+        otPctOfLabor,
+        otEmployees,
+        otByEmployee,
+        otByDay,
+        weekStatusRows,
+        weekTotals,
+        estimatedProjectedOtCost,
+        avoidabilityRows,
+        avoidableCount,
+        unavoidableCount,
+        avoidableCost,
+        currentWeekStart,
+        currentWeekEnd,
+      },
+    };
   }, [reportState]);
 
   function formatSubmittedAt(iso) {
@@ -817,6 +1051,162 @@ export default function DashboardPage() {
             )}
           </tbody>
         </table>
+      );
+    }
+
+    if (reportType === "Overtime Summary") {
+      const ot = reportRows.overtime;
+      const employeeSub =
+        ot.otEmployees.length <= 5 ? ot.otEmployees.map((n) => n.split(" ")[0]).join(", ") || "None" : `${ot.otEmployees.length} employees`;
+      const otPctColor = ot.otPctOfLabor < 3 ? "text-green-700" : ot.otPctOfLabor <= 7 ? "text-amber-700" : "text-red-700";
+      return (
+        <div className="space-y-4 p-3">
+          <div className="grid gap-2 sm:grid-cols-3">
+            <div className="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-700 dark:bg-zinc-900">
+              <p className="text-xs text-zinc-500">TOTAL OT COST</p>
+              <p className={`mt-1 text-xl font-bold ${ot.totalOtCost > 0 ? "text-amber-700" : ""}`}>{fmtMoney2(ot.totalOtCost)}</p>
+              <p className="text-xs text-zinc-500">{ot.totalOtHours.toFixed(1)} total OT hours</p>
+            </div>
+            <div className="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-700 dark:bg-zinc-900">
+              <p className="text-xs text-zinc-500">EMPLOYEES IN OT</p>
+              <p className="mt-1 text-xl font-bold">{ot.otEmployees.length}</p>
+              <p className="text-xs text-zinc-500">{employeeSub}</p>
+            </div>
+            <div className="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-700 dark:bg-zinc-900">
+              <p className="text-xs text-zinc-500">OT % OF LABOR</p>
+              <p className={`mt-1 text-xl font-bold ${otPctColor}`}>{fmtPct(ot.otPctOfLabor)}</p>
+              <p className="text-xs text-zinc-500">{fmtMoney2(ot.totalOtCost)} of {fmtMoney2(ot.totalLaborCost)}</p>
+            </div>
+          </div>
+
+          <section className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+            <h3 className="text-sm font-bold text-[#C8102E]">Current Week Status</h3>
+            <p className="text-xs text-zinc-500">{ot.currentWeekStart} to {ot.currentWeekEnd}</p>
+            <div className="mt-2 overflow-x-auto">
+              <table className="min-w-full text-left text-xs">
+                <thead className="bg-zinc-50 dark:bg-zinc-800">
+                  <tr><th className="px-2 py-1">Employee</th><th className="px-2 py-1">Worked</th><th className="px-2 py-1">Remaining</th><th className="px-2 py-1">Projected</th><th className="px-2 py-1">Status</th></tr>
+                </thead>
+                <tbody>
+                  {ot.weekStatusRows.map((r) => {
+                    const rowClass =
+                      r.status === "IN OT NOW"
+                        ? "bg-red-50/70"
+                        : r.status === "HEADING INTO OT"
+                          ? "bg-amber-50/70"
+                          : "";
+                    const badge =
+                      r.status === "IN OT NOW"
+                        ? "🔴 IN OT NOW"
+                        : r.status === "HEADING INTO OT"
+                          ? "🟡 HEADING INTO OT"
+                          : r.status === "NEAR LIMIT"
+                            ? "⚪ NEAR LIMIT"
+                            : "🟢 SAFE";
+                    return (
+                      <tr key={r.name} className={`border-t border-zinc-100 dark:border-zinc-800 ${rowClass}`}>
+                        <td className="px-2 py-1">{r.name}</td>
+                        <td className="px-2 py-1">{r.worked.toFixed(1)}</td>
+                        <td className="px-2 py-1">{r.remaining.toFixed(1)}</td>
+                        <td className="px-2 py-1">{r.projected.toFixed(1)}</td>
+                        <td className="px-2 py-1 font-semibold">{badge}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t-2 border-zinc-300 font-semibold dark:border-zinc-700">
+                    <td className="px-2 py-1">Grand total</td>
+                    <td className="px-2 py-1">{ot.weekTotals.worked.toFixed(1)}</td>
+                    <td className="px-2 py-1">{ot.weekTotals.remaining.toFixed(1)}</td>
+                    <td className="px-2 py-1">{ot.weekTotals.projected.toFixed(1)}</td>
+                    <td className="px-2 py-1">Est. OT cost {fmtMoney2(ot.estimatedProjectedOtCost)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </section>
+
+          <section className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+            <h3 className="text-sm font-bold text-[#C8102E]">OT by Employee — {reportStart} to {reportEnd}</h3>
+            <div className="mt-2 space-y-2">
+              {ot.otByEmployee.length === 0 ? (
+                <p className="text-xs text-zinc-500">No overtime in this date range.</p>
+              ) : (
+                ot.otByEmployee.map((emp) => (
+                  <div key={emp.name} className="rounded-md border border-zinc-200 p-2 dark:border-zinc-800">
+                    <p className="font-semibold">{emp.name} <span className="text-xs text-zinc-500">({emp.role})</span></p>
+                    <p className="text-xs text-zinc-600">OT: {emp.otHours.toFixed(1)} hrs | {fmtMoney2(emp.otCost)} | {emp.otDaysCount} OT days</p>
+                    <div className="mt-1 overflow-x-auto">
+                      <table className="min-w-[680px] text-xs">
+                        <thead className="bg-zinc-50 dark:bg-zinc-900">
+                          <tr><th className="px-2 py-1">Date</th><th className="px-2 py-1">Day</th><th className="px-2 py-1">Total Hrs</th><th className="px-2 py-1">Reg Hrs</th><th className="px-2 py-1">OT Hrs</th><th className="px-2 py-1">Reg $</th><th className="px-2 py-1">OT $</th></tr>
+                        </thead>
+                        <tbody>
+                          {emp.dayRows.map((r, idx) => (
+                            <tr key={`${emp.name}-${idx}`} className="border-t border-zinc-100 dark:border-zinc-800">
+                              <td className="px-2 py-1">{r.date}</td><td className="px-2 py-1">{r.day}</td><td className="px-2 py-1">{r.totalHours.toFixed(1)}</td>
+                              <td className="px-2 py-1">{r.regHours.toFixed(1)}</td><td className="px-2 py-1">{r.otHours.toFixed(1)}</td>
+                              <td className="px-2 py-1">{fmtMoney2(r.regCost)}</td><td className="px-2 py-1">{fmtMoney2(r.otCost)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
+
+          <section className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+            <h3 className="text-sm font-bold text-[#C8102E]">OT by Day — {reportStart} to {reportEnd}</h3>
+            <div className="mt-2 overflow-x-auto">
+              <table className="min-w-full text-left text-xs">
+                <thead className="bg-zinc-50 dark:bg-zinc-800">
+                  <tr><th className="px-2 py-1">Date</th><th className="px-2 py-1">Day</th><th className="px-2 py-1">Total Hrs</th><th className="px-2 py-1">OT Hrs</th><th className="px-2 py-1">OT Cost</th><th className="px-2 py-1">Employees in OT</th></tr>
+                </thead>
+                <tbody>
+                  {ot.otByDay.flatMap((d) => [
+                    <tr key={d.date} className="border-t border-zinc-100 dark:border-zinc-800 cursor-pointer" onClick={() => setOtDayOpen((s) => ({ ...s, [d.date]: !s[d.date] }))}>
+                      <td className="px-2 py-1">{d.date}</td><td className="px-2 py-1">{d.day}</td><td className="px-2 py-1">{d.totalHours.toFixed(1)}</td>
+                      <td className="px-2 py-1">{d.otHours.toFixed(1)}</td><td className="px-2 py-1">{fmtMoney2(d.otCost)}</td><td className="px-2 py-1">{d.employeeCount}</td>
+                    </tr>,
+                    otDayOpen[d.date] ? (
+                      <tr key={`${d.date}-expanded`} className="border-t border-zinc-100 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
+                        <td className="px-2 py-2" colSpan={6}>
+                          {d.rows.filter((r) => toNum(r.overtime_hours) > 0).length ? (
+                            d.rows
+                              .filter((r) => toNum(r.overtime_hours) > 0)
+                              .map((r, idx) => (
+                                <p key={`${d.date}-${idx}`} className="text-xs">{r.employee_name}: {toNum(r.overtime_hours).toFixed(1)} OT hrs ({fmtMoney2(toNum(r.overtime_cost))})</p>
+                              ))
+                          ) : (
+                            <p className="text-xs text-zinc-500">No OT contributors this day.</p>
+                          )}
+                        </td>
+                      </tr>
+                    ) : null,
+                  ])}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+            <h3 className="text-sm font-bold text-[#C8102E]">Could This Have Been Avoided?</h3>
+            <p className="text-xs text-zinc-600">
+              {ot.avoidableCount} OT shifts were AVOIDABLE | {ot.unavoidableCount} OT shifts were UNAVOIDABLE | Total avoidable OT cost: {fmtMoney2(ot.avoidableCost)}
+            </p>
+            <div className="mt-2 space-y-1">
+              {ot.avoidabilityRows.map((r, idx) => (
+                <p key={`${r.date}-${idx}`} className="text-xs">
+                  {r.date} — {r.employee} ({r.otHours.toFixed(1)}h / {fmtMoney2(r.otCost)}): {r.suggestion}
+                </p>
+              ))}
+            </div>
+          </section>
+        </div>
       );
     }
 
@@ -980,7 +1370,12 @@ export default function DashboardPage() {
                     <MetricCard
                       title="Labor %"
                       value={fmtPct(snapshot.laborPct)}
-                      sub={`Labor cost ${fmtMoney(snapshot.laborCost)}`}
+                      sub={
+                        snapshot.overtimeCost > 0
+                          ? `Labor cost ${fmtMoney(snapshot.laborCost)} | ⚠ ${fmtMoney2(snapshot.overtimeCost)} in OT today`
+                          : `Labor cost ${fmtMoney(snapshot.laborCost)}`
+                      }
+                      subColor={snapshot.overtimeCost > 0 ? "text-amber-700 dark:text-amber-400" : "text-zinc-500 dark:text-zinc-400"}
                       color=""
                     />
                   )}
@@ -1022,6 +1417,16 @@ export default function DashboardPage() {
                   <p>Target: 22% ({snapshot.laborPct >= 22 ? "+" : ""}{(snapshot.laborPct - 22).toFixed(1)} pts)</p>
                   <p>Total hours: {snapshot.laborHours.toFixed(1)}</p>
                   <p>Total labor cost: {fmtMoney(snapshot.laborCost)}</p>
+                  {snapshot.overtimeHours > 0 ? (
+                    <p className="font-semibold text-amber-700">
+                      Includes {fmtMoney2(snapshot.overtimeCost)} in overtime ({snapshot.overtimeHours.toFixed(1)} hrs)
+                    </p>
+                  ) : (
+                    <p>Includes $0.00 in overtime (0.0 hrs)</p>
+                  )}
+                  {snapshot.overtimeCost > 50 ? (
+                    <p className="rounded-md bg-amber-50 px-2 py-1 text-amber-900">⚠ High OT day — review schedule</p>
+                  ) : null}
                   <p>Sales per labor hour: {fmtMoney2(snapshot.splh)}</p>
                   <p className="text-xs text-zinc-500">Full employee breakdown available in Reports</p>
                 </div>
@@ -1333,7 +1738,7 @@ export default function DashboardPage() {
 
           <div className="flex justify-end">
             <button type="button" onClick={printCurrent} className="rounded-lg bg-zinc-900 px-3 py-2 text-xs font-bold text-white dark:bg-zinc-100 dark:text-zinc-900">
-              PRINT
+              Print Report
             </button>
           </div>
 
