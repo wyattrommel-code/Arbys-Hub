@@ -26,6 +26,12 @@ const navCards = [
     title: "Dashboard",
     description: "GM dashboard placeholder page.",
   },
+  {
+    href: "/schedule",
+    title: "Schedule & Attendance",
+    description:
+      "Compare scheduled vs actual shifts, track attendance patterns and flags.",
+  },
 ];
 
 export default function Home() {

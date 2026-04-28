@@ -9,6 +9,7 @@ const PAGE_TITLES = {
   "/waste": "Waste Tracker",
   "/inventory": "Inventory",
   "/dashboard": "Dashboard",
+  "/schedule": "Schedule & Attendance",
   "/roast-beef": "Roast Beef",
   "/roast": "Roast Beef",
 };
