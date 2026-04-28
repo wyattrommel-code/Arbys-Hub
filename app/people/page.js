@@ -147,6 +147,7 @@ export default function PeoplePage() {
   const [bulkTrainerIds, setBulkTrainerIds] = useState([]);
   const [savingBulkTrainers, setSavingBulkTrainers] = useState(false);
   const scrollYRef = useRef(0);
+  const [certModalError, setCertModalError] = useState("");
 
   async function reloadAll() {
     setLoading(true);
@@ -318,11 +319,31 @@ export default function PeoplePage() {
   }
 
   async function startTraining(certTarget) {
+    const employeeId = certTarget?.employee?.id;
+    const station = certTarget?.station;
+    const trainerId = startTrainingTrainerId;
+    console.log("Start Training clicked", { employeeId, station, trainerId });
+
     if (!startTrainingTrainerId) {
-      setError("Select a trainer.");
+      setCertModalError("Select a trainer.");
       return;
     }
+    setCertModalError("");
     const trainer = employeesById.get(startTrainingTrainerId);
+    const previous = certs;
+    const optimistic = {
+      id: `optimistic-training-${certTarget.employee.id}-${certTarget.station}`,
+      employee_id: certTarget.employee.id,
+      station: certTarget.station,
+      status: "in_training",
+      trainer_id: startTrainingTrainerId,
+      trainer_name: fullName(trainer),
+      training_start_date: toDateStr(new Date()),
+      store_id: "payson",
+    };
+    withPreservedScroll(() => {
+      setCerts((prev) => [...prev.filter((c) => !(c.employee_id === certTarget.employee.id && c.station === certTarget.station)), optimistic]);
+    });
     const payload = {
       employee_id: certTarget.employee.id,
       station: certTarget.station,
@@ -330,15 +351,30 @@ export default function PeoplePage() {
       trainer_id: startTrainingTrainerId,
       trainer_name: fullName(trainer),
       training_start_date: toDateStr(new Date()),
+      store_id: "payson",
     };
-    const { error: upErr } = await supabase.from("station_certifications").upsert(payload, { onConflict: "employee_id,station" });
+    console.log("Start Training upsert payload", payload);
+    const { data: upsertData, error: upErr } = await supabase
+      .from("station_certifications")
+      .upsert(payload, { onConflict: "employee_id,station" })
+      .select("*")
+      .single();
+    console.log("Start Training upsert result", { upsertData, upErr });
     if (upErr) {
-      setError(upErr.message || "Failed to start training.");
+      withPreservedScroll(() => setCerts(previous));
+      setCertModalError(upErr.message || "Failed to start training.");
       return;
     }
+    withPreservedScroll(() => {
+      setCerts((prev) =>
+        prev.map((c) =>
+          c.employee_id === certTarget.employee.id && c.station === certTarget.station ? { ...upsertData } : c
+        )
+      );
+    });
+    setCertModalError("");
     setCertModal(null);
     setStartTrainingTrainerId("");
-    reloadAll();
   }
 
   function beginCertificationTest(certTarget, failedOnly = false) {
@@ -1082,6 +1118,8 @@ export default function PeoplePage() {
                               if (quickCertifyMode) {
                                 handleQuickCertifyCellClick(emp, station, cert);
                               } else {
+                                setCertModalError("");
+                                setStartTrainingTrainerId("");
                                 setCertModal({ employee: emp, station, cert });
                               }
                             }}
@@ -1487,10 +1525,18 @@ export default function PeoplePage() {
       ) : null}
 
       {certModal ? (
-        <Modal title={`${fullName(certModal.employee)} - ${certModal.station}`} onClose={() => setCertModal(null)}>
+        <Modal
+          title={`${fullName(certModal.employee)} - ${certModal.station}`}
+          onClose={() => {
+            setCertModal(null);
+            setCertModalError("");
+            setStartTrainingTrainerId("");
+          }}
+        >
           {!certModal.cert ? (
             <div>
               <p className="text-sm text-zinc-600">This employee has not started certification for this station.</p>
+              {certModalError ? <p className="mt-2 rounded bg-red-50 px-2 py-1 text-xs text-red-700">{certModalError}</p> : null}
               {activeTrainers.filter((trainer) => trainer.id !== certModal.employee.id).length === 0 ? (
                 <p className="mt-3 text-xs text-zinc-600 dark:text-zinc-400">
                   No trainers assigned. Mark employees as trainers in the Roster tab.
