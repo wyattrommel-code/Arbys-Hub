@@ -769,18 +769,34 @@ export default function DashboardPage() {
       const employeeId = employeeIdByName.get(lookupKey);
       if (employeeId) {
         const history = wageHistoryByEmployeeId.get(employeeId) || [];
-        const match = history.find((w) => String(w.effective_date || "") <= String(logDate || ""));
+        const match = history.find((w) => {
+          if (!w.effective_date || !logDate) return false;
+          const eff = new Date(`${w.effective_date}T00:00:00`).getTime();
+          const log = new Date(`${logDate}T00:00:00`).getTime();
+          if (!Number.isFinite(eff) || !Number.isFinite(log)) return false;
+          return eff <= log;
+        });
         const wage = Number(match?.hourly_rate);
         if (Number.isFinite(wage)) return wage;
+        const latestFromMap = Number(wageMap.get(lookupKey));
+        if (Number.isFinite(latestFromMap)) return latestFromMap;
       }
 
       // Fallback for edge-case full names from source systems: match on last name.
       const lastName = lastNameFromFullName(employeeName);
       const candidates = wageCandidatesByLastName.get(lastName) || [];
       for (const candidate of candidates) {
-        const match = (candidate.history || []).find((w) => String(w.effective_date || "") <= String(logDate || ""));
+        const match = (candidate.history || []).find((w) => {
+          if (!w.effective_date || !logDate) return false;
+          const eff = new Date(`${w.effective_date}T00:00:00`).getTime();
+          const log = new Date(`${logDate}T00:00:00`).getTime();
+          if (!Number.isFinite(eff) || !Number.isFinite(log)) return false;
+          return eff <= log;
+        });
         const wage = Number(match?.hourly_rate);
         if (Number.isFinite(wage)) return wage;
+        const latest = Number(candidate.history?.[0]?.hourly_rate);
+        if (Number.isFinite(latest)) return latest;
       }
       return null;
     };
