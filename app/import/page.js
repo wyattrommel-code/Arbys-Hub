@@ -172,11 +172,26 @@ function getWeekStartMonday(dateValue) {
 
 async function upsertLaborOvertimeRows(supabase, updates) {
   if (!updates.length) return;
-  const chunkSize = 500;
+  const chunkSize = 50;
   for (let i = 0; i < updates.length; i += chunkSize) {
     const chunk = updates.slice(i, i + chunkSize);
-    const { error } = await supabase.from("labor_logs").upsert(chunk, { onConflict: "id" });
-    if (error) throw error;
+    const results = await Promise.all(
+      chunk.map((row) =>
+        supabase
+          .from("labor_logs")
+          .update({
+            regular_hours: row.regular_hours,
+            overtime_hours: row.overtime_hours,
+            regular_cost: row.regular_cost,
+            overtime_cost: row.overtime_cost,
+            shift_cost: row.shift_cost,
+            week_start_date: row.week_start_date,
+          })
+          .eq("id", row.id)
+      )
+    );
+    const failed = results.find((res) => res.error);
+    if (failed?.error) throw failed.error;
   }
 }
 
