@@ -32,6 +32,12 @@ const navCards = [
     description:
       "Compare scheduled vs actual shifts, track attendance patterns and flags.",
   },
+  {
+    href: "/deployment",
+    title: "Deployment Chart",
+    description:
+      "Enter station assignments for each shift. Morning by 10:30am, Night by 4:30pm.",
+  },
 ];
 
 export default function Home() {
