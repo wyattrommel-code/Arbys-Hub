@@ -116,6 +116,7 @@ export default function PeoplePage() {
     hire_date: toDateStr(new Date()),
     primary_role: ROLE_OPTIONS[0],
     is_shift_lead: false,
+    is_trainer: false,
     status: "active",
     starting_wage: "",
   });
@@ -136,6 +137,7 @@ export default function PeoplePage() {
   const [testFlow, setTestFlow] = useState(null);
   const [logSessionTarget, setLogSessionTarget] = useState(null);
   const [logSessionShift, setLogSessionShift] = useState("Morning");
+  const [logSessionTrainerId, setLogSessionTrainerId] = useState("");
   const [questionStation, setQuestionStation] = useState(STATIONS[0]);
   const [newQuestion, setNewQuestion] = useState({ station: STATIONS[0], question_text: "", category: "knowledge" });
   const [editingQuestionId, setEditingQuestionId] = useState(null);
@@ -204,7 +206,7 @@ export default function PeoplePage() {
 
   const activeEmployees = useMemo(() => employees.filter((e) => normalizeStatus(e.status) === "active").sort(byLastName), [employees]);
 
-  const activeTrainers = activeEmployees;
+  const activeTrainers = useMemo(() => activeEmployees.filter((e) => Boolean(e.is_trainer)), [activeEmployees]);
 
   async function saveEmployeeEdit(employeeId) {
     const payload = {
@@ -216,6 +218,7 @@ export default function PeoplePage() {
       status: editForm.status,
       primary_role: editForm.primary_role || null,
       is_shift_lead: Boolean(editForm.is_shift_lead),
+      is_trainer: Boolean(editForm.is_trainer),
       notes: editForm.notes || null,
     };
     const { error: upErr } = await supabase.from("employees").update(payload).eq("id", employeeId);
@@ -247,6 +250,7 @@ export default function PeoplePage() {
         hire_date: addForm.hire_date || null,
         primary_role: addForm.primary_role || null,
         is_shift_lead: Boolean(addForm.is_shift_lead),
+        is_trainer: Boolean(addForm.is_trainer),
         status: addForm.status || "active",
       })
       .select("id")
@@ -274,6 +278,7 @@ export default function PeoplePage() {
       hire_date: toDateStr(new Date()),
       primary_role: ROLE_OPTIONS[0],
       is_shift_lead: false,
+      is_trainer: false,
       status: "active",
       starting_wage: "",
     });
@@ -460,9 +465,13 @@ export default function PeoplePage() {
   async function logTrainingSession() {
     if (!logSessionTarget) return;
     const { employee, cert } = logSessionTarget;
+    if (!logSessionTrainerId) {
+      setError("Select a trainer for this session.");
+      return;
+    }
     const { error: insErr } = await supabase.from("training_sessions").insert({
       employee_id: employee.id,
-      trainer_id: cert?.trainer_id || null,
+      trainer_id: logSessionTrainerId,
       station: cert?.station || logSessionTarget.station,
       session_date: toDateStr(new Date()),
       shift: logSessionShift,
@@ -544,7 +553,14 @@ export default function PeoplePage() {
   }, [certs, employeesById, sessions]);
 
   const trainerCards = useMemo(() => {
-    const trainerIds = [...new Set(sessions.map((s) => s.trainer_id).filter(Boolean))];
+    const trainerIds = [
+      ...new Set(
+        sessions
+          .map((s) => s.trainer_id)
+          .filter(Boolean)
+          .filter((id) => Boolean(employeesById.get(id)?.is_trainer))
+      ),
+    ];
     return trainerIds
       .map((trainerId) => {
         const trainer = employeesById.get(trainerId);
@@ -691,6 +707,9 @@ export default function PeoplePage() {
                           {emp.primary_role || "Unassigned role"}
                         </span>
                         <span className={`rounded px-2 py-0.5 text-xs font-semibold ${statusBadgeClass(status)}`}>{status}</span>
+                        {emp.is_trainer ? (
+                          <span className="rounded bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">🎓 TRAINER</span>
+                        ) : null}
                       </div>
                     </div>
                   </div>
@@ -748,6 +767,7 @@ export default function PeoplePage() {
                                 status: normalizeStatus(emp.status),
                                 primary_role: emp.primary_role || ROLE_OPTIONS[0],
                                 is_shift_lead: Boolean(emp.is_shift_lead),
+                                is_trainer: Boolean(emp.is_trainer),
                                 notes: emp.notes || "",
                               });
                             }}
@@ -820,15 +840,26 @@ export default function PeoplePage() {
                             ))}
                           </select>
                         </label>
-                        <label className="inline-flex items-center gap-2 text-xs font-medium text-zinc-600 sm:col-span-2">
-                          <input
-                            type="checkbox"
-                            checked={Boolean(editForm.is_shift_lead)}
-                            onChange={(e) => setEditForm((s) => ({ ...s, is_shift_lead: e.target.checked }))}
-                            className="h-4 w-4 accent-[#C8102E]"
-                          />
-                          Is shift lead
-                        </label>
+                        <div className="sm:col-span-2 flex flex-wrap gap-4">
+                          <label className="inline-flex items-center gap-2 text-xs font-medium text-zinc-600">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(editForm.is_shift_lead)}
+                              onChange={(e) => setEditForm((s) => ({ ...s, is_shift_lead: e.target.checked }))}
+                              className="h-4 w-4 accent-[#C8102E]"
+                            />
+                            Is shift lead
+                          </label>
+                          <label className="inline-flex items-center gap-2 text-xs font-medium text-zinc-600">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(editForm.is_trainer)}
+                              onChange={(e) => setEditForm((s) => ({ ...s, is_trainer: e.target.checked }))}
+                              className="h-4 w-4 accent-[#C8102E]"
+                            />
+                            Can Train Other Employees
+                          </label>
+                        </div>
                         <label className="text-xs font-medium text-zinc-600 sm:col-span-2">
                           Notes
                           <textarea
@@ -926,6 +957,9 @@ export default function PeoplePage() {
                       onClick={() => {
                         setLogSessionTarget({ employee: row.employee, cert: row.cert });
                         setLogSessionShift("Morning");
+                        setLogSessionTrainerId(
+                          activeTrainers.some((trainer) => trainer.id === row.cert?.trainer_id) ? row.cert?.trainer_id || "" : ""
+                        );
                       }}
                       className="mt-2 rounded-lg bg-[#C8102E] px-3 py-2 text-xs font-semibold text-white"
                     >
@@ -1188,6 +1222,15 @@ export default function PeoplePage() {
               />
               Is shift lead
             </label>
+            <label className="inline-flex items-center gap-2 text-xs font-medium text-zinc-600 sm:col-span-2">
+              <input
+                type="checkbox"
+                checked={Boolean(addForm.is_trainer)}
+                onChange={(e) => setAddForm((s) => ({ ...s, is_trainer: e.target.checked }))}
+                className="h-4 w-4 accent-[#C8102E]"
+              />
+              Can Train Other Employees
+            </label>
           </div>
           <button type="button" onClick={addEmployee} className="mt-3 h-11 rounded-lg bg-[#C8102E] px-4 text-sm font-semibold text-white">
             Save Employee
@@ -1283,22 +1326,35 @@ export default function PeoplePage() {
           {!certModal.cert ? (
             <div>
               <p className="text-sm text-zinc-600">This employee has not started certification for this station.</p>
-              <label className="mt-3 block text-xs font-medium text-zinc-600">
-                Trainer
-                <select
-                  value={startTrainingTrainerId}
-                  onChange={(e) => setStartTrainingTrainerId(e.target.value)}
-                  className="mt-1 h-10 w-full rounded-lg border border-zinc-300 px-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                >
-                  <option value="">Select trainer...</option>
-                  {activeTrainers.map((trainer) => (
-                    <option key={trainer.id} value={trainer.id}>
-                      {fullName(trainer)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <button type="button" onClick={() => startTraining(certModal)} className="mt-3 h-11 rounded-lg bg-[#C8102E] px-4 text-sm font-semibold text-white">
+              {activeTrainers.filter((trainer) => trainer.id !== certModal.employee.id).length === 0 ? (
+                <p className="mt-3 text-xs text-zinc-600 dark:text-zinc-400">
+                  No trainers assigned. Mark employees as trainers in the Roster tab.
+                </p>
+              ) : (
+                <label className="mt-3 block text-xs font-medium text-zinc-600">
+                  Trainer
+                  <select
+                    value={startTrainingTrainerId}
+                    onChange={(e) => setStartTrainingTrainerId(e.target.value)}
+                    className="mt-1 h-10 w-full rounded-lg border border-zinc-300 px-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                  >
+                    <option value="">Select trainer...</option>
+                    {activeTrainers
+                      .filter((trainer) => trainer.id !== certModal.employee.id)
+                      .map((trainer) => (
+                        <option key={trainer.id} value={trainer.id}>
+                          {fullName(trainer)}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+              )}
+              <button
+                type="button"
+                onClick={() => startTraining(certModal)}
+                disabled={activeTrainers.filter((trainer) => trainer.id !== certModal.employee.id).length === 0}
+                className="mt-3 h-11 rounded-lg bg-[#C8102E] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
                 Start Training
               </button>
             </div>
@@ -1444,6 +1500,29 @@ export default function PeoplePage() {
       {logSessionTarget ? (
         <Modal title={`Log Training Session - ${fullName(logSessionTarget.employee)}`} onClose={() => setLogSessionTarget(null)}>
           <p className="text-sm text-zinc-700">Station: {logSessionTarget.cert?.station}</p>
+          {activeTrainers.filter((trainer) => trainer.id !== logSessionTarget.employee.id).length === 0 ? (
+            <p className="mt-3 text-xs text-zinc-600 dark:text-zinc-400">
+              No trainers assigned. Mark employees as trainers in the Roster tab.
+            </p>
+          ) : (
+            <label className="mt-3 block text-xs font-medium text-zinc-600">
+              Trainer
+              <select
+                value={logSessionTrainerId}
+                onChange={(e) => setLogSessionTrainerId(e.target.value)}
+                className="mt-1 h-10 w-full rounded-lg border border-zinc-300 px-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+              >
+                <option value="">Select trainer...</option>
+                {activeTrainers
+                  .filter((trainer) => trainer.id !== logSessionTarget.employee.id)
+                  .map((trainer) => (
+                    <option key={trainer.id} value={trainer.id}>
+                      {fullName(trainer)}
+                    </option>
+                  ))}
+              </select>
+            </label>
+          )}
           <label className="mt-3 block text-xs font-medium text-zinc-600">
             Shift
             <select
