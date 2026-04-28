@@ -378,12 +378,17 @@ function parseLaborCsv(csvText) {
   for (let i = 1; i < lines.length; i += 1) {
     const cols = parseCsvLine(lines[i]);
     if (!cols.some((c) => String(c || "").trim() !== "")) continue;
+    const punchId = String(cols[headerMap.get("Punch ID")] || "").trim();
+    const firstName = String(cols[headerMap.get("First Name")] || "").trim();
+    const clockIn = String(cols[headerMap.get("Clock In")] || "").trim();
+    // Some CSV exports include trailing blank-ish rows. Skip silently.
+    if (!punchId || !firstName || !clockIn) continue;
     rows.push({
-      punchId: cols[headerMap.get("Punch ID")] || "",
-      firstName: cols[headerMap.get("First Name")] || "",
+      punchId,
+      firstName,
       lastName: cols[headerMap.get("Last Name")] || "",
       employeeIdCode: cols[headerMap.get("Employee ID Code")] || "",
-      clockIn: cols[headerMap.get("Clock In")] || "",
+      clockIn,
       clockOut: cols[headerMap.get("Clock Out")] || "",
       totalHoursRaw: cols[headerMap.get("Total Hours")] || "",
       unpaidBreaksRaw: cols[headerMap.get("Total Unpaid Breaks")] || "",
@@ -629,6 +634,7 @@ export default function ImportPage() {
       const zeroOrBlank = [];
       const missingNames = [];
       const invalidRows = [];
+      let skippedNullLogDateCount = 0;
       const missingWages = new Map();
       const upsertRows = [];
       const importedPunchIds = [];
@@ -688,8 +694,18 @@ export default function ImportPage() {
         }
 
         const shiftCost = paidHours * hourlyWage;
-        totalCostImported += shiftCost;
         const logDate = toDateStr(clockInDate);
+        if (!logDate) {
+          skippedNullLogDateCount += 1;
+          console.warn("Skipping labor row with null log_date", {
+            rowNumber: row.rowNumber,
+            punchId,
+            employeeName: `${firstName} ${lastName}`,
+            clockIn: row.clockIn,
+          });
+          continue;
+        }
+        totalCostImported += shiftCost;
         importedDates.push(logDate);
 
         upsertRows.push({
@@ -746,6 +762,7 @@ export default function ImportPage() {
         skippedZeroOrBlankCount: zeroOrBlank.length,
         skippedMissingNamesCount: missingNames.length,
         skippedInvalidCount: invalidRows.length,
+        skippedNullLogDateCount,
         totalLaborCostImported: totalCostImported,
         dateRange:
           sortedDates.length > 0
