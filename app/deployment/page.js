@@ -11,13 +11,11 @@ const SHIFT_OPTIONS = {
     label: "Morning",
     cutoffHour: 10,
     cutoffMinute: 30,
-    roles: ["Morning", "Breakfast", "Open", "Day Lead", "Mid Shift"],
   },
   NIGHT: {
     label: "Night",
     cutoffHour: 16,
     cutoffMinute: 30,
-    roles: ["Night", "Night Lead", "Closing", "Mid Shift"],
   },
 };
 
@@ -80,6 +78,18 @@ function toMinutes(timeText) {
   return Number(m[1]) * 60 + Number(m[2]);
 }
 
+function isMorningDeploymentShift(row) {
+  const startMin = toMinutes(row?.scheduled_start);
+  if (!Number.isFinite(startMin)) return false;
+  return startMin < 15 * 60;
+}
+
+function isNightDeploymentShift(row) {
+  const endMin = toMinutes(row?.scheduled_end);
+  if (!Number.isFinite(endMin)) return false;
+  return endMin > 15 * 60;
+}
+
 function isLeadRole(role) {
   const normalized = String(role || "").toLowerCase();
   return normalized.includes("day lead") || normalized.includes("night lead");
@@ -133,7 +143,6 @@ export default function DeploymentPage() {
             .from("schedule_shifts")
             .select("employee_name, role, scheduled_start, scheduled_end")
             .eq("shift_date", logDate)
-            .in("role", shiftDef.roles)
             .eq("store_id", STORE_ID),
           supabase
             .from("deployment_logs")
@@ -149,7 +158,11 @@ export default function DeploymentPage() {
         if (existingErr) throw existingErr;
         if (cancelled) return;
 
-        const mapped = (schedRows || [])
+        const overlapFiltered = (schedRows || []).filter((row) =>
+          shiftKey === "MORNING" ? isMorningDeploymentShift(row) : isNightDeploymentShift(row)
+        );
+
+        const mapped = overlapFiltered
           .map((row) =>
             createEmployeeRow({
               employee_name: row.employee_name,
@@ -159,8 +172,6 @@ export default function DeploymentPage() {
             })
           )
           .sort((a, b) => {
-            const leadCmp = Number(isLeadRole(b.role)) - Number(isLeadRole(a.role));
-            if (leadCmp !== 0) return leadCmp;
             return toMinutes(a.scheduled_start) - toMinutes(b.scheduled_start);
           });
 
