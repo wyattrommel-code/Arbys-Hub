@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   Bar,
   BarChart,
@@ -74,6 +75,12 @@ function fmtPct(n) {
   return `${n.toFixed(1)}%`;
 }
 
+function fmtSignedPct(n) {
+  if (!Number.isFinite(n)) return "—";
+  const sign = n > 0 ? "+" : "";
+  return `${sign}${n.toFixed(1)}%`;
+}
+
 function toNum(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
@@ -140,6 +147,11 @@ function formatHourLabel(h) {
   return `${hr}${suffix}`;
 }
 
+function getPctDiff(current, prior) {
+  if (!Number.isFinite(prior) || prior === 0) return null;
+  return ((current - prior) / prior) * 100;
+}
+
 function EmptyState({ title }) {
   return (
     <div className="rounded-xl border border-zinc-200 bg-white p-4 text-sm shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
@@ -149,12 +161,25 @@ function EmptyState({ title }) {
   );
 }
 
-function MetricCard({ title, value, sub, color = "text-zinc-900" }) {
+function SalesImportEmptyState() {
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white p-4 text-sm shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+      <p className="font-semibold text-zinc-800 dark:text-zinc-200">
+        No sales data for this date - upload a sales CSV on the Import page to populate sales data
+      </p>
+      <Link href="/import" className="mt-2 inline-block text-xs font-semibold text-[#C8102E] underline">
+        Go to Import
+      </Link>
+    </div>
+  );
+}
+
+function MetricCard({ title, value, sub, color = "text-zinc-900", subColor = "text-zinc-500 dark:text-zinc-400" }) {
   return (
     <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
       <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">{title}</p>
       <p className={`mt-2 text-2xl font-bold ${color}`}>{value}</p>
-      <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{sub}</p>
+      <p className={`mt-1 text-xs ${subColor}`}>{sub}</p>
     </div>
   );
 }
@@ -208,6 +233,7 @@ export default function DashboardPage() {
   const [state, setState] = useState({
     loading: true,
     salesRows: [],
+    lastWeekSalesRows: [],
     laborRows: [],
     wasteRows: [],
     inventoryRows: [],
@@ -273,6 +299,7 @@ export default function DashboardPage() {
 
       const [
         sales,
+        lastWeekSales,
         labor,
         waste,
         inventory,
@@ -282,13 +309,14 @@ export default function DashboardPage() {
         weekLabor,
         weekWaste,
       ] = await Promise.all([
-        readDate("sales_logs", "log_date", selectedDate),
+        readDate("hourly_sales", "sale_date", selectedDate),
+        readDate("hourly_sales", "sale_date", addDays(selectedDate, -7)),
         readDate("labor_logs", "log_date", selectedDate),
         readDate("waste_logs", "log_date", selectedDate, "*"),
         readDate("inventory_logs", "log_date", selectedDate),
         readDate("roast_entries", "sheet_date", selectedDate),
         readDate("dt_logs", "log_date", selectedDate),
-        readRange("sales_logs", "log_date", weekStart, weekEnd),
+        readRange("hourly_sales", "sale_date", weekStart, weekEnd),
         readRange("labor_logs", "log_date", weekStart, weekEnd),
         readRange("waste_logs", "log_date", weekStart, weekEnd, "*"),
       ]);
@@ -297,6 +325,7 @@ export default function DashboardPage() {
       setState({
         loading: false,
         salesRows: sales.rows,
+        lastWeekSalesRows: lastWeekSales.rows,
         laborRows: labor.rows,
         wasteRows: waste.rows,
         inventoryRows: inventory.rows,
@@ -338,7 +367,7 @@ export default function DashboardPage() {
         }
       };
       const [sales, labor, waste, inventory, roast, dt] = await Promise.all([
-        readRange("sales_logs", "log_date"),
+        readRange("hourly_sales", "sale_date"),
         readRange("labor_logs", "log_date"),
         readRange("waste_logs", "log_date", "*"),
         readRange("inventory_logs", "log_date"),
@@ -373,6 +402,7 @@ export default function DashboardPage() {
 
   const snapshot = useMemo(() => {
     const salesTotal = state.salesRows.reduce((sum, row) => sum + getSalesValue(row), 0);
+    const lastWeekSalesTotal = state.lastWeekSalesRows.reduce((sum, row) => sum + getSalesValue(row), 0);
     const laborCost = state.laborRows.reduce((sum, row) => sum + getLaborCost(row), 0);
     const laborHours = state.laborRows.reduce((sum, row) => sum + getLaborHours(row), 0);
     const wasteRetail = state.wasteRows.reduce((sum, row) => sum + getWasteRetail(row), 0);
@@ -387,15 +417,16 @@ export default function DashboardPage() {
     const wastePct = salesTotal > 0 ? (wasteRetail / salesTotal) * 100 : 0;
     const splh = laborHours > 0 ? salesTotal / laborHours : 0;
 
-    const salesByHour = Array.from({ length: 15 }, (_, i) => {
-      const hour = 8 + i;
-      return { hour, label: formatHourLabel(hour), sales: 0 };
-    });
+    const salesBuckets = new Map();
     for (const row of state.salesRows) {
-      const hour = toNum(row?.hour ?? row?.sales_hour);
-      const bucket = salesByHour.find((x) => x.hour === hour);
-      if (bucket) bucket.sales += getSalesValue(row);
+      const hour = toNum(row?.hour_of_day);
+      const val = getSalesValue(row);
+      if (hour < 0 || hour > 23 || val <= 0) continue;
+      salesBuckets.set(hour, (salesBuckets.get(hour) || 0) + val);
     }
+    const salesByHour = [...salesBuckets.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([hour, sales]) => ({ hour, label: formatHourLabel(hour), sales }));
     const peak = salesByHour.reduce((best, row) => (row.sales > best.sales ? row : best), {
       hour: 0,
       label: "--",
@@ -439,6 +470,10 @@ export default function DashboardPage() {
 
     return {
       salesTotal,
+      lastWeekSalesTotal,
+      salesDiffDollar: salesTotal - lastWeekSalesTotal,
+      salesDiffPct: getPctDiff(salesTotal, lastWeekSalesTotal),
+      hasSalesData: state.salesRows.some((r) => getSalesValue(r) > 0),
       laborCost,
       laborHours,
       laborPct,
@@ -460,7 +495,7 @@ export default function DashboardPage() {
     const { start } = getWeekBounds();
     const days = Array.from({ length: 7 }, (_, i) => addDays(start, i));
     return days.map((d) => {
-      const sales = state.weekSalesRows.filter((r) => r.log_date === d).reduce((sum, r) => sum + getSalesValue(r), 0);
+      const sales = state.weekSalesRows.filter((r) => r.sale_date === d).reduce((sum, r) => sum + getSalesValue(r), 0);
       const laborCost = state.weekLaborRows.filter((r) => r.log_date === d).reduce((sum, r) => sum + getLaborCost(r), 0);
       const waste = state.weekWasteRows.filter((r) => r.log_date === d).reduce((sum, r) => sum + getWasteRetail(r), 0);
       const laborPct = sales > 0 ? (laborCost / sales) * 100 : 0;
@@ -480,7 +515,7 @@ export default function DashboardPage() {
   const reportRows = useMemo(() => {
     const dates = Array.from(
       new Set([
-        ...reportState.salesRows.map((r) => r.log_date),
+        ...reportState.salesRows.map((r) => r.sale_date),
         ...reportState.laborRows.map((r) => r.log_date),
         ...reportState.wasteRows.map((r) => r.log_date),
         ...reportState.dtRows.map((r) => r.log_date),
@@ -488,7 +523,7 @@ export default function DashboardPage() {
     ).sort();
 
     const daily = dates.map((date) => {
-      const sales = reportState.salesRows.filter((r) => r.log_date === date).reduce((s, r) => s + getSalesValue(r), 0);
+      const sales = reportState.salesRows.filter((r) => r.sale_date === date).reduce((s, r) => s + getSalesValue(r), 0);
       const laborCost = reportState.laborRows.filter((r) => r.log_date === date).reduce((s, r) => s + getLaborCost(r), 0);
       const waste = reportState.wasteRows
         .filter((r) => r.log_date === date)
@@ -499,13 +534,25 @@ export default function DashboardPage() {
       return { date, sales, laborPct, waste, dtAvg, roastsUsed: 0 };
     });
 
-    const salesDetail = Array.from({ length: 15 }, (_, i) => {
-      const hour = 8 + i;
-      const total = reportState.salesRows
-        .filter((r) => toNum(r.hour ?? r.sales_hour) === hour)
-        .reduce((s, r) => s + getSalesValue(r), 0);
-      return { hour, label: formatHourLabel(hour), sales: total };
-    });
+    const salesByDate = new Map();
+    for (const row of reportState.salesRows) {
+      const date = row.sale_date;
+      const hour = toNum(row.hour_of_day);
+      const sales = getSalesValue(row);
+      if (!date || hour < 0 || hour > 23) continue;
+      if (!salesByDate.has(date)) salesByDate.set(date, new Map());
+      const dayMap = salesByDate.get(date);
+      dayMap.set(hour, (dayMap.get(hour) || 0) + sales);
+    }
+    const salesDetailByDate = [...salesByDate.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([date, hourMap]) => {
+        const rows = [...hourMap.entries()]
+          .sort((a, b) => a[0] - b[0])
+          .map(([hour, sales]) => ({ hour, label: formatHourLabel(hour), sales }));
+        const subtotal = rows.reduce((sum, r) => sum + r.sales, 0);
+        return { date, rows, subtotal };
+      });
 
     const laborDetail = reportState.laborRows.map((r, idx) => ({
       id: `${r.log_date}-${idx}`,
@@ -587,7 +634,7 @@ export default function DashboardPage() {
     }
     const roast = [...roastByDate.values()].sort((a, b) => a.date.localeCompare(b.date));
 
-    return { daily, salesDetail, laborDetail, wasteLog, wasteLogByDate, wasteGrandTotals, inventory, roast };
+    return { daily, salesDetailByDate, laborDetail, wasteLog, wasteLogByDate, wasteGrandTotals, inventory, roast };
   }, [reportState]);
 
   const printCurrent = () => {
@@ -643,11 +690,18 @@ export default function DashboardPage() {
     if (reportType === "Sales Detail") {
       return (
         <table className="min-w-full text-left text-xs">
-          <thead className="bg-zinc-50 dark:bg-zinc-800"><tr><th className="px-3 py-2">Hour</th><th className="px-3 py-2">Total Sales</th></tr></thead>
+          <thead className="bg-zinc-50 dark:bg-zinc-800"><tr><th className="px-3 py-2">Date</th><th className="px-3 py-2">Hour</th><th className="px-3 py-2">Net Sales</th></tr></thead>
           <tbody>
-            {reportRows.salesDetail.map((r) => (
-              <tr key={r.hour} className="border-t border-zinc-100 dark:border-zinc-800"><td className="px-3 py-2">{r.label}</td><td className="px-3 py-2">{fmtMoney(r.sales)}</td></tr>
-            ))}
+            {reportRows.salesDetailByDate.flatMap((day) => [
+              ...day.rows.map((r, idx) => (
+                <tr key={`${day.date}-${r.hour}`} className="border-t border-zinc-100 dark:border-zinc-800"><td className="px-3 py-2">{idx === 0 ? day.date : ""}</td><td className="px-3 py-2">{r.label}</td><td className="px-3 py-2">{fmtMoney2(r.sales)}</td></tr>
+              )),
+              <tr key={`subtotal-${day.date}`} className="border-t border-zinc-300 bg-zinc-50 font-semibold dark:border-zinc-700 dark:bg-zinc-800/70">
+                <td className="px-3 py-2" colSpan={2}>Subtotal for {day.date}</td>
+                <td className="px-3 py-2">{fmtMoney2(day.subtotal)}</td>
+              </tr>,
+            ])}
+            {reportRows.salesDetailByDate.length === 0 ? <tr><td className="px-3 py-3 text-zinc-500" colSpan={3}>No hourly sales data for this date range</td></tr> : null}
           </tbody>
         </table>
       );
@@ -725,6 +779,7 @@ export default function DashboardPage() {
   const today = todayLocalISODate();
   const laborColor = colorByLaborPct(snapshot.laborPct);
   const wasteColor = colorByWasteDollar(snapshot.wasteRetail);
+  const hasSalesComparison = Number.isFinite(snapshot.salesDiffPct);
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-4 px-4 py-5">
@@ -769,13 +824,20 @@ export default function DashboardPage() {
               <section>
                 <h2 className="mb-2 text-sm font-bold uppercase tracking-wide text-[#C8102E]">Daily Snapshot</h2>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  {state.disconnected.sales || state.salesRows.length === 0 ? (
-                    <EmptyState title="Sales" />
+                  {state.disconnected.sales || !snapshot.hasSalesData ? (
+                    <SalesImportEmptyState />
                   ) : (
                     <MetricCard
                       title="Sales"
                       value={fmtMoney(snapshot.salesTotal)}
-                      sub="vs same day last week: —"
+                      sub={`vs same day last week: ${fmtSignedPct(snapshot.salesDiffPct)}`}
+                      subColor={
+                        !hasSalesComparison
+                          ? "text-zinc-500 dark:text-zinc-400"
+                          : snapshot.salesDiffPct >= 0
+                          ? "text-green-700 dark:text-green-400"
+                          : "text-red-700 dark:text-red-400"
+                      }
                     />
                   )}
                   {state.disconnected.labor || state.laborRows.length === 0 ? (
@@ -831,10 +893,10 @@ export default function DashboardPage() {
 
               <Expandable
                 title="Sales Detail"
-                summary={`${fmtMoney(snapshot.salesTotal)} · txns ${state.salesRows.length} · avg ticket ${fmtMoney2(state.salesRows.length ? snapshot.salesTotal / state.salesRows.length : 0)}`}
+                summary={`${fmtMoney(snapshot.salesTotal)} · txns — · avg ticket —`}
                 open={expanded.sales}
                 setOpen={(v) => setExpanded((s) => ({ ...s, sales: typeof v === "function" ? v(s.sales) : v }))}
-                empty={state.disconnected.sales || state.salesRows.length === 0}
+                empty={state.disconnected.sales || !snapshot.hasSalesData}
               >
                 <div className="h-56 w-full">
                   <ResponsiveContainer width="100%" height="100%">
@@ -847,8 +909,15 @@ export default function DashboardPage() {
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
-                <p className="mt-2 text-sm text-zinc-700 dark:text-zinc-300">Peak hour: {snapshot.peak.label} ({fmtMoney(snapshot.peak.sales)})</p>
-                <p className="text-sm text-zinc-500">vs same day last week: —</p>
+                <p className="mt-2 text-sm text-zinc-700 dark:text-zinc-300">Peak hour: {snapshot.peak.label} — {fmtMoney(snapshot.peak.sales)}</p>
+                {hasSalesComparison ? (
+                  <p className="text-sm text-zinc-500">
+                    vs same day last week: {snapshot.salesDiffDollar >= 0 ? "+" : "-"}
+                    {fmtMoney2(Math.abs(snapshot.salesDiffDollar))} ({fmtSignedPct(snapshot.salesDiffPct)})
+                  </p>
+                ) : (
+                  <p className="text-sm text-zinc-500">vs same day last week: —</p>
+                )}
               </Expandable>
 
               <Expandable
