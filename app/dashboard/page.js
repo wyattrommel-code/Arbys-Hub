@@ -191,7 +191,7 @@ function MetricCard({ title, value, sub, color = "text-zinc-900", subColor = "te
   );
 }
 
-function Expandable({ title, summary, open, setOpen, children, empty }) {
+function Expandable({ title, summary, open, setOpen, children, empty, titleClassName = "text-zinc-900 dark:text-zinc-100" }) {
   return (
     <section className="rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
       <button
@@ -200,7 +200,7 @@ function Expandable({ title, summary, open, setOpen, children, empty }) {
         className="flex w-full items-center justify-between gap-3 p-4 text-left"
       >
         <div>
-          <p className="text-sm font-bold text-zinc-900 dark:text-zinc-100">{title}</p>
+          <p className={`text-sm font-bold ${titleClassName}`}>{title}</p>
           <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">{summary}</div>
         </div>
         <span className={`text-zinc-500 transition-transform ${open ? "rotate-180" : ""}`}>⌄</span>
@@ -235,6 +235,7 @@ export default function DashboardPage() {
     dt: false,
     waste: false,
     roast: false,
+    deployment: false,
     inventory: false,
   });
 
@@ -247,6 +248,8 @@ export default function DashboardPage() {
     wasteRows: [],
     inventoryRows: [],
     roastRows: [],
+    deploymentLogs: [],
+    deploymentAssignments: [],
     dtRows: [],
     weekSalesRows: [],
     weekLaborRows: [],
@@ -258,6 +261,7 @@ export default function DashboardPage() {
       inventory: false,
       roast: false,
       dt: false,
+      deployment: false,
     },
   });
   const [reportState, setReportState] = useState({
@@ -268,6 +272,7 @@ export default function DashboardPage() {
     inventoryRows: [],
     roastRows: [],
     dtRows: [],
+    deploymentLogs: [],
     disconnected: {
       sales: false,
       labor: false,
@@ -275,6 +280,7 @@ export default function DashboardPage() {
       inventory: false,
       roast: false,
       dt: false,
+      deployment: false,
     },
   });
 
@@ -318,6 +324,7 @@ export default function DashboardPage() {
         weekSales,
         weekLabor,
         weekWaste,
+        deployment,
       ] = await Promise.all([
         readDate("hourly_sales", "sale_date", selectedDate),
         readDate("hourly_sales", "sale_date", addDays(selectedDate, -7)),
@@ -330,7 +337,26 @@ export default function DashboardPage() {
         readRange("hourly_sales", "sale_date", weekStart, weekEnd),
         readRange("labor_logs", "log_date", weekStart, weekEnd),
         readRange("waste_logs", "log_date", weekStart, weekEnd, "*"),
+        readDate("deployment_logs", "log_date", selectedDate),
       ]);
+
+      let deploymentAssignments = [];
+      let deploymentDisconnected = deployment.disconnected;
+      if (!deploymentDisconnected && deployment.rows.length > 0) {
+        try {
+          const ids = deployment.rows.map((row) => row.id).filter(Boolean);
+          if (ids.length > 0) {
+            const { data, error } = await supabase.from("deployment_assignments").select("*").in("deployment_id", ids);
+            if (error) {
+              deploymentDisconnected = true;
+            } else {
+              deploymentAssignments = data || [];
+            }
+          }
+        } catch {
+          deploymentDisconnected = true;
+        }
+      }
 
       if (cancelled) return;
       setState({
@@ -342,6 +368,8 @@ export default function DashboardPage() {
         wasteRows: waste.rows,
         inventoryRows: inventory.rows,
         roastRows: roast.rows,
+        deploymentLogs: deployment.rows,
+        deploymentAssignments,
         dtRows: dt.rows,
         weekSalesRows: weekSales.rows,
         weekLaborRows: weekLabor.rows,
@@ -353,6 +381,7 @@ export default function DashboardPage() {
           inventory: inventory.disconnected,
           roast: roast.disconnected,
           dt: dt.disconnected,
+          deployment: deploymentDisconnected,
         },
       });
     }
@@ -378,13 +407,14 @@ export default function DashboardPage() {
           return { rows: [], disconnected: true };
         }
       };
-      const [sales, labor, waste, inventory, roast, dt] = await Promise.all([
+      const [sales, labor, waste, inventory, roast, dt, deployment] = await Promise.all([
         readRange("hourly_sales", "sale_date"),
         readRange("labor_logs", "log_date"),
         readRange("waste_logs", "log_date", "*"),
         readRange("inventory_logs", "log_date"),
         readRange("roast_entries", "sheet_date"),
         readRange("dt_logs", "log_date"),
+        readRange("deployment_logs", "log_date"),
       ]);
       if (cancelled) return;
       setReportState({
@@ -395,6 +425,7 @@ export default function DashboardPage() {
         inventoryRows: inventory.rows,
         roastRows: roast.rows,
         dtRows: dt.rows,
+        deploymentLogs: deployment.rows,
         disconnected: {
           sales: sales.disconnected,
           labor: labor.disconnected,
@@ -402,6 +433,7 @@ export default function DashboardPage() {
           inventory: inventory.disconnected,
           roast: roast.disconnected,
           dt: dt.disconnected,
+          deployment: deployment.disconnected,
         },
       });
     }
@@ -573,6 +605,21 @@ export default function DashboardPage() {
     return { weekSales, weekWaste, laborAvg, dtAvgSec: snapshot.dtAvgSec };
   }, [weekSummary, snapshot.dtAvgSec]);
 
+  const deploymentSnapshot = useMemo(() => {
+    const logs = state.deploymentLogs || [];
+    const assignments = state.deploymentAssignments || [];
+    const morningLog = logs.find((log) => String(log.shift || "").toLowerCase() === "morning") || null;
+    const nightLog = logs.find((log) => String(log.shift || "").toLowerCase() === "night") || null;
+    const peopleFor = (log) => assignments.filter((a) => a.deployment_id === log?.id);
+    return {
+      morningLog,
+      nightLog,
+      morningAssignments: morningLog ? peopleFor(morningLog) : [],
+      nightAssignments: nightLog ? peopleFor(nightLog) : [],
+      hasAny: Boolean(morningLog || nightLog),
+    };
+  }, [state.deploymentAssignments, state.deploymentLogs]);
+
   const reportRows = useMemo(() => {
     const dates = Array.from(
       new Set([
@@ -594,7 +641,10 @@ export default function DashboardPage() {
       const dtWeighted = dtRows.reduce((s, r) => s + toNum(r.lane_total_seconds) * toNum(r.total_cars), 0);
       const dtAvg = dtCars > 0 ? dtWeighted / dtCars : 0;
       const laborPct = sales > 0 ? (laborCost / sales) * 100 : 0;
-      return { date, sales, laborPct, waste, dtAvg, roastsUsed: 0 };
+      const dayDeployments = reportState.deploymentLogs.filter((r) => r.log_date === date);
+      const morning = dayDeployments.find((d) => String(d.shift || "").toLowerCase() === "morning") || null;
+      const night = dayDeployments.find((d) => String(d.shift || "").toLowerCase() === "night") || null;
+      return { date, sales, laborPct, waste, dtAvg, roastsUsed: 0, morningDeployment: morning, nightDeployment: night };
     });
 
     const salesByDate = new Map();
@@ -700,6 +750,18 @@ export default function DashboardPage() {
     return { daily, salesDetailByDate, laborDetail, wasteLog, wasteLogByDate, wasteGrandTotals, inventory, roast };
   }, [reportState]);
 
+  function formatSubmittedAt(iso) {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "unknown time";
+    return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  }
+
+  function deploymentStatusBadge(log) {
+    if (!log) return "— none";
+    if (log.is_late) return `⚠️ late${Number(log.minutes_late) > 0 ? ` (${log.minutes_late}m)` : ""}`;
+    return "✅";
+  }
+
   const printCurrent = () => {
     window.print();
   };
@@ -720,6 +782,7 @@ export default function DashboardPage() {
               <th className="px-3 py-2">Waste $</th>
               <th className="px-3 py-2">Avg DT</th>
               <th className="px-3 py-2">Roasts Used</th>
+              <th className="px-3 py-2">Deployment</th>
             </tr>
           </thead>
           <tbody>
@@ -731,6 +794,12 @@ export default function DashboardPage() {
                 <td className="px-3 py-2">{fmtMoney(r.waste)}</td>
                 <td className="px-3 py-2">{mmssFromSec(r.dtAvg)}</td>
                 <td className="px-3 py-2">{r.roastsUsed}</td>
+                <td className="px-3 py-2">
+                  <div className="flex flex-col">
+                    <span>Morning: {deploymentStatusBadge(r.morningDeployment)}</span>
+                    <span>Night: {deploymentStatusBadge(r.nightDeployment)}</span>
+                  </div>
+                </td>
               </tr>
             ))}
             {reportRows.daily.length ? (
@@ -741,9 +810,10 @@ export default function DashboardPage() {
                 <td className="px-3 py-2">{fmtMoney(reportRows.daily.reduce((s, r) => s + r.waste, 0))}</td>
                 <td className="px-3 py-2">—</td>
                 <td className="px-3 py-2">—</td>
+                <td className="px-3 py-2">—</td>
               </tr>
             ) : (
-              <tr><td className="px-3 py-3 text-zinc-500" colSpan={6}>Daily Summary data not yet connected</td></tr>
+              <tr><td className="px-3 py-3 text-zinc-500" colSpan={7}>Daily Summary data not yet connected</td></tr>
             )}
           </tbody>
         </table>
@@ -1085,6 +1155,106 @@ export default function DashboardPage() {
                   <p>AM $/roast: {fmtMoney2(snapshot.roast.amDpr)}</p>
                   <p>PM $/roast: {fmtMoney2(snapshot.roast.pmDpr)}</p>
                 </div>
+              </Expandable>
+
+              <Expandable
+                title="Deployment"
+                titleClassName={deploymentSnapshot.hasAny ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-500 dark:text-zinc-400"}
+                summary={
+                  deploymentSnapshot.hasAny ? (
+                    `Morning: ${deploymentSnapshot.morningAssignments.length} people | Night: ${deploymentSnapshot.nightAssignments.length} people`
+                  ) : (
+                    "No deployment recorded"
+                  )
+                }
+                open={expanded.deployment}
+                setOpen={(v) => setExpanded((s) => ({ ...s, deployment: typeof v === "function" ? v(s.deployment) : v }))}
+                empty={false}
+              >
+                {!deploymentSnapshot.hasAny ? (
+                  <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
+                    <p className="font-semibold">No deployment recorded for this date</p>
+                    <p className="mt-1 text-xs">Deployment charts are submitted by shift leads at /deployment</p>
+                  </div>
+                ) : (
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <section className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+                      <h3 className="text-sm font-bold text-[#C8102E]">MORNING DEPLOYMENT</h3>
+                      {deploymentSnapshot.morningLog ? (
+                        <>
+                          <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+                            Submitted by {deploymentSnapshot.morningLog.submitted_by || "—"} at {formatSubmittedAt(deploymentSnapshot.morningLog.submitted_at)}
+                          </p>
+                          <p className="text-xs">
+                            {deploymentSnapshot.morningLog.is_late ? (
+                              <span className="font-semibold text-amber-700">Late ⚠️ {Number(deploymentSnapshot.morningLog.minutes_late) || 0} min late</span>
+                            ) : (
+                              <span className="font-semibold text-green-700">On time ✅</span>
+                            )}
+                          </p>
+                          <div className="mt-2 overflow-x-auto">
+                            <table className="min-w-full text-xs">
+                              <thead className="bg-zinc-50 dark:bg-zinc-900">
+                                <tr>
+                                  <th className="px-2 py-1 text-left">Name</th>
+                                  <th className="px-2 py-1 text-left">Stations</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {deploymentSnapshot.morningAssignments.map((row, idx) => (
+                                  <tr key={`${row.id || idx}`} className="border-t border-zinc-100 dark:border-zinc-800">
+                                    <td className="px-2 py-1">{row.employee_name}</td>
+                                    <td className="px-2 py-1">{Array.isArray(row.stations) ? row.stations.join(", ") : String(row.stations || "—")}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </>
+                      ) : (
+                        <p className="mt-2 text-xs text-zinc-500">Morning deployment not yet submitted</p>
+                      )}
+                    </section>
+
+                    <section className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+                      <h3 className="text-sm font-bold text-[#C8102E]">NIGHT DEPLOYMENT</h3>
+                      {deploymentSnapshot.nightLog ? (
+                        <>
+                          <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+                            Submitted by {deploymentSnapshot.nightLog.submitted_by || "—"} at {formatSubmittedAt(deploymentSnapshot.nightLog.submitted_at)}
+                          </p>
+                          <p className="text-xs">
+                            {deploymentSnapshot.nightLog.is_late ? (
+                              <span className="font-semibold text-amber-700">Late ⚠️ {Number(deploymentSnapshot.nightLog.minutes_late) || 0} min late</span>
+                            ) : (
+                              <span className="font-semibold text-green-700">On time ✅</span>
+                            )}
+                          </p>
+                          <div className="mt-2 overflow-x-auto">
+                            <table className="min-w-full text-xs">
+                              <thead className="bg-zinc-50 dark:bg-zinc-900">
+                                <tr>
+                                  <th className="px-2 py-1 text-left">Name</th>
+                                  <th className="px-2 py-1 text-left">Stations</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {deploymentSnapshot.nightAssignments.map((row, idx) => (
+                                  <tr key={`${row.id || idx}`} className="border-t border-zinc-100 dark:border-zinc-800">
+                                    <td className="px-2 py-1">{row.employee_name}</td>
+                                    <td className="px-2 py-1">{Array.isArray(row.stations) ? row.stations.join(", ") : String(row.stations || "—")}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </>
+                      ) : (
+                        <p className="mt-2 text-xs text-zinc-500">Night deployment not yet submitted</p>
+                      )}
+                    </section>
+                  </div>
+                )}
               </Expandable>
 
               <Expandable

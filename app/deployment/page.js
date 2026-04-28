@@ -11,11 +11,13 @@ const SHIFT_OPTIONS = {
     label: "Morning",
     cutoffHour: 10,
     cutoffMinute: 30,
+    roles: ["Breakfast", "Open", "Morning", "Day Lead", "Mid Shift"],
   },
   NIGHT: {
     label: "Night",
     cutoffHour: 16,
     cutoffMinute: 30,
+    roles: ["Night", "Night Lead", "Closing", "Mid Shift"],
   },
 };
 
@@ -78,16 +80,16 @@ function toMinutes(timeText) {
   return Number(m[1]) * 60 + Number(m[2]);
 }
 
-function isMorningDeploymentShift(row) {
-  const startMin = toMinutes(row?.scheduled_start);
-  if (!Number.isFinite(startMin)) return false;
-  return startMin < 15 * 60;
-}
+function includeForShiftByRole(role, shiftKey) {
+  const normalizedRole = String(role || "").trim().toLowerCase();
+  const morningRoles = SHIFT_OPTIONS.MORNING.roles.map((r) => r.toLowerCase());
+  const nightRoles = SHIFT_OPTIONS.NIGHT.roles.map((r) => r.toLowerCase());
+  const isMorningRole = morningRoles.includes(normalizedRole);
+  const isNightRole = nightRoles.includes(normalizedRole);
 
-function isNightDeploymentShift(row) {
-  const endMin = toMinutes(row?.scheduled_end);
-  if (!Number.isFinite(endMin)) return false;
-  return endMin > 15 * 60;
+  // Unknown/custom roles are included on both deployments so nobody is missed.
+  if (!isMorningRole && !isNightRole) return true;
+  return shiftKey === "MORNING" ? isMorningRole : isNightRole;
 }
 
 function isLeadRole(role) {
@@ -158,9 +160,7 @@ export default function DeploymentPage() {
         if (existingErr) throw existingErr;
         if (cancelled) return;
 
-        const overlapFiltered = (schedRows || []).filter((row) =>
-          shiftKey === "MORNING" ? isMorningDeploymentShift(row) : isNightDeploymentShift(row)
-        );
+        const overlapFiltered = (schedRows || []).filter((row) => includeForShiftByRole(row.role, shiftKey));
 
         const mapped = overlapFiltered
           .map((row) =>
