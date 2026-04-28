@@ -6,8 +6,10 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Cell,
   Line,
   LineChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -137,10 +139,6 @@ function getWasteWholesale(row) {
   return toNum(row?.total_wholesale_cost);
 }
 
-function getDtSeconds(row) {
-  return toNum(row?.avg_seconds ?? row?.dt_seconds ?? row?.seconds ?? row?.time_seconds);
-}
-
 function formatHourLabel(h) {
   const suffix = h >= 12 ? "pm" : "am";
   const hr = h % 12 === 0 ? 12 : h % 12;
@@ -170,6 +168,15 @@ function SalesImportEmptyState() {
       <Link href="/import" className="mt-2 inline-block text-xs font-semibold text-[#C8102E] underline">
         Go to Import
       </Link>
+    </div>
+  );
+}
+
+function DtEmptyState() {
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white p-4 text-sm shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+      <p className="font-semibold text-zinc-800 dark:text-zinc-200">No DT data for this date</p>
+      <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">DT data syncs automatically each night via HME</p>
     </div>
   );
 }
@@ -225,6 +232,7 @@ export default function DashboardPage() {
   const [expanded, setExpanded] = useState({
     labor: false,
     sales: false,
+    dt: false,
     waste: false,
     roast: false,
     inventory: false,
@@ -234,6 +242,7 @@ export default function DashboardPage() {
     loading: true,
     salesRows: [],
     lastWeekSalesRows: [],
+    lastWeekDtRows: [],
     laborRows: [],
     wasteRows: [],
     inventoryRows: [],
@@ -300,6 +309,7 @@ export default function DashboardPage() {
       const [
         sales,
         lastWeekSales,
+        lastWeekDt,
         labor,
         waste,
         inventory,
@@ -311,6 +321,7 @@ export default function DashboardPage() {
       ] = await Promise.all([
         readDate("hourly_sales", "sale_date", selectedDate),
         readDate("hourly_sales", "sale_date", addDays(selectedDate, -7)),
+        readDate("dt_logs", "log_date", addDays(selectedDate, -7)),
         readDate("labor_logs", "log_date", selectedDate),
         readDate("waste_logs", "log_date", selectedDate, "*"),
         readDate("inventory_logs", "log_date", selectedDate),
@@ -326,6 +337,7 @@ export default function DashboardPage() {
         loading: false,
         salesRows: sales.rows,
         lastWeekSalesRows: lastWeekSales.rows,
+        lastWeekDtRows: lastWeekDt.rows,
         laborRows: labor.rows,
         wasteRows: waste.rows,
         inventoryRows: inventory.rows,
@@ -407,11 +419,53 @@ export default function DashboardPage() {
     const laborHours = state.laborRows.reduce((sum, row) => sum + getLaborHours(row), 0);
     const wasteRetail = state.wasteRows.reduce((sum, row) => sum + getWasteRetail(row), 0);
     const wasteWholesale = state.wasteRows.reduce((sum, row) => sum + getWasteWholesale(row), 0);
-    const totalCars = state.dtRows.reduce((sum, row) => sum + toNum(row?.cars ?? row?.car_count), 0);
-    const dtAvgSec =
-      state.dtRows.length > 0
-        ? state.dtRows.reduce((sum, row) => sum + getDtSeconds(row), 0) / state.dtRows.length
-        : 0;
+    const dtHourlyMap = new Map();
+    let totalCars = 0;
+    let totalWeightedLaneSec = 0;
+    for (const row of state.dtRows) {
+      const hour = toNum(row?.hour_of_day);
+      const cars = toNum(row?.total_cars);
+      const laneSec = toNum(row?.lane_total_seconds);
+      if (hour < 0 || hour > 23 || cars <= 0 || laneSec < 0) continue;
+      totalCars += cars;
+      totalWeightedLaneSec += laneSec * cars;
+      if (!dtHourlyMap.has(hour)) dtHourlyMap.set(hour, { cars: 0, weightedSec: 0 });
+      const bucket = dtHourlyMap.get(hour);
+      bucket.cars += cars;
+      bucket.weightedSec += laneSec * cars;
+    }
+    const dtAvgSec = totalCars > 0 ? totalWeightedLaneSec / totalCars : 0;
+    const dtByHour = [...dtHourlyMap.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([hour, bucket]) => {
+        const avgSec = bucket.cars > 0 ? bucket.weightedSec / bucket.cars : 0;
+        return {
+          hour,
+          label: formatHourLabel(hour),
+          cars: bucket.cars,
+          avgSec,
+          barColor: colorByDtSec(avgSec),
+        };
+      });
+    const peakDtHour = dtByHour.reduce((best, row) => (row.cars > best.cars ? row : best), {
+      label: "--",
+      cars: 0,
+      avgSec: 0,
+    });
+    const slowestCandidates = dtByHour.filter((row) => row.cars >= 3);
+    const slowestDtHour = slowestCandidates.reduce(
+      (best, row) => (row.avgSec > best.avgSec ? row : best),
+      { label: "--", cars: 0, avgSec: 0 }
+    );
+
+    const lastWeekCars = state.lastWeekDtRows.reduce((sum, row) => sum + toNum(row?.total_cars), 0);
+    const lastWeekWeightedLaneSec = state.lastWeekDtRows.reduce(
+      (sum, row) => sum + toNum(row?.lane_total_seconds) * toNum(row?.total_cars),
+      0
+    );
+    const lastWeekDtAvgSec = lastWeekCars > 0 ? lastWeekWeightedLaneSec / lastWeekCars : 0;
+    const dtDiffSec = dtAvgSec - lastWeekDtAvgSec;
+    const dtDiffPct = getPctDiff(dtAvgSec, lastWeekDtAvgSec);
 
     const laborPct = salesTotal > 0 ? (laborCost / salesTotal) * 100 : 0;
     const wastePct = salesTotal > 0 ? (wasteRetail / salesTotal) * 100 : 0;
@@ -482,6 +536,13 @@ export default function DashboardPage() {
       wastePct,
       totalCars,
       dtAvgSec,
+      hasDtData: totalCars > 0,
+      dtByHour,
+      peakDtHour,
+      slowestDtHour,
+      lastWeekDtAvgSec,
+      dtDiffSec,
+      dtDiffPct,
       splh,
       salesByHour,
       peak,
@@ -529,7 +590,9 @@ export default function DashboardPage() {
         .filter((r) => r.log_date === date)
         .reduce((s, r) => s + toNum(r.total_retail_loss), 0);
       const dtRows = reportState.dtRows.filter((r) => r.log_date === date);
-      const dtAvg = dtRows.length ? dtRows.reduce((s, r) => s + getDtSeconds(r), 0) / dtRows.length : 0;
+      const dtCars = dtRows.reduce((s, r) => s + toNum(r.total_cars), 0);
+      const dtWeighted = dtRows.reduce((s, r) => s + toNum(r.lane_total_seconds) * toNum(r.total_cars), 0);
+      const dtAvg = dtCars > 0 ? dtWeighted / dtCars : 0;
       const laborPct = sales > 0 ? (laborCost / sales) * 100 : 0;
       return { date, sales, laborPct, waste, dtAvg, roastsUsed: 0 };
     });
@@ -780,6 +843,7 @@ export default function DashboardPage() {
   const laborColor = colorByLaborPct(snapshot.laborPct);
   const wasteColor = colorByWasteDollar(snapshot.wasteRetail);
   const hasSalesComparison = Number.isFinite(snapshot.salesDiffPct);
+  const hasDtComparison = Number.isFinite(snapshot.dtDiffPct);
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-4 px-4 py-5">
@@ -859,13 +923,15 @@ export default function DashboardPage() {
                       sub={`Waste % of sales ${fmtPct(snapshot.wastePct)}`}
                     />
                   )}
-                  {state.disconnected.dt || state.dtRows.length === 0 ? (
-                    <EmptyState title="DT Time" />
+                  {state.disconnected.dt || !snapshot.hasDtData ? (
+                    <DtEmptyState />
                   ) : (
                     <MetricCard
                       title="DT Time"
                       value={mmssFromSec(snapshot.dtAvgSec)}
                       sub={`Total cars ${snapshot.totalCars}`}
+                      color={colorByDtSec(snapshot.dtAvgSec) === GREEN ? "text-green-700 dark:text-green-400" : colorByDtSec(snapshot.dtAvgSec) === YELLOW ? "text-amber-700 dark:text-amber-400" : "text-red-700 dark:text-red-400"}
+                      subColor={colorByDtSec(snapshot.dtAvgSec) === GREEN ? "text-green-700 dark:text-green-400" : colorByDtSec(snapshot.dtAvgSec) === YELLOW ? "text-amber-700 dark:text-amber-400" : "text-red-700 dark:text-red-400"}
                     />
                   )}
                 </div>
@@ -917,6 +983,60 @@ export default function DashboardPage() {
                   </p>
                 ) : (
                   <p className="text-sm text-zinc-500">vs same day last week: —</p>
+                )}
+              </Expandable>
+
+              <Expandable
+                title="DT Detail"
+                summary={
+                  <span>
+                    <span className="font-semibold" style={{ color: colorByDtSec(snapshot.dtAvgSec) }}>
+                      {mmssFromSec(snapshot.dtAvgSec)}
+                    </span>{" "}
+                    · {snapshot.totalCars} cars
+                  </span>
+                }
+                open={expanded.dt}
+                setOpen={(v) => setExpanded((s) => ({ ...s, dt: typeof v === "function" ? v(s.dt) : v }))}
+                empty={false}
+              >
+                {state.disconnected.dt || !snapshot.hasDtData ? (
+                  <DtEmptyState />
+                ) : (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-2 gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+                      <p>Lane total (weighted): {mmssFromSec(snapshot.dtAvgSec)}</p>
+                      <p>Total cars: {snapshot.totalCars}</p>
+                      <p>Peak hour: {snapshot.peakDtHour.label} — {snapshot.peakDtHour.cars} cars</p>
+                      <p>
+                        Slowest hour: {snapshot.slowestDtHour.label} — {snapshot.slowestDtHour.label === "--" ? "—" : mmssFromSec(snapshot.slowestDtHour.avgSec)}
+                      </p>
+                    </div>
+                    <div className="h-56 w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={snapshot.dtByHour}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis dataKey="label" />
+                          <YAxis />
+                          <Tooltip formatter={(v) => mmssFromSec(toNum(v))} />
+                          <ReferenceLine y={270} stroke={RED} strokeDasharray="4 4" />
+                          <Bar dataKey="avgSec">
+                            {snapshot.dtByHour.map((row) => (
+                              <Cell key={row.hour} fill={row.barColor} />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                    {hasDtComparison ? (
+                      <p className="text-sm text-zinc-500">
+                        vs same day last week: {snapshot.dtDiffSec >= 0 ? "+" : "-"}
+                        {mmssFromSec(Math.abs(snapshot.dtDiffSec))} ({fmtSignedPct(snapshot.dtDiffPct)})
+                      </p>
+                    ) : (
+                      <p className="text-sm text-zinc-500">vs same day last week: —</p>
+                    )}
+                  </div>
                 )}
               </Expandable>
 
