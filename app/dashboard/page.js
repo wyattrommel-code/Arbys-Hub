@@ -294,6 +294,7 @@ export default function DashboardPage() {
     deploymentLogs: [],
     scheduleRows: [],
     employeeRows: [],
+    employeeWageRows: [],
     laborContextRows: [],
     disconnected: {
       sales: false,
@@ -305,6 +306,7 @@ export default function DashboardPage() {
       deployment: false,
       schedule: false,
       employees: false,
+      employeeWages: false,
       laborContext: false,
     },
   });
@@ -445,7 +447,7 @@ export default function DashboardPage() {
       const currentWeekEnd = addDays(currentWeekStart, 6);
       const reportStartWeek = addDays(reportStart, -new Date(`${reportStart}T00:00:00`).getDay());
       const reportEndWeek = addDays(reportEnd, 6 - new Date(`${reportEnd}T00:00:00`).getDay());
-      const [sales, labor, waste, inventory, roast, dt, deployment, scheduleCurrent, employees, laborContext] = await Promise.all([
+      const [sales, labor, waste, inventory, roast, dt, deployment, scheduleCurrent, employees, employeeWages, laborContext] = await Promise.all([
         readRange("hourly_sales", "sale_date"),
         readRange("labor_logs", "log_date"),
         readRange("waste_logs", "log_date", "*"),
@@ -455,6 +457,7 @@ export default function DashboardPage() {
         readRange("deployment_logs", "log_date"),
         readRange("schedule_shifts", "shift_date", "*", todayLocalISODate(), currentWeekEnd),
         readAll("employees"),
+        readAll("employee_wages"),
         readRange("labor_logs", "log_date", "*", reportStartWeek, reportEndWeek),
       ]);
       if (cancelled) return;
@@ -469,6 +472,7 @@ export default function DashboardPage() {
         deploymentLogs: deployment.rows,
         scheduleRows: scheduleCurrent.rows,
         employeeRows: employees.rows,
+        employeeWageRows: employeeWages.rows,
         laborContextRows: laborContext.rows,
         disconnected: {
           sales: sales.disconnected,
@@ -480,6 +484,7 @@ export default function DashboardPage() {
           deployment: deployment.disconnected,
           schedule: scheduleCurrent.disconnected,
           employees: employees.disconnected,
+          employeeWages: employeeWages.disconnected,
           laborContext: laborContext.disconnected,
         },
       });
@@ -718,12 +723,33 @@ export default function DashboardPage() {
         return { date, rows, subtotal };
       });
 
+    const employeeIdByName = new Map(
+      (reportState.employeeRows || []).map((row) => [fullNameFromEmployeeRow(row).toLowerCase(), row.id])
+    );
+    const wageHistoryByEmployeeId = new Map();
+    for (const wage of reportState.employeeWageRows || []) {
+      if (!wage.employee_id) continue;
+      if (!wageHistoryByEmployeeId.has(wage.employee_id)) wageHistoryByEmployeeId.set(wage.employee_id, []);
+      wageHistoryByEmployeeId.get(wage.employee_id).push(wage);
+    }
+    for (const history of wageHistoryByEmployeeId.values()) {
+      history.sort((a, b) => new Date(b.effective_date || b.created_at || 0) - new Date(a.effective_date || a.created_at || 0));
+    }
+    const resolveWageForLaborRow = (employeeName, logDate) => {
+      const employeeId = employeeIdByName.get(String(employeeName || "").toLowerCase().trim());
+      if (!employeeId) return null;
+      const history = wageHistoryByEmployeeId.get(employeeId) || [];
+      const match = history.find((w) => String(w.effective_date || "") <= String(logDate || ""));
+      const wage = Number(match?.hourly_rate);
+      return Number.isFinite(wage) ? wage : null;
+    };
+
     const laborDetail = reportState.laborRows.map((r, idx) => ({
       id: `${r.log_date}-${idx}`,
       date: r.log_date,
       employee: r.employee_name ?? r.employee ?? "Employee",
       hours: getLaborHours(r),
-      wage: toNum(r.wage ?? r.hourly_rate),
+      wage: resolveWageForLaborRow(r.employee_name ?? r.employee, r.log_date),
       cost: getLaborCost(r),
     }));
 
@@ -1236,7 +1262,7 @@ export default function DashboardPage() {
           <thead className="bg-zinc-50 dark:bg-zinc-800"><tr><th className="px-3 py-2">Date</th><th className="px-3 py-2">Employee</th><th className="px-3 py-2">Hours</th><th className="px-3 py-2">Wage</th><th className="px-3 py-2">Shift Cost</th></tr></thead>
           <tbody>
             {reportRows.laborDetail.map((r) => (
-              <tr key={r.id} className="border-t border-zinc-100 dark:border-zinc-800"><td className="px-3 py-2">{r.date}</td><td className="px-3 py-2">{r.employee}</td><td className="px-3 py-2">{r.hours.toFixed(2)}</td><td className="px-3 py-2">{fmtMoney2(r.wage)}</td><td className="px-3 py-2">{fmtMoney2(r.cost)}</td></tr>
+              <tr key={r.id} className="border-t border-zinc-100 dark:border-zinc-800"><td className="px-3 py-2">{r.date}</td><td className="px-3 py-2">{r.employee}</td><td className="px-3 py-2">{r.hours.toFixed(2)}</td><td className="px-3 py-2">{Number.isFinite(r.wage) ? fmtMoney2(r.wage) : "—"}</td><td className="px-3 py-2">{fmtMoney2(r.cost)}</td></tr>
             ))}
             {reportRows.laborDetail.length === 0 ? <tr><td className="px-3 py-3 text-zinc-500" colSpan={5}>Labor Detail data not yet connected</td></tr> : null}
           </tbody>
