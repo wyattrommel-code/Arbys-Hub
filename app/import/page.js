@@ -169,6 +169,115 @@ function getWeekStartMonday(dateValue) {
   return d;
 }
 
+function parseClockTimeToMinutes(timeText) {
+  const m = String(timeText || "").trim().match(/^(\d{2}):(\d{2})(?::\d{2})?$/);
+  if (!m) return null;
+  return Number(m[1]) * 60 + Number(m[2]);
+}
+
+function parseIsoToMinutes(isoText) {
+  const d = new Date(isoText);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.getHours() * 60 + d.getMinutes();
+}
+
+function lastNameOf(name) {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  return String(parts[parts.length - 1] || "").toLowerCase();
+}
+
+function matchLaborRow(shift, laborRows) {
+  const shiftLast = lastNameOf(shift.employee_name);
+  const schedIn = parseClockTimeToMinutes(shift.scheduled_start);
+  if (!shiftLast || !Number.isFinite(schedIn)) return null;
+  const candidates = laborRows.filter((row) => {
+    const laborLast = lastNameOf(row.employee_name);
+    return laborLast && (laborLast.includes(shiftLast) || shiftLast.includes(laborLast));
+  });
+  if (!candidates.length) return null;
+  let best = null;
+  let bestGap = Number.POSITIVE_INFINITY;
+  for (const row of candidates) {
+    const actualIn = parseIsoToMinutes(row.clock_in);
+    if (!Number.isFinite(actualIn)) continue;
+    const gap = Math.abs(actualIn - schedIn);
+    if (gap < bestGap) {
+      bestGap = gap;
+      best = row;
+    }
+  }
+  return best;
+}
+
+async function recalcEmployeeAttendanceForNames(supabase, employeeNames = []) {
+  const cleanNames = [...new Set(employeeNames.map((n) => String(n || "").trim()).filter(Boolean))];
+  if (!cleanNames.length) return;
+  const startDate = toDateStr(addDays(new Date(), -30));
+  const today = toDateStr(new Date());
+  const [scheduleRes, laborRes] = await Promise.all([
+    supabase.from("schedule_shifts").select("*").gte("shift_date", startDate).lte("shift_date", today),
+    supabase.from("labor_logs").select("*").gte("log_date", startDate).lte("log_date", today),
+  ]);
+  if (scheduleRes.error) throw scheduleRes.error;
+  if (laborRes.error) throw laborRes.error;
+
+  const schedules = (scheduleRes.data || []).filter((s) =>
+    cleanNames.some((n) => lastNameOf(n) && (lastNameOf(s.employee_name).includes(lastNameOf(n)) || lastNameOf(n).includes(lastNameOf(s.employee_name))))
+  );
+  const laborRows = (laborRes.data || []).filter((l) => Number(l?.total_hours ?? l?.hours ?? 0) <= 16);
+  const laborByDate = new Map();
+  for (const row of laborRows) {
+    if (!laborByDate.has(row.log_date)) laborByDate.set(row.log_date, []);
+    laborByDate.get(row.log_date).push(row);
+  }
+
+  const byEmployee = new Map();
+  for (const shift of schedules) {
+    const key = String(shift.employee_name || "").trim();
+    if (!key) continue;
+    if (!byEmployee.has(key)) {
+      byEmployee.set(key, {
+        employee_name: key,
+        total_shifts: 0,
+        on_time_count: 0,
+        late_in_count: 0,
+        early_out_count: 0,
+        no_show_count: 0,
+      });
+    }
+    const agg = byEmployee.get(key);
+    agg.total_shifts += 1;
+    const laborMatch = matchLaborRow(shift, laborByDate.get(shift.shift_date) || []);
+    if (!laborMatch) {
+      agg.no_show_count += 1;
+      continue;
+    }
+    const schedIn = parseClockTimeToMinutes(shift.scheduled_start);
+    const schedOut = parseClockTimeToMinutes(shift.scheduled_end);
+    const actualIn = parseIsoToMinutes(laborMatch.clock_in);
+    const actualOut = parseIsoToMinutes(laborMatch.clock_out);
+    const diffIn = Number.isFinite(schedIn) && Number.isFinite(actualIn) ? actualIn - schedIn : 0;
+    const diffOut = Number.isFinite(schedOut) && Number.isFinite(actualOut) ? actualOut - schedOut : 0;
+    const lateIn = diffIn > 10;
+    const earlyOut = diffOut < -10;
+    if (!lateIn && !earlyOut) agg.on_time_count += 1;
+    if (lateIn) agg.late_in_count += 1;
+    if (earlyOut) agg.early_out_count += 1;
+  }
+
+  const upserts = [...byEmployee.values()].map((r) => ({
+    ...r,
+    attendance_score: r.total_shifts > 0 ? (r.on_time_count / r.total_shifts) * 100 : 0,
+    store_id: DEFAULT_STORE_ID,
+    updated_at: new Date().toISOString(),
+  }));
+  if (!upserts.length) return;
+  const { error: upsertErr } = await supabase
+    .from("employee_attendance")
+    .upsert(upserts, { onConflict: "employee_name,store_id" });
+  if (upsertErr) throw upsertErr;
+}
+
 function parseLaborCsv(csvText) {
   const lines = csvText.split(/\r?\n/).filter((line) => line.trim().length > 0);
   if (!lines.length) return { rows: [], error: "CSV file is empty." };
@@ -520,6 +629,11 @@ export default function ImportPage() {
           .from("labor_logs")
           .upsert(upsertRows, { onConflict: "punch_id" });
         if (upsertError) throw upsertError;
+        try {
+          await recalcEmployeeAttendanceForNames(supabase, upsertRows.map((r) => r.employee_name));
+        } catch {
+          // Keep import success even if attendance cache update fails.
+        }
       }
 
       const sortedDates = [...new Set(importedDates)].sort();
@@ -609,6 +723,11 @@ export default function ImportPage() {
           .from("schedule_shifts")
           .upsert(upsertRows, { onConflict: "shift_date,employee_name,scheduled_start" });
         if (upsertError) throw upsertError;
+        try {
+          await recalcEmployeeAttendanceForNames(supabase, upsertRows.map((r) => r.employee_name));
+        } catch {
+          // Keep import success even if attendance cache update fails.
+        }
       }
 
       const sortedDays = [...days].sort();
