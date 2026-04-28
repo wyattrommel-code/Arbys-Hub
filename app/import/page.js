@@ -134,6 +134,14 @@ function toEmployeeKey(firstName, lastName) {
   return `${String(firstName || "").trim().toLowerCase()}::${String(lastName || "").trim().toLowerCase()}`;
 }
 
+function splitNameParts(fullName) {
+  const parts = String(fullName || "").trim().split(/\s+/).filter(Boolean);
+  return {
+    firstName: parts[0] || "",
+    lastName: parts.length > 1 ? parts[parts.length - 1] : "",
+  };
+}
+
 function parseLaborDate(rawValue) {
   if (!rawValue) return null;
   const parsed = new Date(String(rawValue).trim());
@@ -180,6 +188,7 @@ async function upsertLaborOvertimeRows(supabase, updates) {
         supabase
           .from("labor_logs")
           .update({
+            hourly_wage: row.hourly_wage,
             regular_hours: row.regular_hours,
             overtime_hours: row.overtime_hours,
             regular_cost: row.regular_cost,
@@ -195,8 +204,41 @@ async function upsertLaborOvertimeRows(supabase, updates) {
   }
 }
 
+async function buildActiveEmployeeWageLookup(supabase) {
+  const [{ data: employees, error: empErr }, { data: wageRows, error: wageErr }] = await Promise.all([
+    supabase.from("employees").select("id, first_name, last_name, status").eq("status", "active"),
+    supabase.from("employee_wages").select("employee_id, hourly_rate, effective_date, created_at"),
+  ]);
+  if (empErr) throw empErr;
+  if (wageErr) throw wageErr;
+
+  const activeByNameKey = new Map();
+  for (const emp of employees || []) {
+    const key = toEmployeeKey(emp.first_name, emp.last_name);
+    if (key) activeByNameKey.set(key, emp.id);
+  }
+
+  const latestWageByEmployeeId = new Map();
+  const sortedWages = [...(wageRows || [])].sort(
+    (a, b) => new Date(b.effective_date || b.created_at || 0) - new Date(a.effective_date || a.created_at || 0)
+  );
+  for (const row of sortedWages) {
+    if (!latestWageByEmployeeId.has(row.employee_id)) {
+      const wage = Number(row.hourly_rate);
+      latestWageByEmployeeId.set(row.employee_id, Number.isFinite(wage) ? wage : null);
+    }
+  }
+
+  const wageByNameKey = new Map();
+  for (const [nameKey, employeeId] of activeByNameKey.entries()) {
+    wageByNameKey.set(nameKey, latestWageByEmployeeId.get(employeeId) ?? null);
+  }
+  return wageByNameKey;
+}
+
 async function recalcLaborOvertimeForEmployeeWeeks(supabase, employeeWeekKeys) {
   if (!employeeWeekKeys.length) return [];
+  const wageByNameKey = await buildActiveEmployeeWageLookup(supabase);
   const byEmployee = new Map();
   for (const key of employeeWeekKeys) {
     const employeeName = String(key.employee_name || "").trim();
@@ -222,10 +264,14 @@ async function recalcLaborOvertimeForEmployeeWeeks(supabase, employeeWeekKeys) {
     const rows = data || [];
     const rowsByWeek = new Map();
     for (const row of rows) {
+      const { firstName, lastName } = splitNameParts(row.employee_name);
+      const nameKey = toEmployeeKey(firstName, lastName);
+      const resolvedWage = Number(wageByNameKey.get(nameKey));
+      const hourlyWage = Number.isFinite(resolvedWage) ? resolvedWage : DEFAULT_HOURLY_WAGE;
       const weekStart = getWeekStartSunday(row.log_date);
       if (!weekSet.has(weekStart)) continue;
       if (!rowsByWeek.has(weekStart)) rowsByWeek.set(weekStart, []);
-      rowsByWeek.get(weekStart).push({ ...row, week_start_date: weekStart });
+      rowsByWeek.get(weekStart).push({ ...row, week_start_date: weekStart, hourly_wage: hourlyWage });
     }
     for (const weekStart of weekStarts) {
       const weekRows = rowsByWeek.get(weekStart) || [];
@@ -239,6 +285,7 @@ async function recalcLaborOvertimeForEmployeeWeeks(supabase, employeeWeekKeys) {
 }
 
 async function recalcAllLaborOvertime(supabase) {
+  const wageByNameKey = await buildActiveEmployeeWageLookup(supabase);
   const { data, error } = await supabase
     .from("labor_logs")
     .select("id, employee_name, log_date, clock_in, total_hours, hourly_wage, week_start_date");
@@ -246,10 +293,14 @@ async function recalcAllLaborOvertime(supabase) {
   const rows = data || [];
   const grouped = new Map();
   for (const row of rows) {
+    const { firstName, lastName } = splitNameParts(row.employee_name);
+    const nameKey = toEmployeeKey(firstName, lastName);
+    const resolvedWage = Number(wageByNameKey.get(nameKey));
+    const hourlyWage = Number.isFinite(resolvedWage) ? resolvedWage : DEFAULT_HOURLY_WAGE;
     const weekStart = getWeekStartSunday(row.log_date);
     const key = `${row.employee_name}::${weekStart}`;
     if (!grouped.has(key)) grouped.set(key, []);
-    grouped.get(key).push({ ...row, week_start_date: weekStart });
+    grouped.get(key).push({ ...row, week_start_date: weekStart, hourly_wage: hourlyWage });
   }
   const updates = [];
   for (const weekRows of grouped.values()) {
@@ -634,15 +685,7 @@ export default function ImportPage() {
       }
 
       const supabase = getSupabase();
-      const { data: wageRows, error: wageError } = await supabase.from("employee_wages").select("*");
-      if (wageError) throw wageError;
-
-      const wagesByName = new Map();
-      for (const row of wageRows || []) {
-        const key = toEmployeeKey(row.first_name, row.last_name);
-        const wage = Number(row.hourly_rate ?? row.hourly_wage ?? row.wage);
-        if (key && Number.isFinite(wage)) wagesByName.set(key, wage);
-      }
+      const wagesByName = await buildActiveEmployeeWageLookup(supabase);
 
       const currentlyClockedIn = [];
       const over16Errors = [];
@@ -715,7 +758,7 @@ export default function ImportPage() {
 
         const paidHours = Math.max(0, totalHours - unpaidBreaks);
         const employeeKey = toEmployeeKey(firstName, lastName);
-        const foundWage = wagesByName.get(employeeKey);
+        const foundWage = Number(wagesByName.get(employeeKey));
         const hourlyWage = Number.isFinite(foundWage) ? foundWage : DEFAULT_HOURLY_WAGE;
         if (!Number.isFinite(foundWage)) {
           missingWages.set(employeeKey, {
