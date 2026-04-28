@@ -149,6 +149,11 @@ function fullNameFromEmployeeRow(row) {
   return `${String(row?.first_name || "").trim()} ${String(row?.last_name || "").trim()}`.trim();
 }
 
+function lastNameFromFullName(name) {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  return String(parts[parts.length - 1] || "").toLowerCase();
+}
+
 function getWasteRetail(row) {
   return toNum(row?.total_retail_loss);
 }
@@ -723,9 +728,9 @@ export default function DashboardPage() {
         return { date, rows, subtotal };
       });
 
-    const employeeIdByName = new Map(
-      (reportState.employeeRows || []).map((row) => [fullNameFromEmployeeRow(row).toLowerCase(), row.id])
-    );
+    const employees = reportState.employeeRows || [];
+    const laborRows = reportState.laborRows || [];
+    const employeeIdByName = new Map(employees.map((row) => [fullNameFromEmployeeRow(row).toLowerCase().trim(), row.id]));
     const wageHistoryByEmployeeId = new Map();
     for (const wage of reportState.employeeWageRows || []) {
       if (!wage.employee_id) continue;
@@ -735,13 +740,49 @@ export default function DashboardPage() {
     for (const history of wageHistoryByEmployeeId.values()) {
       history.sort((a, b) => new Date(b.effective_date || b.created_at || 0) - new Date(a.effective_date || a.created_at || 0));
     }
+    const wageMap = new Map();
+    const wageCandidatesByLastName = new Map();
+    for (const emp of employees) {
+      const key = fullNameFromEmployeeRow(emp).toLowerCase().trim();
+      const history = wageHistoryByEmployeeId.get(emp.id) || [];
+      const latest = history[0];
+      if (latest && Number.isFinite(Number(latest.hourly_rate))) {
+        wageMap.set(key, Number(latest.hourly_rate));
+      }
+      const lastName = String(emp.last_name || "").toLowerCase().trim();
+      if (lastName) {
+        if (!wageCandidatesByLastName.has(lastName)) wageCandidatesByLastName.set(lastName, []);
+        wageCandidatesByLastName.get(lastName).push({ employeeId: emp.id, history });
+      }
+    }
+    if (employees.length && laborRows.length) {
+      const sampleLaborName = String(laborRows[0]?.employee_name || "").toLowerCase().trim();
+      console.log("Total employees loaded:", employees.length);
+      console.log("Sample employee:", employees[0]);
+      console.log("Sample labor row:", laborRows[0]);
+      console.log("Wage map keys:", Array.from(wageMap.keys()).slice(0, 5));
+      console.log("Looking up:", laborRows[0].employee_name);
+      console.log("Found match?", wageMap.get(sampleLaborName));
+    }
     const resolveWageForLaborRow = (employeeName, logDate) => {
-      const employeeId = employeeIdByName.get(String(employeeName || "").toLowerCase().trim());
-      if (!employeeId) return null;
-      const history = wageHistoryByEmployeeId.get(employeeId) || [];
-      const match = history.find((w) => String(w.effective_date || "") <= String(logDate || ""));
-      const wage = Number(match?.hourly_rate);
-      return Number.isFinite(wage) ? wage : null;
+      const lookupKey = String(employeeName || "").toLowerCase().trim();
+      const employeeId = employeeIdByName.get(lookupKey);
+      if (employeeId) {
+        const history = wageHistoryByEmployeeId.get(employeeId) || [];
+        const match = history.find((w) => String(w.effective_date || "") <= String(logDate || ""));
+        const wage = Number(match?.hourly_rate);
+        if (Number.isFinite(wage)) return wage;
+      }
+
+      // Fallback for edge-case full names from source systems: match on last name.
+      const lastName = lastNameFromFullName(employeeName);
+      const candidates = wageCandidatesByLastName.get(lastName) || [];
+      for (const candidate of candidates) {
+        const match = (candidate.history || []).find((w) => String(w.effective_date || "") <= String(logDate || ""));
+        const wage = Number(match?.hourly_rate);
+        if (Number.isFinite(wage)) return wage;
+      }
+      return null;
     };
 
     const laborDetail = reportState.laborRows.map((r, idx) => ({
