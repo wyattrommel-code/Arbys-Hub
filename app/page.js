@@ -38,6 +38,11 @@ const navCards = [
     description:
       "Enter station assignments for each shift. Morning by 10:30am, Night by 4:30pm.",
   },
+  {
+    href: "/people",
+    title: "People",
+    description: "Manage employees, wages, certifications and training.",
+  },
 ];
 
 export default function Home() {

@@ -106,10 +106,13 @@ function createEmployeeRow(values = {}) {
 
 export default function DeploymentPage() {
   const today = useMemo(() => toDateStr(new Date()), []);
+  const supabase = useMemo(() => getSupabase(), []);
   const [logDate, setLogDate] = useState(today);
   const [shiftKey, setShiftKey] = useState("MORNING");
   const [submittedBy, setSubmittedBy] = useState("");
   const [employees, setEmployees] = useState([]);
+  const [activeEmployees, setActiveEmployees] = useState([]);
+  const [unscheduledEmployeeId, setUnscheduledEmployeeId] = useState("");
   const [loadingSchedule, setLoadingSchedule] = useState(false);
   const [fetchError, setFetchError] = useState("");
   const [existingLog, setExistingLog] = useState(null);
@@ -124,7 +127,6 @@ export default function DeploymentPage() {
       setFetchError("");
       setExistingLog(null);
       try {
-        const supabase = getSupabase();
         const shiftDef = SHIFT_OPTIONS[shiftKey];
         const [{ data: schedRows, error: schedErr }, { data: existingRows, error: existingErr }] = await Promise.all([
           supabase
@@ -180,6 +182,34 @@ export default function DeploymentPage() {
     };
   }, [logDate, shiftKey]);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchActiveEmployees() {
+      const { data, error: empErr } = await supabase
+        .from("employees")
+        .select("id, first_name, last_name, status")
+        .eq("status", "active")
+        .order("last_name", { ascending: true })
+        .order("first_name", { ascending: true });
+      if (cancelled) return;
+      if (empErr) {
+        setFetchError(empErr.message || "Failed to load active employees.");
+        setActiveEmployees([]);
+        return;
+      }
+      setActiveEmployees(
+        (data || []).map((row) => ({
+          id: row.id,
+          name: `${row.first_name || ""} ${row.last_name || ""}`.trim(),
+        }))
+      );
+    }
+    fetchActiveEmployees();
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase]);
+
   const coverage = useMemo(() => {
     const out = Object.fromEntries(STATIONS.map((station) => [station, []]));
     for (const row of employees) {
@@ -216,15 +246,23 @@ export default function DeploymentPage() {
   }
 
   function addUnscheduledPerson() {
+    if (!unscheduledEmployeeId) return;
+    const selected = activeEmployees.find((row) => row.id === unscheduledEmployeeId);
+    if (!selected) return;
+    const alreadyIncluded = employees.some(
+      (row) => String(row.employee_name || "").trim().toLowerCase() === selected.name.toLowerCase()
+    );
+    if (alreadyIncluded) return;
     setEmployees((prev) =>
       prev.concat(
         createEmployeeRow({
-          employee_name: "",
+          employee_name: selected.name,
           role: "Unscheduled",
           unscheduled: true,
         })
       )
     );
+    setUnscheduledEmployeeId("");
   }
 
   function calcLateStatus(shiftDef, submissionDate, dateStr) {
@@ -252,7 +290,6 @@ export default function DeploymentPage() {
 
     setSubmitting(true);
     try {
-      const supabase = getSupabase();
       const submittedAt = new Date();
       const { isLate, minutesLate } = calcLateStatus(shiftDef, submittedAt, logDate);
 
@@ -476,12 +513,8 @@ export default function DeploymentPage() {
                     <input
                       type="text"
                       value={row.employee_name}
-                      onChange={(e) => setRowField(row.id, "employee_name", e.target.value)}
-                      placeholder={row.unscheduled ? "Employee name" : undefined}
-                      className={`w-full rounded-md border px-2 py-2 text-sm ${
-                        row.unscheduled ? "border-zinc-300 dark:border-zinc-700 dark:bg-zinc-950" : "border-transparent bg-transparent px-0 font-semibold"
-                      }`}
-                      readOnly={!row.unscheduled}
+                      className="w-full rounded-md border-transparent bg-transparent px-0 py-2 text-sm font-semibold"
+                      readOnly
                     />
                     <p className="text-xs text-zinc-500 dark:text-zinc-400">
                       {row.role || "Role not set"} {row.scheduled_start && row.scheduled_end ? `• ${fmtTimeRange(row.scheduled_start, row.scheduled_end)}` : ""}
@@ -525,13 +558,35 @@ export default function DeploymentPage() {
           )}
 
           <div className="border-t border-zinc-200 p-4 dark:border-zinc-800">
-            <button
-              type="button"
-              onClick={addUnscheduledPerson}
-              className="min-h-11 rounded-lg border border-[#C8102E] px-4 text-sm font-semibold text-[#C8102E] hover:bg-[#C8102E]/5"
-            >
-              + Add Unscheduled Person
-            </button>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <select
+                value={unscheduledEmployeeId}
+                onChange={(e) => setUnscheduledEmployeeId(e.target.value)}
+                className="h-11 w-full rounded-lg border border-zinc-300 bg-white px-3 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+              >
+                <option value="">Select active employee...</option>
+                {activeEmployees
+                  .filter(
+                    (emp) =>
+                      !employees.some(
+                        (row) => String(row.employee_name || "").trim().toLowerCase() === String(emp.name || "").toLowerCase()
+                      )
+                  )
+                  .map((emp) => (
+                    <option key={emp.id} value={emp.id}>
+                      {emp.name}
+                    </option>
+                  ))}
+              </select>
+              <button
+                type="button"
+                onClick={addUnscheduledPerson}
+                disabled={!unscheduledEmployeeId}
+                className="min-h-11 rounded-lg border border-[#C8102E] px-4 text-sm font-semibold text-[#C8102E] hover:bg-[#C8102E]/5 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                + Add Unscheduled Person
+              </button>
+            </div>
           </div>
         </article>
 

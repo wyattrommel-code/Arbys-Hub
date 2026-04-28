@@ -11,6 +11,7 @@ const PAGE_TITLES = {
   "/dashboard": "Dashboard",
   "/schedule": "Schedule & Attendance",
   "/deployment": "Deployment Chart",
+  "/people": "People",
   "/roast-beef": "Roast Beef",
   "/roast": "Roast Beef",
 };
