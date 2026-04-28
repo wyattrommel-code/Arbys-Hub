@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { getSupabase } from "@/lib/supabase";
 
 const DEFAULT_HOURLY_WAGE = 10;
@@ -140,6 +140,35 @@ function parseLaborDate(rawValue) {
   return parsed;
 }
 
+function parseIsoLikeDate(rawValue) {
+  if (!rawValue) return null;
+  const value = String(rawValue).trim();
+  if (!value) return null;
+  const parsed = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed;
+}
+
+function parseTime12hTo24(rawValue) {
+  const value = String(rawValue || "").trim();
+  const m = value.match(/^(\d{1,2}):(\d{2})\s*(am|pm)$/i);
+  if (!m) return null;
+  let hour = Number(m[1]);
+  const minute = Number(m[2]);
+  const meridiem = m[3].toLowerCase();
+  if (hour < 1 || hour > 12 || minute < 0 || minute > 59) return null;
+  if (meridiem === "pm" && hour !== 12) hour += 12;
+  if (meridiem === "am" && hour === 12) hour = 0;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:00`;
+}
+
+function getWeekStartMonday(dateValue) {
+  const d = new Date(`${toDateStr(dateValue)}T00:00:00`);
+  const day = (d.getDay() + 6) % 7;
+  d.setDate(d.getDate() - day);
+  return d;
+}
+
 function parseLaborCsv(csvText) {
   const lines = csvText.split(/\r?\n/).filter((line) => line.trim().length > 0);
   if (!lines.length) return { rows: [], error: "CSV file is empty." };
@@ -181,9 +210,109 @@ function parseLaborCsv(csvText) {
   return { rows, error: null };
 }
 
+function parseScheduleCsv(csvText) {
+  const lines = csvText.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  if (!lines.length) return { rows: [], error: "CSV file is empty." };
+  const headers = parseCsvLine(lines[0]).map((h) => h.trim());
+  const required = ["Role", "Employee", "Employee Id", "Date", "Time In", "Time Out", "Hours"];
+  const headerMap = new Map();
+  headers.forEach((name, idx) => headerMap.set(name, idx));
+  const missing = required.filter((name) => !headerMap.has(name));
+  if (missing.length) return { rows: [], error: `Missing required columns: ${missing.join(", ")}` };
+
+  const rows = [];
+  for (let i = 1; i < lines.length; i += 1) {
+    const cols = parseCsvLine(lines[i]);
+    if (!cols.some((c) => String(c || "").trim() !== "")) continue;
+    rows.push({
+      role: cols[headerMap.get("Role")] || "",
+      employee: cols[headerMap.get("Employee")] || "",
+      employeeId: cols[headerMap.get("Employee Id")] || "",
+      date: cols[headerMap.get("Date")] || "",
+      timeIn: cols[headerMap.get("Time In")] || "",
+      timeOut: cols[headerMap.get("Time Out")] || "",
+      hours: cols[headerMap.get("Hours")] || "",
+      rowNumber: i + 1,
+    });
+  }
+  return { rows, error: null };
+}
+
+function FileDropZone({ accept, loading, fileTypeLabel, onFile }) {
+  const [isDragging, setIsDragging] = useState(false);
+  const inputRef = useRef(null);
+
+  const handleSelect = async (event) => {
+    const file = event.target.files?.[0];
+    await onFile(file);
+    event.target.value = "";
+  };
+
+  return (
+    <div className="mt-3">
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => !loading && inputRef.current?.click()}
+        onKeyDown={(e) => {
+          if ((e.key === "Enter" || e.key === " ") && !loading) {
+            e.preventDefault();
+            inputRef.current?.click();
+          }
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          if (!loading) setIsDragging(true);
+        }}
+        onDragLeave={() => setIsDragging(false)}
+        onDrop={async (e) => {
+          e.preventDefault();
+          setIsDragging(false);
+          if (loading) return;
+          const file = e.dataTransfer.files?.[0];
+          await onFile(file);
+        }}
+        className={`rounded-xl border-2 border-dashed p-6 text-center transition ${
+          isDragging ? "border-[#C8102E] bg-[#fdf0f2]" : "border-zinc-300 bg-zinc-50 hover:border-[#C8102E]"
+        } ${loading ? "cursor-not-allowed opacity-60" : "cursor-pointer"} dark:border-zinc-700 dark:bg-zinc-900/50`}
+      >
+        <div className="mx-auto mb-2 flex h-9 w-9 items-center justify-center rounded-full bg-[#C8102E]/10 text-[#C8102E]">
+          <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M12 16V6" strokeLinecap="round" />
+            <path d="m8 10 4-4 4 4" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M4 17a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3" strokeLinecap="round" />
+          </svg>
+        </div>
+        <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">Drop {fileTypeLabel} here</p>
+      </div>
+      <button
+        type="button"
+        onClick={() => inputRef.current?.click()}
+        disabled={loading}
+        className="mt-2 text-xs text-zinc-500 underline decoration-zinc-400 underline-offset-2 hover:text-[#C8102E]"
+      >
+        or click to browse files
+      </button>
+      <input
+        ref={inputRef}
+        type="file"
+        accept={accept}
+        className="hidden"
+        disabled={loading}
+        onChange={handleSelect}
+      />
+    </div>
+  );
+}
+
 export default function ImportPage() {
   const [salesState, setSalesState] = useState({ loading: false, message: "", error: "" });
   const [laborState, setLaborState] = useState({
+    loading: false,
+    error: "",
+    summary: null,
+  });
+  const [scheduleState, setScheduleState] = useState({
     loading: false,
     error: "",
     summary: null,
@@ -424,35 +553,108 @@ export default function ImportPage() {
     }
   }
 
+  async function handleScheduleUpload(file) {
+    if (!file) return;
+    setScheduleState({ loading: true, error: "", summary: null });
+    try {
+      const csvText = await readAsText(file);
+      const parsed = parseScheduleCsv(csvText);
+      if (parsed.error) {
+        setScheduleState({ loading: false, error: parsed.error, summary: null });
+        return;
+      }
+
+      const upsertRows = [];
+      let skippedSystemCount = 0;
+      const employees = new Set();
+      const days = new Set();
+
+      for (const row of parsed.rows) {
+        const employeeName = String(row.employee || "").trim();
+        const isSystem =
+          !employeeName ||
+          employeeName.toLowerCase() === "joshua api" ||
+          employeeName.toLowerCase() === "store ." ||
+          employeeName.toLowerCase().includes("api");
+        if (isSystem) {
+          skippedSystemCount += 1;
+          continue;
+        }
+
+        const shiftDate = parseIsoLikeDate(row.date);
+        const scheduledStart = parseTime12hTo24(row.timeIn);
+        const scheduledEnd = parseTime12hTo24(row.timeOut);
+        if (!shiftDate || !scheduledStart || !scheduledEnd) continue;
+
+        const shiftDateStr = toDateStr(shiftDate);
+        const weekStartDate = getWeekStartMonday(shiftDate);
+        upsertRows.push({
+          shift_date: shiftDateStr,
+          employee_name: employeeName,
+          jolt_employee_id: String(row.employeeId || "").trim() || null,
+          role: String(row.role || "").trim() || null,
+          scheduled_start: scheduledStart,
+          scheduled_end: scheduledEnd,
+          scheduled_hours: parseMoneyLike(row.hours),
+          week_start_date: toDateStr(weekStartDate),
+          store_id: DEFAULT_STORE_ID,
+        });
+        employees.add(employeeName.toLowerCase());
+        days.add(shiftDateStr);
+      }
+
+      if (upsertRows.length > 0) {
+        const supabase = getSupabase();
+        const { error: upsertError } = await supabase
+          .from("schedule_shifts")
+          .upsert(upsertRows, { onConflict: "shift_date,employee_name,scheduled_start" });
+        if (upsertError) throw upsertError;
+      }
+
+      const sortedDays = [...days].sort();
+      setScheduleState({
+        loading: false,
+        error: "",
+        summary: {
+          importedCount: upsertRows.length,
+          daysCovered: days.size,
+          employeesScheduled: employees.size,
+          skippedSystemCount,
+          dateRange:
+            sortedDays.length > 0
+              ? { start: sortedDays[0], end: sortedDays[sortedDays.length - 1] }
+              : null,
+        },
+      });
+    } catch (error) {
+      setScheduleState({
+        loading: false,
+        error: error?.message || "Schedule import failed.",
+        summary: null,
+      });
+    }
+  }
+
   return (
     <section className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 px-4 py-6 sm:px-6 sm:py-8">
       <div>
-        <h2 className="text-xl font-bold text-zinc-900 dark:text-zinc-100">CSV Imports</h2>
+        <h2 className="text-xl font-bold text-zinc-900 dark:text-zinc-100">Imports</h2>
         <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-          Import labor from Brink time clock and sales from hourly CSV exports.
+          Import labor, sales, and schedules from source system exports.
         </p>
       </div>
 
       <article className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-        <h3 className="text-base font-semibold text-[#C8102E]">Import Labor (Brink time clock CSV)</h3>
+        <h3 className="text-base font-bold text-[#C8102E]">Labor Import</h3>
         <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-          Required columns: Punch ID, First Name, Last Name, Employee ID Code, Clock In, Clock Out, Total Hours, Total
-          Unpaid Breaks.
+          Brink time clock CSV — export from Brink POS under Reports → Time Clock
         </p>
-        <label className="mt-4 inline-flex cursor-pointer items-center rounded-lg bg-[#C8102E] px-4 py-2 text-sm font-semibold text-white hover:bg-[#a50d26]">
-          {laborState.loading ? "Importing..." : "Import Labor"}
-          <input
-            type="file"
-            accept=".csv,text/csv"
-            className="hidden"
-            disabled={laborState.loading}
-            onChange={async (event) => {
-              const file = event.target.files?.[0];
-              await handleLaborUpload(file);
-              event.target.value = "";
-            }}
-          />
-        </label>
+        <FileDropZone
+          accept=".csv,text/csv"
+          loading={laborState.loading}
+          fileTypeLabel="CSV"
+          onFile={handleLaborUpload}
+        />
         {laborState.error ? (
           <p className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{laborState.error}</p>
         ) : null}
@@ -500,29 +702,50 @@ export default function ImportPage() {
       </article>
 
       <article className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-        <h3 className="text-base font-semibold text-[#C8102E]">Import Sales (hourly sales CSV)</h3>
+        <h3 className="text-base font-bold text-[#C8102E]">Sales Import</h3>
         <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-          Imports hourly sales, updates same-day totals, and stages next-week daypart forecasts.
+          Brink hourly sales CSV — export from Brink POS under Reports → Hourly Sales
         </p>
-        <label className="mt-4 inline-flex cursor-pointer items-center rounded-lg bg-[#C8102E] px-4 py-2 text-sm font-semibold text-white hover:bg-[#a50d26]">
-          {salesState.loading ? "Importing..." : "Import Sales"}
-          <input
-            type="file"
-            accept=".csv,text/csv"
-            className="hidden"
-            disabled={salesState.loading}
-            onChange={async (event) => {
-              const file = event.target.files?.[0];
-              await handleSalesUpload(file);
-              event.target.value = "";
-            }}
-          />
-        </label>
+        <FileDropZone
+          accept=".csv,text/csv"
+          loading={salesState.loading}
+          fileTypeLabel="CSV"
+          onFile={handleSalesUpload}
+        />
         {salesState.error ? (
           <p className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{salesState.error}</p>
         ) : null}
         {salesState.message ? (
           <p className="mt-3 rounded-md bg-green-50 px-3 py-2 text-sm text-green-700">{salesState.message}</p>
+        ) : null}
+      </article>
+
+      <article className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+        <h3 className="text-base font-bold text-[#C8102E]">Schedule Import</h3>
+        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+          Jolt schedule CSV — export from Jolt under Schedule → Export
+        </p>
+        <FileDropZone
+          accept=".csv,text/csv"
+          loading={scheduleState.loading}
+          fileTypeLabel="CSV"
+          onFile={handleScheduleUpload}
+        />
+        {scheduleState.error ? (
+          <p className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{scheduleState.error}</p>
+        ) : null}
+        {scheduleState.summary ? (
+          <div className="mt-4 rounded-md bg-zinc-50 p-3 text-sm dark:bg-zinc-800/60">
+            <p>{scheduleState.summary.importedCount} shifts imported</p>
+            <p>
+              {scheduleState.summary.daysCovered} days covered
+              {scheduleState.summary.dateRange
+                ? ` (${scheduleState.summary.dateRange.start} to ${scheduleState.summary.dateRange.end})`
+                : ""}
+            </p>
+            <p>{scheduleState.summary.employeesScheduled} employees scheduled</p>
+            <p>{scheduleState.summary.skippedSystemCount} rows skipped (system accounts)</p>
+          </div>
         ) : null}
       </article>
     </section>
