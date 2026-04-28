@@ -142,6 +142,10 @@ export default function PeoplePage() {
   const [newQuestion, setNewQuestion] = useState({ station: STATIONS[0], question_text: "", category: "knowledge" });
   const [editingQuestionId, setEditingQuestionId] = useState(null);
   const [questionDraft, setQuestionDraft] = useState({ question_text: "", category: "knowledge" });
+  const [quickCertifyMode, setQuickCertifyMode] = useState(false);
+  const [showBulkTrainerModal, setShowBulkTrainerModal] = useState(false);
+  const [bulkTrainerIds, setBulkTrainerIds] = useState([]);
+  const [savingBulkTrainers, setSavingBulkTrainers] = useState(false);
 
   async function reloadAll() {
     setLoading(true);
@@ -535,6 +539,88 @@ export default function PeoplePage() {
     reloadAll();
   }
 
+  async function handleQuickCertifyCellClick(emp, station, cert) {
+    if (cert?.status === "certified") {
+      const ok = window.confirm("Remove certification?");
+      if (!ok) return;
+      const { error: delErr } = await supabase
+        .from("station_certifications")
+        .delete()
+        .eq("employee_id", emp.id)
+        .eq("station", station);
+      if (delErr) {
+        setError(delErr.message || "Failed to remove certification.");
+        return;
+      }
+      await reloadAll();
+      return;
+    }
+
+    if (cert) return; // In-training stays in normal flow.
+
+    const today = toDateStr(new Date());
+    const { data: certRow, error: certErr } = await supabase
+      .from("station_certifications")
+      .upsert(
+        {
+          employee_id: emp.id,
+          station,
+          status: "certified",
+          certified_date: today,
+          certified_by: "Wyatt Rommel",
+          trainer_signature: "Quick Certify",
+          attempt_count: 0,
+          training_start_date: today,
+        },
+        { onConflict: "employee_id,station" }
+      )
+      .select("id")
+      .single();
+    if (certErr) {
+      setError(certErr.message || "Quick certify failed.");
+      return;
+    }
+
+    const { error: attemptErr } = await supabase.from("certification_attempts").insert({
+      certification_id: certRow?.id || null,
+      employee_id: emp.id,
+      station,
+      questions_asked: [],
+      score: null,
+      total_questions: 0,
+      passed: true,
+      gm_approved: true,
+      gm_approved_by: "Wyatt Rommel",
+      gm_approved_at: new Date().toISOString(),
+      notes: "Quick certified - no test required",
+    });
+    if (attemptErr) {
+      setError(attemptErr.message || "Quick certify attempt log failed.");
+      return;
+    }
+    await reloadAll();
+  }
+
+  async function saveBulkTrainerAssignments() {
+    setSavingBulkTrainers(true);
+    setError("");
+    try {
+      const selected = new Set(bulkTrainerIds);
+      const updates = activeEmployees.map((emp) =>
+        supabase.from("employees").update({ is_trainer: selected.has(emp.id) }).eq("id", emp.id)
+      );
+      const results = await Promise.all(updates);
+      const failed = results.find((r) => r.error);
+      if (failed?.error) throw failed.error;
+      setShowBulkTrainerModal(false);
+      await reloadAll();
+    } catch (err) {
+      setError(err?.message || "Failed to save trainer assignments.");
+    } finally {
+      setSavingBulkTrainers(false);
+    }
+  }
+
   const trainingRows = useMemo(() => {
     return certs
       .filter((c) => c.status === "in_training")
@@ -663,9 +749,21 @@ export default function PeoplePage() {
                 placeholder="Search employees..."
                 className="h-11 w-full rounded-lg border border-zinc-300 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-950 sm:max-w-sm"
               />
-              <button type="button" onClick={() => setShowAddEmployee(true)} className="h-11 rounded-lg bg-[#C8102E] px-4 text-sm font-semibold text-white">
-                Add New Employee
-              </button>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBulkTrainerIds(activeEmployees.filter((e) => Boolean(e.is_trainer)).map((e) => e.id));
+                    setShowBulkTrainerModal(true);
+                  }}
+                  className="h-11 rounded-lg border border-zinc-300 px-4 text-sm font-semibold"
+                >
+                  Bulk Edit Trainers
+                </button>
+                <button type="button" onClick={() => setShowAddEmployee(true)} className="h-11 rounded-lg bg-[#C8102E] px-4 text-sm font-semibold text-white">
+                  Add New Employee
+                </button>
+              </div>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               {[
@@ -889,6 +987,22 @@ export default function PeoplePage() {
 
       {!loading && tab === "CERTIFICATIONS" ? (
         <article className="rounded-xl border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={() => setQuickCertifyMode((v) => !v)}
+              className={`h-10 rounded-lg px-3 text-sm font-semibold ${
+                quickCertifyMode ? "bg-amber-500 text-white" : "border border-zinc-300 text-zinc-700"
+              }`}
+            >
+              Quick Certify Mode {quickCertifyMode ? "ON" : "OFF"}
+            </button>
+            {quickCertifyMode ? (
+              <p className="rounded-md border border-yellow-300 bg-yellow-50 px-3 py-2 text-xs text-yellow-900">
+                ⚠ Quick Certify Mode active — clicking cells instantly certifies without testing. Toggle off when done with bulk setup.
+              </p>
+            ) : null}
+          </div>
           <div className="overflow-x-auto">
             <table className="min-w-[980px] text-left text-xs">
               <thead className="bg-zinc-50 dark:bg-zinc-800">
@@ -919,7 +1033,13 @@ export default function PeoplePage() {
                           <button
                             type="button"
                             title={tooltip}
-                            onClick={() => setCertModal({ employee: emp, station, cert })}
+                            onClick={() => {
+                              if (quickCertifyMode) {
+                                handleQuickCertifyCellClick(emp, station, cert);
+                              } else {
+                                setCertModal({ employee: emp, station, cert });
+                              }
+                            }}
                             className={`h-9 w-9 rounded-full ${bg}`}
                           >
                             {icon}
@@ -1536,6 +1656,36 @@ export default function PeoplePage() {
           </label>
           <button type="button" onClick={logTrainingSession} className="mt-3 h-11 rounded-lg bg-[#C8102E] px-4 text-sm font-semibold text-white">
             Save Session
+          </button>
+        </Modal>
+      ) : null}
+
+      {showBulkTrainerModal ? (
+        <Modal title="Bulk Edit Trainers" onClose={() => setShowBulkTrainerModal(false)}>
+          <div className="space-y-2">
+            {activeEmployees.map((emp) => (
+              <label key={emp.id} className="flex items-center gap-2 rounded border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-800">
+                <input
+                  type="checkbox"
+                  checked={bulkTrainerIds.includes(emp.id)}
+                  onChange={(e) =>
+                    setBulkTrainerIds((prev) =>
+                      e.target.checked ? [...new Set([...prev, emp.id])] : prev.filter((id) => id !== emp.id)
+                    )
+                  }
+                  className="h-4 w-4 accent-[#C8102E]"
+                />
+                {fullName(emp)}
+              </label>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={saveBulkTrainerAssignments}
+            disabled={savingBulkTrainers}
+            className="mt-3 h-11 rounded-lg bg-[#C8102E] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {savingBulkTrainers ? "Saving..." : "Save Trainer Assignments"}
           </button>
         </Modal>
       ) : null}
