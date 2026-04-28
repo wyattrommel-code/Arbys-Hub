@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getSupabase } from "@/lib/supabase";
 
 const RED = "#C8102E";
@@ -146,6 +146,7 @@ export default function PeoplePage() {
   const [showBulkTrainerModal, setShowBulkTrainerModal] = useState(false);
   const [bulkTrainerIds, setBulkTrainerIds] = useState([]);
   const [savingBulkTrainers, setSavingBulkTrainers] = useState(false);
+  const scrollYRef = useRef(0);
 
   async function reloadAll() {
     setLoading(true);
@@ -539,26 +540,57 @@ export default function PeoplePage() {
     reloadAll();
   }
 
+  function withPreservedScroll(updateFn) {
+    scrollYRef.current = window.scrollY;
+    updateFn();
+    requestAnimationFrame(() => {
+      window.scrollTo({ top: scrollYRef.current, behavior: "auto" });
+    });
+  }
+
   async function handleQuickCertifyCellClick(emp, station, cert) {
     if (cert?.status === "certified") {
-      const ok = window.confirm("Remove certification?");
+      const ok = window.confirm("Remove cert?");
       if (!ok) return;
-      const { error: delErr } = await supabase
-        .from("station_certifications")
-        .delete()
-        .eq("employee_id", emp.id)
-        .eq("station", station);
-      if (delErr) {
-        setError(delErr.message || "Failed to remove certification.");
-        return;
+      const previous = certs;
+      withPreservedScroll(() => {
+        setCerts((prev) => prev.filter((c) => !(c.employee_id === emp.id && c.station === station)));
+      });
+      const [{ data: certDeleteData, error: certDeleteErr }, { data: attemptsDeleteData, error: attemptsDeleteErr }] = await Promise.all([
+        supabase.from("station_certifications").delete().eq("employee_id", emp.id).eq("station", station),
+        supabase.from("certification_attempts").delete().eq("employee_id", emp.id).eq("station", station),
+      ]);
+      console.log("Delete result:", {
+        certDeleteError: certDeleteErr,
+        certDeleteData,
+        attemptsDeleteError: attemptsDeleteErr,
+        attemptsDeleteData,
+      });
+      if (certDeleteErr || attemptsDeleteErr) {
+        withPreservedScroll(() => setCerts(previous));
+        setError(certDeleteErr?.message || attemptsDeleteErr?.message || "Failed to remove certification.");
       }
-      await reloadAll();
       return;
     }
 
     if (cert) return; // In-training stays in normal flow.
 
+    const previous = certs;
     const today = toDateStr(new Date());
+    const optimisticCert = {
+      id: `optimistic-${emp.id}-${station}`,
+      employee_id: emp.id,
+      station,
+      status: "certified",
+      certified_date: today,
+      certified_by: "Wyatt Rommel",
+      trainer_signature: "Quick Certify",
+      attempt_count: 0,
+      training_start_date: today,
+    };
+    withPreservedScroll(() => {
+      setCerts((prev) => [...prev.filter((c) => !(c.employee_id === emp.id && c.station === station)), optimisticCert]);
+    });
     const { data: certRow, error: certErr } = await supabase
       .from("station_certifications")
       .upsert(
@@ -577,6 +609,7 @@ export default function PeoplePage() {
       .select("id")
       .single();
     if (certErr) {
+      withPreservedScroll(() => setCerts(previous));
       setError(certErr.message || "Quick certify failed.");
       return;
     }
@@ -595,10 +628,22 @@ export default function PeoplePage() {
       notes: "Quick certified - no test required",
     });
     if (attemptErr) {
+      withPreservedScroll(() => setCerts(previous));
       setError(attemptErr.message || "Quick certify attempt log failed.");
       return;
     }
-    await reloadAll();
+    withPreservedScroll(() => {
+      setCerts((prev) =>
+        prev.map((c) =>
+          c.employee_id === emp.id && c.station === station
+            ? {
+                ...c,
+                id: certRow?.id || c.id,
+              }
+            : c
+        )
+      );
+    });
   }
 
   async function saveBulkTrainerAssignments() {
