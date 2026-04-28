@@ -642,6 +642,22 @@ export default function ImportPage() {
       const importedDates = [];
 
       for (const row of parsed.rows) {
+        // Hard guard - skip immediately if any critical field is missing
+        if (!row.punchId || !row.firstName || !row.clockIn) {
+          continue;
+        }
+
+        // Parse log_date from raw clock-in text
+        const rawClockIn = row.clockIn;
+        if (!rawClockIn || typeof rawClockIn !== "string" || rawClockIn.trim() === "Currently Clocked In") {
+          continue;
+        }
+        const logDateFromRawClockIn = rawClockIn.trim().split(" ")[0];
+        // Validate log_date is YYYY-MM-DD format
+        if (!logDateFromRawClockIn || !/^\d{4}-\d{2}-\d{2}$/.test(logDateFromRawClockIn)) {
+          continue;
+        }
+
         const firstName = String(row.firstName || "").trim();
         const lastName = String(row.lastName || "").trim();
         const punchId = String(row.punchId || "").trim();
@@ -695,7 +711,7 @@ export default function ImportPage() {
 
         const shiftCost = paidHours * hourlyWage;
         const logDate = toDateStr(clockInDate);
-        if (!logDate) {
+        if (!logDate || !/^\d{4}-\d{2}-\d{2}$/.test(logDate)) {
           skippedNullLogDateCount += 1;
           console.warn("Skipping labor row with null log_date", {
             rowNumber: row.rowNumber,
@@ -727,18 +743,27 @@ export default function ImportPage() {
         importedPunchIds.push(punchId);
       }
 
-      if (upsertRows.length > 0) {
+      const validRows = upsertRows.filter(
+        (r) => r !== null && r.log_date && r.log_date !== "" && /^\d{4}-\d{2}-\d{2}$/.test(r.log_date)
+      );
+
+      if (validRows.length > 0) {
+        console.log("About to upsert", validRows.length, "labor rows");
+        console.log(
+          "Any with null log_date?",
+          validRows.filter((r) => !r.log_date).length
+        );
         const { error: upsertError } = await supabase
           .from("labor_logs")
-          .upsert(upsertRows, { onConflict: "punch_id" });
+          .upsert(validRows, { onConflict: "punch_id" });
         if (upsertError) throw upsertError;
-        const employeeWeekKeys = upsertRows.map((row) => ({
+        const employeeWeekKeys = validRows.map((row) => ({
           employee_name: row.employee_name,
           week_start_date: getWeekStartSunday(row.log_date),
         }));
         await recalcLaborOvertimeForEmployeeWeeks(supabase, employeeWeekKeys);
         try {
-          await recalcEmployeeAttendanceForNames(supabase, upsertRows.map((r) => r.employee_name));
+          await recalcEmployeeAttendanceForNames(supabase, validRows.map((r) => r.employee_name));
         } catch {
           // Keep import success even if attendance cache update fails.
         }
@@ -753,7 +778,7 @@ export default function ImportPage() {
 
       const sortedDates = [...new Set(importedDates)].sort();
       const summary = {
-        importedCount: upsertRows.length,
+        importedCount: validRows.length,
         skippedCurrentlyClockedInCount: currentlyClockedIn.length,
         flaggedOver16Count: over16Errors.length,
         flaggedOver16: over16Errors,
