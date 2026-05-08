@@ -1026,12 +1026,20 @@ function restoreInputFocus(snap) {
   });
 }
 
+function getPutInInputEl(idx, di) {
+  return (
+    document.getElementById(`put-in-${idx}-${di}`) ||
+    document.getElementById(`put_in-${idx}-${di}`) ||
+    document.getElementById(`cooked-${idx}-${di}`)
+  );
+}
+
 function captureSheetStateFromDom(idx, dateStr) {
   ensureSheetState(dateStr);
   const st = sheetState[dateStr];
   DAYPARTS.forEach((dp, di) => {
     const oh = document.getElementById(`oh-${idx}-${di}`);
-    const putInEl = document.getElementById(`put_in-${idx}-${di}`);
+    const putInEl = getPutInInputEl(idx, di);
     const ac = document.getElementById(`actual-${idx}-${di}`);
     if (oh) st.rows[di].onHandStr = oh.value;
     if (putInEl) st.rows[di].putIn = parseInt(putInEl.value, 10) || 0;
@@ -1126,7 +1134,7 @@ function recalcSheet(idx) {
         <td><span class="needs-val ${nc}">${needs}</span></td>
         <td><input class="num-input inv-input" type="text" inputmode="decimal" autocomplete="off" id="oh-${idx}-${di}" value="${onHandValAttr}" placeholder="0" data-sheet="${dateStr}" data-dp="${dp.key}"></td>
         <td><span class="needs-val ${nc}">${Number.isInteger(suggested) ? suggested : suggested.toFixed(1)}</span></td>
-        <td><input class="num-input inv-input put-in-input" type="number" inputmode="numeric" id="put_in-${idx}-${di}" value="${putIn}" min="0" placeholder="0" aria-label="Put in" data-sheet="${dateStr}" data-dp="${dp.key}"></td>
+        <td><input class="num-input inv-input put-in-input" type="number" inputmode="numeric" id="put-in-${idx}-${di}" value="${putIn}" min="0" placeholder="0" aria-label="Put in" data-sheet="${dateStr}" data-dp="${dp.key}"></td>
         <td>${usedHTML}</td>
       `;
     }
@@ -1137,7 +1145,7 @@ function recalcSheet(idx) {
 
   DAYPARTS.forEach((dp, di) => {
     const oh = document.getElementById(`oh-${idx}-${di}`);
-    const putInEl = document.getElementById(`put_in-${idx}-${di}`);
+    const putInEl = getPutInInputEl(idx, di);
     const ac = document.getElementById(`actual-${idx}-${di}`);
     const bind = (el, field) => {
       if (!el) return;
