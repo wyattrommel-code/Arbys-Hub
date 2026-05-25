@@ -1,6 +1,12 @@
 import Link from "next/link";
+import ChecklistWidget from "@/components/checklist/ChecklistWidget";
 
 const navCards = [
+  {
+    href: "/checklist",
+    title: "Checklist",
+    description: "Daily AM/PM task checklist with photo verification.",
+  },
   {
     href: "/import",
     title: "Import",
@@ -48,6 +54,10 @@ const navCards = [
 export default function Home() {
   return (
     <section className="mx-auto flex w-full max-w-4xl flex-1 flex-col px-4 py-6 sm:px-6 sm:py-8">
+      <div className="mb-6">
+        <ChecklistWidget mode="current" showViewAll />
+      </div>
+
       <p className="mb-5 text-sm text-zinc-600 dark:text-zinc-400">
         Choose a section to open.
       </p>
