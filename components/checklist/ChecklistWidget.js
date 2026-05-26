@@ -37,23 +37,44 @@ export default function ChecklistWidget({
 
   const handleComplete = useCallback(
     async (payload) => {
-      setBusyId(payload.task_id);
+      setBusyId(`${payload.shift}-${payload.task_id}`);
       const prev = data;
       if (!fullDay && prev?.rows) {
         setData({
           ...prev,
           rows: prev.rows.map((row) =>
-            row.task.id === payload.task_id
+            row.task.id === payload.task_id && row.completionShift === payload.shift
               ? {
                   ...row,
                   completion: {
                     completed_by_name: "You",
                     completed_at: new Date().toISOString(),
+                    notes: payload.notes || null,
                   },
                 }
               : row
           ),
           completeCount: prev.completeCount + 1,
+        });
+      }
+      if (fullDay && prev?.am && prev?.pm) {
+        const patch = (rows) =>
+          rows.map((row) =>
+            row.task.id === payload.task_id && row.completionShift === payload.shift
+              ? {
+                  ...row,
+                  completion: {
+                    completed_by_name: "You",
+                    completed_at: new Date().toISOString(),
+                    notes: payload.notes || null,
+                  },
+                }
+              : row
+          );
+        setData({
+          ...prev,
+          am: patch(prev.am),
+          pm: patch(prev.pm),
         });
       }
       try {
@@ -77,16 +98,27 @@ export default function ChecklistWidget({
 
   const handleUncomplete = useCallback(
     async (payload) => {
-      setBusyId(payload.task_id);
+      setBusyId(`${payload.shift}-${payload.task_id}`);
       const prev = data;
       if (!fullDay && prev?.rows) {
         setData({
           ...prev,
           rows: prev.rows.map((row) =>
-            row.task.id === payload.task_id ? { ...row, completion: null } : row
+            row.task.id === payload.task_id && row.completionShift === payload.shift
+              ? { ...row, completion: null }
+              : row
           ),
           completeCount: Math.max(0, prev.completeCount - 1),
         });
+      }
+      if (fullDay && prev?.am && prev?.pm) {
+        const patch = (rows) =>
+          rows.map((row) =>
+            row.task.id === payload.task_id && row.completionShift === payload.shift
+              ? { ...row, completion: null }
+              : row
+          );
+        setData({ ...prev, am: patch(prev.am), pm: patch(prev.pm) });
       }
       try {
         const res = await fetch("/api/checklist/complete", {
@@ -108,8 +140,8 @@ export default function ChecklistWidget({
   );
 
   const handlePhoto = useCallback(
-    async ({ file, ...payload }) => {
-      setBusyId(payload.task_id);
+    async ({ file, notes, ...payload }) => {
+      setBusyId(`${payload.shift}-${payload.task_id}`);
       try {
         const compressed = await compressImageFile(file);
         const form = new FormData();
@@ -117,6 +149,7 @@ export default function ChecklistWidget({
         form.append("task_id", payload.task_id);
         form.append("shift", payload.shift);
         form.append("completion_date", payload.completion_date);
+        if (notes) form.append("notes", notes);
         const res = await fetch("/api/checklist/upload", { method: "POST", body: form });
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || "Upload failed");
@@ -129,6 +162,26 @@ export default function ChecklistWidget({
     },
     [load]
   );
+
+  const handleSaveNote = useCallback(
+    async ({ completion_id, notes }) => {
+      try {
+        const res = await fetch("/api/checklist/complete", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ completion_id, notes }),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || "Failed to save note");
+        await load();
+      } catch (err) {
+        setError(err.message);
+      }
+    },
+    [load]
+  );
+
+  const rowBusy = (row) => busyId === `${row.completionShift}-${row.task.id}`;
 
   if (error && !data) {
     return (
@@ -161,7 +214,7 @@ export default function ChecklistWidget({
               {amDone} of {data.am.length} complete
             </p>
           </div>
-          <ul className="rounded-xl border border-zinc-200 bg-white px-4 dark:border-zinc-800 dark:bg-zinc-900">
+          <ul className="max-h-[min(50vh,28rem)] overflow-y-auto overflow-x-hidden rounded-xl border border-zinc-200 bg-white px-4 md:max-h-none md:overflow-visible dark:border-zinc-800 dark:bg-zinc-900">
             {data.am.length === 0 ? (
               <li className="py-4 text-sm text-zinc-500">No AM tasks today.</li>
             ) : (
@@ -173,7 +226,8 @@ export default function ChecklistWidget({
                   onComplete={handleComplete}
                   onUncomplete={handleUncomplete}
                   onPhoto={handlePhoto}
-                  busy={busyId === row.task.id}
+                  onSaveNote={handleSaveNote}
+                  busy={rowBusy(row)}
                 />
               ))
             )}
@@ -188,7 +242,7 @@ export default function ChecklistWidget({
               {pmDone} of {data.pm.length} complete
             </p>
           </div>
-          <ul className="rounded-xl border border-zinc-200 bg-white px-4 dark:border-zinc-800 dark:bg-zinc-900">
+          <ul className="max-h-[min(50vh,28rem)] overflow-y-auto overflow-x-hidden rounded-xl border border-zinc-200 bg-white px-4 md:max-h-none md:overflow-visible dark:border-zinc-800 dark:bg-zinc-900">
             {data.pm.length === 0 ? (
               <li className="py-4 text-sm text-zinc-500">No PM tasks today.</li>
             ) : (
@@ -200,7 +254,8 @@ export default function ChecklistWidget({
                   onComplete={handleComplete}
                   onUncomplete={handleUncomplete}
                   onPhoto={handlePhoto}
-                  busy={busyId === row.task.id}
+                  onSaveNote={handleSaveNote}
+                  busy={rowBusy(row)}
                 />
               ))
             )}
@@ -253,7 +308,8 @@ export default function ChecklistWidget({
               onComplete={handleComplete}
               onUncomplete={handleUncomplete}
               onPhoto={handlePhoto}
-              busy={busyId === row.task.id}
+              onSaveNote={handleSaveNote}
+              busy={rowBusy(row)}
             />
           ))
         )}

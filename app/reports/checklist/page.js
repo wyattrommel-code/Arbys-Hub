@@ -9,6 +9,29 @@ function methodLabel(method) {
   return "Checkbox";
 }
 
+function NotesSnippet({ text }) {
+  const [expanded, setExpanded] = useState(false);
+  const full = text == null ? "" : String(text).trim();
+  if (!full) return <span className="text-zinc-400">—</span>;
+  if (full.length <= 80) {
+    return (
+      <span className="text-zinc-700 dark:text-zinc-300" title={full}>
+        {full}
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className="max-w-[14rem] cursor-pointer text-left text-xs text-zinc-700 underline-offset-2 hover:underline dark:text-zinc-300"
+      title={full}
+      onClick={() => setExpanded((x) => !x)}
+    >
+      {expanded ? full : `${full.slice(0, 80)}…`}
+    </button>
+  );
+}
+
 function ReportsContent() {
   const today = getStoreToday();
   const [start, setStart] = useState(addDaysISO(today, -6));
@@ -50,7 +73,7 @@ function ReportsContent() {
 
   function exportCsv() {
     if (!data?.completions?.length) return;
-    const header = ["Date", "Shift", "Task", "Completed By", "Time", "Method", "Photo URL"];
+    const header = ["Date", "Shift", "Task", "Completed By", "Time", "Method", "Notes", "Photo URL"];
     const rows = data.completions.map((c) => [
       c.completion_date,
       c.shift,
@@ -58,6 +81,7 @@ function ReportsContent() {
       c.completed_by_name || "",
       formatStoreTime(c.completed_at),
       methodLabel(c.verification_method || c.checklist_tasks?.verification_method),
+      (c.notes || "").replace(/\r?\n/g, " "),
       c.photo_url || "",
     ]);
     const csv = [header, ...rows]
@@ -161,19 +185,20 @@ function ReportsContent() {
               <th className="px-3 py-2">Completed By</th>
               <th className="px-3 py-2">Time</th>
               <th className="px-3 py-2">Method</th>
+              <th className="px-3 py-2">Notes</th>
               <th className="px-3 py-2">Photo</th>
             </tr>
           </thead>
           <tbody>
             {!data ? (
               <tr>
-                <td colSpan={7} className="px-3 py-6 text-zinc-500">
+                <td colSpan={8} className="px-3 py-6 text-zinc-500">
                   Loading…
                 </td>
               </tr>
             ) : data.completions.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-3 py-6 text-zinc-500">
+                <td colSpan={8} className="px-3 py-6 text-zinc-500">
                   No completions in this range.
                 </td>
               </tr>
@@ -187,6 +212,9 @@ function ReportsContent() {
                   <td className="px-3 py-2">{formatStoreTime(c.completed_at)}</td>
                   <td className="px-3 py-2">
                     {methodLabel(c.verification_method || c.checklist_tasks?.verification_method)}
+                  </td>
+                  <td className="max-w-[12rem] px-3 py-2 align-top">
+                    <NotesSnippet text={c.notes} />
                   </td>
                   <td className="px-3 py-2">
                     {c.photo_url ? (

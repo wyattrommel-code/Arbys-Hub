@@ -37,6 +37,9 @@ export async function POST(request) {
     const name = employeeDisplayName(employee);
     const now = new Date().toISOString();
 
+    const noteText =
+      typeof body.notes === "string" && body.notes.trim() ? body.notes.trim() : null;
+
     const { data, error } = await supabase
       .from("checklist_completions")
       .insert({
@@ -49,6 +52,7 @@ export async function POST(request) {
         completed_at: now,
         verification_method: task.verification_method,
         photo_url: body.photo_url || null,
+        notes: noteText,
       })
       .select()
       .single();
@@ -63,6 +67,19 @@ export async function POST(request) {
           .eq("shift", shift)
           .eq("store_id", STORE_ID)
           .maybeSingle();
+        if (existing?.id && noteText) {
+          await supabase
+            .from("checklist_completions")
+            .update({ notes: noteText })
+            .eq("id", existing.id)
+            .eq("store_id", STORE_ID);
+          const { data: merged } = await supabase
+            .from("checklist_completions")
+            .select("*")
+            .eq("id", existing.id)
+            .single();
+          return NextResponse.json({ completion: merged || existing, noop: true });
+        }
         return NextResponse.json({ completion: existing, noop: true });
       }
       throw error;
@@ -71,6 +88,38 @@ export async function POST(request) {
     return NextResponse.json({ completion: data });
   } catch (err) {
     return NextResponse.json({ error: err.message || "Failed to complete task" }, { status: 500 });
+  }
+}
+
+export async function PATCH(request) {
+  const employee = await getCurrentEmployee();
+  if (!employee) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  try {
+    const body = await request.json();
+    const { completion_id } = body;
+    if (!completion_id) {
+      return NextResponse.json({ error: "completion_id required" }, { status: 400 });
+    }
+
+    const noteText =
+      typeof body.notes === "string" && body.notes.trim() ? body.notes.trim() : null;
+
+    const supabase = getSupabaseServer();
+    const { data, error } = await supabase
+      .from("checklist_completions")
+      .update({ notes: noteText })
+      .eq("id", completion_id)
+      .eq("store_id", STORE_ID)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return NextResponse.json({ completion: data });
+  } catch (err) {
+    return NextResponse.json({ error: err.message || "Failed to update note" }, { status: 500 });
   }
 }
 

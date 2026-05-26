@@ -17,6 +17,9 @@ export async function POST(request) {
     const taskId = formData.get("task_id");
     const shiftParam = formData.get("shift");
     const completionDate = formData.get("completion_date") || getStoreToday();
+    const notesRaw = formData.get("notes");
+    const noteText =
+      typeof notesRaw === "string" && notesRaw.trim() ? notesRaw.trim() : null;
 
     if (!file || typeof file === "string" || !taskId) {
       return NextResponse.json({ error: "file and task_id required" }, { status: 400 });
@@ -67,6 +70,7 @@ export async function POST(request) {
         completed_at: now,
         verification_method: task.verification_method,
         photo_url: photoUrl,
+        notes: noteText,
       })
       .select()
       .single();
@@ -81,6 +85,23 @@ export async function POST(request) {
           .eq("shift", shift)
           .eq("store_id", STORE_ID)
           .maybeSingle();
+        if (existing?.id && noteText) {
+          await supabase
+            .from("checklist_completions")
+            .update({ notes: noteText })
+            .eq("id", existing.id)
+            .eq("store_id", STORE_ID);
+          const { data: merged } = await supabase
+            .from("checklist_completions")
+            .select("*")
+            .eq("id", existing.id)
+            .single();
+          return NextResponse.json({
+            completion: merged || existing,
+            photo_url: photoUrl,
+            noop: true,
+          });
+        }
         return NextResponse.json({ completion: existing, photo_url: photoUrl, noop: true });
       }
       throw insertErr;
