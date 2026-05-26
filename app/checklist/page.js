@@ -23,7 +23,7 @@ export default async function ChecklistPage() {
           </Link>
         ) : null}
       </div>
-      <ChecklistWidget mode="full" />
+      <ChecklistWidget fullDay />
     </section>
   );
 }

@@ -6,7 +6,8 @@ import { compressImageFile } from "@/lib/image-compress";
 import TaskRow from "./TaskRow";
 
 export default function ChecklistWidget({
-  mode = "current",
+  /** When true, load today’s AM + PM sections (full day). Uses `?view=shifts` on the API. */
+  fullDay = false,
   showViewAll = false,
   showManageLink = false,
   isManager = false,
@@ -18,14 +19,17 @@ export default function ChecklistWidget({
   const load = useCallback(async () => {
     setError("");
     try {
-      const res = await fetch(`/api/checklist/tasks?mode=${mode}`);
+      const qs = new URLSearchParams();
+      if (fullDay) qs.set("view", "shifts");
+      const suffix = qs.toString() ? `?${qs.toString()}` : "";
+      const res = await fetch(`/api/checklist/tasks${suffix}`);
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Failed to load");
       setData(json);
     } catch (err) {
       setError(err.message);
     }
-  }, [mode]);
+  }, [fullDay]);
 
   useEffect(() => {
     load();
@@ -35,7 +39,7 @@ export default function ChecklistWidget({
     async (payload) => {
       setBusyId(payload.task_id);
       const prev = data;
-      if (mode === "current" && prev?.rows) {
+      if (!fullDay && prev?.rows) {
         setData({
           ...prev,
           rows: prev.rows.map((row) =>
@@ -68,14 +72,14 @@ export default function ChecklistWidget({
         setBusyId(null);
       }
     },
-    [data, load, mode]
+    [data, load, fullDay]
   );
 
   const handleUncomplete = useCallback(
     async (payload) => {
       setBusyId(payload.task_id);
       const prev = data;
-      if (mode === "current" && prev?.rows) {
+      if (!fullDay && prev?.rows) {
         setData({
           ...prev,
           rows: prev.rows.map((row) =>
@@ -100,7 +104,7 @@ export default function ChecklistWidget({
         setBusyId(null);
       }
     },
-    [data, load, mode]
+    [data, load, fullDay]
   );
 
   const handlePhoto = useCallback(
@@ -142,16 +146,21 @@ export default function ChecklistWidget({
     );
   }
 
-  if (mode === "full") {
+  if (fullDay && Array.isArray(data.am) && Array.isArray(data.pm)) {
     const amDone = data.am.filter((r) => r.completion).length;
     const pmDone = data.pm.filter((r) => r.completion).length;
     return (
       <div className="space-y-6">
         {error ? <p className="text-sm text-red-600">{error}</p> : null}
         <section>
-          <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">
-            AM ({amDone}/{data.am.length})
-          </h3>
+          <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+            <h3 className="text-base font-semibold text-zinc-900 dark:text-zinc-50">
+              Morning Shift (AM)
+            </h3>
+            <p className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
+              {amDone} of {data.am.length} complete
+            </p>
+          </div>
           <ul className="rounded-xl border border-zinc-200 bg-white px-4 dark:border-zinc-800 dark:bg-zinc-900">
             {data.am.length === 0 ? (
               <li className="py-4 text-sm text-zinc-500">No AM tasks today.</li>
@@ -171,9 +180,14 @@ export default function ChecklistWidget({
           </ul>
         </section>
         <section>
-          <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">
-            PM ({pmDone}/{data.pm.length})
-          </h3>
+          <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+            <h3 className="text-base font-semibold text-zinc-900 dark:text-zinc-50">
+              Evening Shift (PM)
+            </h3>
+            <p className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
+              {pmDone} of {data.pm.length} complete
+            </p>
+          </div>
           <ul className="rounded-xl border border-zinc-200 bg-white px-4 dark:border-zinc-800 dark:bg-zinc-900">
             {data.pm.length === 0 ? (
               <li className="py-4 text-sm text-zinc-500">No PM tasks today.</li>
@@ -192,6 +206,14 @@ export default function ChecklistWidget({
             )}
           </ul>
         </section>
+      </div>
+    );
+  }
+
+  if (fullDay && data && (!Array.isArray(data.am) || !Array.isArray(data.pm))) {
+    return (
+      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
+        Full-day checklist data could not be loaded. Refresh the page or try again in a moment.
       </div>
     );
   }

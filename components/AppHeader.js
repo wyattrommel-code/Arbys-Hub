@@ -11,6 +11,7 @@ const PAGE_TITLES = {
   "/waste": "Waste Tracker",
   "/inventory": "Inventory",
   "/dashboard": "Dashboard",
+  "/reports": "Reports",
   "/schedule": "Schedule & Attendance",
   "/deployment": "Deployment Chart",
   "/people": "People",
@@ -45,7 +46,7 @@ export default function AppHeader() {
         <div className="flex min-w-[72px] shrink-0 items-center justify-end gap-1 sm:gap-2">
           {pathname !== "/login" ? (
             <Link
-              href="/reports/checklist"
+              href="/reports"
               className="hidden rounded-lg border border-white/25 bg-white/10 px-2 py-1.5 text-xs font-semibold hover:bg-white/20 sm:inline-flex"
             >
               Reports

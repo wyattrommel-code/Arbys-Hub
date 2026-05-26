@@ -1819,6 +1819,19 @@ export default function DashboardPage() {
             ))}
           </div>
 
+          <Link
+            href="/reports/checklist"
+            className="group block rounded-xl border border-[#C8102E]/20 bg-white p-3 shadow-sm transition hover:border-[#C8102E] hover:shadow-md active:translate-y-px dark:bg-zinc-950"
+          >
+            <p className="text-sm font-semibold text-[#C8102E]">Checklist History</p>
+            <p className="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">
+              View checklist completions, filters, and CSV export.
+            </p>
+            <p className="mt-2 text-xs font-medium text-zinc-700 group-hover:text-[#C8102E] dark:text-zinc-300">
+              Open report →
+            </p>
+          </Link>
+
           <div className="flex justify-end">
             <button type="button" onClick={printCurrent} className="rounded-lg bg-zinc-900 px-3 py-2 text-xs font-bold text-white dark:bg-zinc-100 dark:text-zinc-900">
               Print Report

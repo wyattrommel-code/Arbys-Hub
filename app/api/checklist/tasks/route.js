@@ -18,6 +18,9 @@ export async function GET(request) {
 
   const { searchParams } = new URL(request.url);
   const mode = searchParams.get("mode") || "current";
+  /** Full-day AM+PM view (preferred); `mode=full` kept for backward compatibility. */
+  const view = searchParams.get("view");
+  const fullDay = view === "shifts" || mode === "full";
   const date = searchParams.get("date") || getStoreToday();
   const shift = searchParams.get("shift") || getCurrentShift();
 
@@ -37,7 +40,7 @@ export async function GET(request) {
       return NextResponse.json({ tasks: data || [] });
     }
 
-    if (mode === "full") {
+    if (fullDay) {
       const tasks = await fetchTasksForDay(supabase, { date });
       const completions = await fetchCompletionsForDay(supabase, { date });
       const grouped = groupTasksByShift(tasks, completions, date);

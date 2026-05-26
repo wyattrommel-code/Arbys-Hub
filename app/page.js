@@ -55,7 +55,7 @@ export default function Home() {
   return (
     <section className="mx-auto flex w-full max-w-4xl flex-1 flex-col px-4 py-6 sm:px-6 sm:py-8">
       <div className="mb-6">
-        <ChecklistWidget mode="current" showViewAll />
+        <ChecklistWidget showViewAll />
       </div>
 
       <p className="mb-5 text-sm text-zinc-600 dark:text-zinc-400">
