@@ -1,12 +1,8 @@
 import { NextResponse } from "next/server";
 import { getCurrentEmployee, isManager } from "@/lib/auth";
 import { STORE_ID } from "@/lib/constants";
-import {
-  fetchCompletionsForDay,
-  fetchTasksForDay,
-  groupTasksByShift,
-  mergeTasksWithCompletions,
-} from "@/lib/checklist";
+import { fetchCompletionsForDay, fetchTasksForDay } from "@/lib/checklist";
+import { groupTasksByRole } from "@/lib/checklist-roles";
 import { getCurrentShift, getStoreToday } from "@/lib/store-time";
 import { getSupabaseServer } from "@/lib/supabase-server";
 
@@ -20,7 +16,7 @@ export async function GET(request) {
   const mode = searchParams.get("mode") || "current";
   /** Full-day AM+PM view (preferred); `mode=full` kept for backward compatibility. */
   const view = searchParams.get("view");
-  const fullDay = view === "shifts" || mode === "full";
+  const fullDay = view === "roles-full" || view === "shifts" || mode === "full";
   const date = searchParams.get("date") || getStoreToday();
   const shift = searchParams.get("shift") || getCurrentShift();
 
@@ -40,24 +36,29 @@ export async function GET(request) {
       return NextResponse.json({ tasks: data || [] });
     }
 
-    if (fullDay) {
-      const tasks = await fetchTasksForDay(supabase, { date });
-      const completions = await fetchCompletionsForDay(supabase, { date });
-      const grouped = groupTasksByShift(tasks, completions, date);
-      return NextResponse.json({ date, shift, ...grouped });
+    {
+      const tasks = await fetchTasksForDay(supabase, {
+        date,
+        shift: fullDay ? null : shift,
+      });
+      const completions = await fetchCompletionsForDay(supabase, {
+        date,
+        shift: fullDay ? null : shift,
+      });
+      const { sections } = groupTasksByRole(tasks, completions, {
+        currentShift: shift,
+        fullDay,
+      });
+      const allRows = sections.flatMap((s) => s.rows);
+      return NextResponse.json({
+        date,
+        shift,
+        sections,
+        completeCount: allRows.filter((r) => r.completion).length,
+        totalCount: allRows.length,
+      });
     }
 
-    const tasks = await fetchTasksForDay(supabase, { date, shift });
-    const completions = await fetchCompletionsForDay(supabase, { date, shift });
-    const rows = mergeTasksWithCompletions(tasks, completions, shift);
-
-    return NextResponse.json({
-      date,
-      shift,
-      rows,
-      completeCount: rows.filter((r) => r.completion).length,
-      totalCount: rows.length,
-    });
   } catch (err) {
     return NextResponse.json({ error: err.message || "Failed to load checklist" }, { status: 500 });
   }
@@ -89,6 +90,7 @@ export async function POST(request) {
         day_of_week: dayOfWeek,
         shift: body.shift || "BOTH",
         verification_method: body.verification_method || "checkbox",
+        role: body.role || "any",
         display_order: Number(body.display_order) || 0,
         is_active: body.is_active !== false,
       })
@@ -129,6 +131,7 @@ export async function PATCH(request) {
     }
     if ("shift" in updates) payload.shift = updates.shift;
     if ("verification_method" in updates) payload.verification_method = updates.verification_method;
+    if ("role" in updates) payload.role = updates.role || "any";
     if ("display_order" in updates) payload.display_order = Number(updates.display_order) || 0;
     if ("is_active" in updates) payload.is_active = Boolean(updates.is_active);
 

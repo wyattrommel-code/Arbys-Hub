@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
+  CHECKLIST_ROLE_OPTIONS,
   DAY_OF_WEEK_OPTIONS,
   SHIFT_OPTIONS,
   VERIFICATION_METHOD_OPTIONS,
@@ -13,6 +14,7 @@ function emptyTask() {
     description: "",
     day_of_week: "",
     shift: "BOTH",
+    role: "any",
     verification_method: "checkbox",
     display_order: 0,
     is_active: true,
@@ -79,6 +81,7 @@ export default function ManageTasksPanel() {
               <th className="px-2 py-2">Description</th>
               <th className="px-2 py-2">Day</th>
               <th className="px-2 py-2">Shift</th>
+              <th className="px-2 py-2">Role</th>
               <th className="px-2 py-2">Method</th>
               <th className="px-2 py-2">Active</th>
               <th className="px-2 py-2" />
@@ -133,6 +136,19 @@ export default function ManageTasksPanel() {
                     {SHIFT_OPTIONS.map((s) => (
                       <option key={s} value={s}>
                         {s}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+                <td className="px-2 py-2">
+                  <select
+                    className="rounded border px-1 py-1 dark:border-zinc-700 dark:bg-zinc-950"
+                    value={task.role || "any"}
+                    onChange={(e) => updateLocal(task.id, "role", e.target.value)}
+                  >
+                    {CHECKLIST_ROLE_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
                       </option>
                     ))}
                   </select>
@@ -207,6 +223,17 @@ export default function ManageTasksPanel() {
             {SHIFT_OPTIONS.map((s) => (
               <option key={s} value={s}>
                 {s}
+              </option>
+            ))}
+          </select>
+          <select
+            className="rounded border px-3 py-2 dark:border-zinc-700 dark:bg-zinc-950"
+            value={draft.role}
+            onChange={(e) => setDraft((d) => ({ ...d, role: e.target.value }))}
+          >
+            {CHECKLIST_ROLE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
               </option>
             ))}
           </select>

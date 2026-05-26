@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { isPhotoMethod } from "@/lib/checklist";
+import { hasCompletionImage, isCaptureMethod, isSignatureMethod } from "@/lib/checklist";
 import { formatStoreTime } from "@/lib/store-time";
 
 function CheckboxIcon({ checked }) {
@@ -34,6 +34,35 @@ function CameraIcon({ done }) {
   );
 }
 
+function SignatureIcon({ done }) {
+  return (
+    <span
+      className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border-2 ${
+        done
+          ? "border-green-600 bg-green-50 text-[#C8102E] dark:bg-green-950"
+          : "border-zinc-300 bg-white dark:border-zinc-600 dark:bg-zinc-900"
+      }`}
+      aria-hidden="true"
+    >
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="h-5 w-5"
+      >
+        <path d="M12 19l7-7 3 3-7 7-3-3z" />
+        <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" />
+        <path d="M2 2l7.586 7.586" />
+        <circle cx="11" cy="11" r="2" />
+      </svg>
+    </span>
+  );
+}
+
 export default function TaskRow({
   row,
   completionDate,
@@ -46,11 +75,13 @@ export default function TaskRow({
   const fileRef = useRef(null);
   const { task, completion, completionShift } = row;
   const done = Boolean(completion);
-  const photoTask = isPhotoMethod(task.verification_method);
+  const captureTask = isCaptureMethod(task.verification_method);
+  const signatureTask = isSignatureMethod(task.verification_method);
 
   const [noteOpen, setNoteOpen] = useState(false);
   const [draftNote, setDraftNote] = useState("");
   const [savingNote, setSavingNote] = useState(false);
+  const [imageOpen, setImageOpen] = useState(false);
 
   useEffect(() => {
     if (noteOpen && done) {
@@ -81,12 +112,14 @@ export default function TaskRow({
     setDraftNote("");
   }
 
-  async function handlePhotoSelected(e) {
+  async function handleCaptureSelected(e) {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file || busy || savingNote) return;
     if (done) {
-      const ok = window.confirm("Mark as incomplete and retake photo?");
+      const ok = window.confirm(
+        signatureTask ? "Mark as incomplete and upload a new signature?" : "Mark as incomplete and retake photo?"
+      );
       if (!ok) return;
       await onUncomplete({
         completion_id: completion.id,
@@ -117,20 +150,25 @@ export default function TaskRow({
   }
 
   const notePreview = completion?.notes ? String(completion.notes).trim() : "";
+  const showImage = done && hasCompletionImage(completion);
 
   return (
     <li className="border-b border-zinc-100 py-3 last:border-0 dark:border-zinc-800">
       <div className="flex items-start gap-3">
-        {photoTask ? (
+        {captureTask ? (
           <>
             <button
               type="button"
               disabled={busy || savingNote}
               onClick={() => fileRef.current?.click()}
               className="shrink-0 disabled:opacity-50"
-              aria-label={done ? `Photo completed for ${task.title}` : `Take photo for ${task.title}`}
+              aria-label={
+                done
+                  ? `${signatureTask ? "Signature" : "Photo"} completed for ${task.title}`
+                  : `${signatureTask ? "Upload signature" : "Take photo"} for ${task.title}`
+              }
             >
-              <CameraIcon done={done} />
+              {signatureTask ? <SignatureIcon done={done} /> : <CameraIcon done={done} />}
             </button>
             <input
               ref={fileRef}
@@ -138,7 +176,7 @@ export default function TaskRow({
               accept="image/*"
               capture="environment"
               className="hidden"
-              onChange={handlePhotoSelected}
+              onChange={handleCaptureSelected}
             />
           </>
         ) : (
@@ -172,6 +210,19 @@ export default function TaskRow({
               ✓ {completion.completed_by_name} at {formatStoreTime(completion.completed_at)}
             </p>
           ) : null}
+          {showImage ? (
+            <button
+              type="button"
+              onClick={() => setImageOpen(true)}
+              className="mt-2 block"
+            >
+              <img
+                src={completion.photo_url}
+                alt={signatureTask ? "Signature" : "Completion photo"}
+                className="h-14 w-14 rounded-lg border border-zinc-200 object-cover dark:border-zinc-700"
+              />
+            </button>
+          ) : null}
           {done && notePreview ? (
             <p className="mt-1 whitespace-pre-wrap text-xs italic text-zinc-600 dark:text-zinc-400">
               &ldquo;{notePreview}&rdquo;
@@ -188,7 +239,9 @@ export default function TaskRow({
                 className="w-full resize-y rounded border border-zinc-200 bg-white px-2 py-1.5 text-sm dark:border-zinc-600 dark:bg-zinc-950"
               />
               {!done ? (
-                <p className="text-xs text-zinc-500">Saved when you complete this task (checkbox or photo).</p>
+                <p className="text-xs text-zinc-500">
+                  Saved when you complete this task (checkbox, photo, or signature).
+                </p>
               ) : (
                 <div className="flex flex-wrap items-center gap-2">
                   <button
@@ -205,6 +258,21 @@ export default function TaskRow({
           ) : null}
         </div>
       </div>
+
+      {imageOpen && completion?.photo_url ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setImageOpen(false)}
+          role="dialog"
+          aria-modal="true"
+        >
+          <img
+            src={completion.photo_url}
+            alt={signatureTask ? "Signature" : "Completion photo"}
+            className="max-h-full max-w-full rounded-lg"
+          />
+        </div>
+      ) : null}
     </li>
   );
 }

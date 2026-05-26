@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { getCurrentEmployee } from "@/lib/auth";
 import { STORE_ID } from "@/lib/constants";
 import { fetchCompletionsForDay, fetchTasksForDay } from "@/lib/checklist";
+import { normalizeTaskRole, roleDisplayName } from "@/lib/checklist-roles";
+import { CHECKLIST_ROLE_ORDER } from "@/lib/constants";
 import { addDaysISO, getStoreDayOfWeek, getStoreToday } from "@/lib/store-time";
 import { getSupabaseServer } from "@/lib/supabase-server";
 
@@ -33,13 +35,14 @@ export async function GET(request) {
   const employeeFilter = searchParams.get("employee_id") || "";
   const taskFilter = searchParams.get("task_id") || "";
   const shiftFilter = searchParams.get("shift") || "";
+  const roleFilter = searchParams.get("role") || "";
 
   try {
     const supabase = getSupabaseServer();
 
     let query = supabase
       .from("checklist_completions")
-      .select("*, checklist_tasks(title, verification_method)")
+      .select("*, checklist_tasks(title, verification_method, role)")
       .eq("store_id", STORE_ID)
       .gte("completion_date", start)
       .lte("completion_date", end)
@@ -50,8 +53,15 @@ export async function GET(request) {
     if (taskFilter) query = query.eq("task_id", taskFilter);
     if (shiftFilter) query = query.eq("shift", shiftFilter);
 
-    const { data: completions, error } = await query;
+    const { data: rawCompletions, error } = await query;
     if (error) throw error;
+
+    let completions = rawCompletions || [];
+    if (roleFilter) {
+      completions = completions.filter(
+        (c) => normalizeTaskRole(c.checklist_tasks?.role) === roleFilter
+      );
+    }
 
     const { data: allTasks, error: tasksErr } = await supabase
       .from("checklist_tasks")
@@ -104,7 +114,11 @@ export async function GET(request) {
       end,
       completions: completions || [],
       employees: employees || [],
-      tasks: (allTasks || []).map((t) => ({ id: t.id, title: t.title })),
+      tasks: (allTasks || []).map((t) => ({ id: t.id, title: t.title, role: t.role })),
+      roles: CHECKLIST_ROLE_ORDER.map((role) => ({
+        value: role,
+        label: roleDisplayName(role),
+      })),
       summary: {
         totalCompletions: (completions || []).length,
         perEmployee,

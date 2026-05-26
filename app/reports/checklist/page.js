@@ -1,13 +1,8 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { roleDisplayName, verificationMethodLabel } from "@/lib/checklist-roles";
 import { addDaysISO, formatStoreTime, getStoreToday } from "@/lib/store-time";
-
-function methodLabel(method) {
-  if (method === "photo_ai") return "Photo+AI";
-  if (method === "photo") return "Photo";
-  return "Checkbox";
-}
 
 function NotesSnippet({ text }) {
   const [expanded, setExpanded] = useState(false);
@@ -39,6 +34,7 @@ function ReportsContent() {
   const [employeeId, setEmployeeId] = useState("");
   const [taskId, setTaskId] = useState("");
   const [shift, setShift] = useState("");
+  const [role, setRole] = useState("");
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [lightbox, setLightbox] = useState(null);
@@ -49,6 +45,7 @@ function ReportsContent() {
     if (employeeId) params.set("employee_id", employeeId);
     if (taskId) params.set("task_id", taskId);
     if (shift) params.set("shift", shift);
+    if (role) params.set("role", role);
     try {
       const res = await fetch(`/api/checklist/reports?${params}`);
       const json = await res.json();
@@ -57,7 +54,7 @@ function ReportsContent() {
     } catch (err) {
       setError(err.message);
     }
-  }, [start, end, employeeId, taskId, shift]);
+  }, [start, end, employeeId, taskId, shift, role]);
 
   useEffect(() => {
     load();
@@ -73,14 +70,25 @@ function ReportsContent() {
 
   function exportCsv() {
     if (!data?.completions?.length) return;
-    const header = ["Date", "Shift", "Task", "Completed By", "Time", "Method", "Notes", "Photo URL"];
+    const header = [
+      "Date",
+      "Shift",
+      "Role",
+      "Task",
+      "Completed By",
+      "Time",
+      "Method",
+      "Notes",
+      "Photo URL",
+    ];
     const rows = data.completions.map((c) => [
       c.completion_date,
       c.shift,
+      roleDisplayName(c.checklist_tasks?.role),
       c.checklist_tasks?.title || "",
       c.completed_by_name || "",
       formatStoreTime(c.completed_at),
-      methodLabel(c.verification_method || c.checklist_tasks?.verification_method),
+      verificationMethodLabel(c.verification_method || c.checklist_tasks?.verification_method),
       (c.notes || "").replace(/\r?\n/g, " "),
       c.photo_url || "",
     ]);
@@ -162,6 +170,21 @@ function ReportsContent() {
             <option value="PM">PM</option>
           </select>
         </label>
+        <label className="text-sm">
+          <span className="mb-1 block text-xs text-zinc-500">Role</span>
+          <select
+            value={role}
+            onChange={(e) => setRole(e.target.value)}
+            className="rounded border px-2 py-1 dark:border-zinc-700 dark:bg-zinc-950"
+          >
+            <option value="">All</option>
+            {(data?.roles || []).map((r) => (
+              <option key={r.value} value={r.value}>
+                {r.label}
+              </option>
+            ))}
+          </select>
+        </label>
         <div className="flex items-end">
           <button
             type="button"
@@ -181,6 +204,7 @@ function ReportsContent() {
             <tr>
               <th className="px-3 py-2">Date</th>
               <th className="px-3 py-2">Shift</th>
+              <th className="px-3 py-2">Role</th>
               <th className="px-3 py-2">Task</th>
               <th className="px-3 py-2">Completed By</th>
               <th className="px-3 py-2">Time</th>
@@ -192,13 +216,13 @@ function ReportsContent() {
           <tbody>
             {!data ? (
               <tr>
-                <td colSpan={8} className="px-3 py-6 text-zinc-500">
+                <td colSpan={9} className="px-3 py-6 text-zinc-500">
                   Loading…
                 </td>
               </tr>
             ) : data.completions.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-3 py-6 text-zinc-500">
+                <td colSpan={9} className="px-3 py-6 text-zinc-500">
                   No completions in this range.
                 </td>
               </tr>
@@ -207,11 +231,14 @@ function ReportsContent() {
                 <tr key={c.id} className="border-b border-zinc-50 dark:border-zinc-800">
                   <td className="px-3 py-2">{c.completion_date}</td>
                   <td className="px-3 py-2">{c.shift}</td>
+                  <td className="px-3 py-2">{roleDisplayName(c.checklist_tasks?.role)}</td>
                   <td className="px-3 py-2">{c.checklist_tasks?.title || "—"}</td>
                   <td className="px-3 py-2">{c.completed_by_name}</td>
                   <td className="px-3 py-2">{formatStoreTime(c.completed_at)}</td>
                   <td className="px-3 py-2">
-                    {methodLabel(c.verification_method || c.checklist_tasks?.verification_method)}
+                    {verificationMethodLabel(
+                      c.verification_method || c.checklist_tasks?.verification_method
+                    )}
                   </td>
                   <td className="max-w-[12rem] px-3 py-2 align-top">
                     <NotesSnippet text={c.notes} />

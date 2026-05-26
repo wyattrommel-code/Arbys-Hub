@@ -3,10 +3,26 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { compressImageFile } from "@/lib/image-compress";
-import TaskRow from "./TaskRow";
+import ChecklistRoleSections from "./ChecklistRoleSections";
+
+function patchSections(sections, payload, completionPatch) {
+  return sections.map((section) => ({
+    ...section,
+    rows: section.rows.map((row) => {
+      if (row.task.id !== payload.task_id || row.completionShift !== payload.shift) return row;
+      const completion = completionPatch === null ? null : { ...row.completion, ...completionPatch };
+      return { ...row, completion };
+    }),
+    completeCount: 0,
+    totalCount: section.rows.length,
+  })).map((section) => ({
+    ...section,
+    completeCount: section.rows.filter((r) => r.completion).length,
+  }));
+}
 
 export default function ChecklistWidget({
-  /** When true, load today’s AM + PM sections (full day). Uses `?view=shifts` on the API. */
+  /** Full daily view: all roles for today. */
   fullDay = false,
   showViewAll = false,
   showManageLink = false,
@@ -20,9 +36,8 @@ export default function ChecklistWidget({
     setError("");
     try {
       const qs = new URLSearchParams();
-      if (fullDay) qs.set("view", "shifts");
-      const suffix = qs.toString() ? `?${qs.toString()}` : "";
-      const res = await fetch(`/api/checklist/tasks${suffix}`);
+      qs.set("view", fullDay ? "roles-full" : "roles");
+      const res = await fetch(`/api/checklist/tasks?${qs.toString()}`);
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Failed to load");
       setData(json);
@@ -39,42 +54,14 @@ export default function ChecklistWidget({
     async (payload) => {
       setBusyId(`${payload.shift}-${payload.task_id}`);
       const prev = data;
-      if (!fullDay && prev?.rows) {
+      if (prev?.sections) {
         setData({
           ...prev,
-          rows: prev.rows.map((row) =>
-            row.task.id === payload.task_id && row.completionShift === payload.shift
-              ? {
-                  ...row,
-                  completion: {
-                    completed_by_name: "You",
-                    completed_at: new Date().toISOString(),
-                    notes: payload.notes || null,
-                  },
-                }
-              : row
-          ),
-          completeCount: prev.completeCount + 1,
-        });
-      }
-      if (fullDay && prev?.am && prev?.pm) {
-        const patch = (rows) =>
-          rows.map((row) =>
-            row.task.id === payload.task_id && row.completionShift === payload.shift
-              ? {
-                  ...row,
-                  completion: {
-                    completed_by_name: "You",
-                    completed_at: new Date().toISOString(),
-                    notes: payload.notes || null,
-                  },
-                }
-              : row
-          );
-        setData({
-          ...prev,
-          am: patch(prev.am),
-          pm: patch(prev.pm),
+          sections: patchSections(prev.sections, payload, {
+            completed_by_name: "You",
+            completed_at: new Date().toISOString(),
+            notes: payload.notes || null,
+          }),
         });
       }
       try {
@@ -93,32 +80,18 @@ export default function ChecklistWidget({
         setBusyId(null);
       }
     },
-    [data, load, fullDay]
+    [data, load]
   );
 
   const handleUncomplete = useCallback(
     async (payload) => {
       setBusyId(`${payload.shift}-${payload.task_id}`);
       const prev = data;
-      if (!fullDay && prev?.rows) {
+      if (prev?.sections) {
         setData({
           ...prev,
-          rows: prev.rows.map((row) =>
-            row.task.id === payload.task_id && row.completionShift === payload.shift
-              ? { ...row, completion: null }
-              : row
-          ),
-          completeCount: Math.max(0, prev.completeCount - 1),
+          sections: patchSections(prev.sections, payload, null),
         });
-      }
-      if (fullDay && prev?.am && prev?.pm) {
-        const patch = (rows) =>
-          rows.map((row) =>
-            row.task.id === payload.task_id && row.completionShift === payload.shift
-              ? { ...row, completion: null }
-              : row
-          );
-        setData({ ...prev, am: patch(prev.am), pm: patch(prev.pm) });
       }
       try {
         const res = await fetch("/api/checklist/complete", {
@@ -136,7 +109,7 @@ export default function ChecklistWidget({
         setBusyId(null);
       }
     },
-    [data, load, fullDay]
+    [data, load]
   );
 
   const handlePhoto = useCallback(
@@ -199,76 +172,22 @@ export default function ChecklistWidget({
     );
   }
 
-  if (fullDay && Array.isArray(data.am) && Array.isArray(data.pm)) {
-    const amDone = data.am.filter((r) => r.completion).length;
-    const pmDone = data.pm.filter((r) => r.completion).length;
-    return (
-      <div className="space-y-6">
-        {error ? <p className="text-sm text-red-600">{error}</p> : null}
-        <section>
-          <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
-            <h3 className="text-base font-semibold text-zinc-900 dark:text-zinc-50">
-              Morning Shift (AM)
-            </h3>
-            <p className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
-              {amDone} of {data.am.length} complete
-            </p>
-          </div>
-          <ul className="max-h-[min(50vh,28rem)] overflow-y-auto overflow-x-hidden rounded-xl border border-zinc-200 bg-white px-4 md:max-h-none md:overflow-visible dark:border-zinc-800 dark:bg-zinc-900">
-            {data.am.length === 0 ? (
-              <li className="py-4 text-sm text-zinc-500">No AM tasks today.</li>
-            ) : (
-              data.am.map((row) => (
-                <TaskRow
-                  key={`am-${row.task.id}`}
-                  row={row}
-                  completionDate={data.date}
-                  onComplete={handleComplete}
-                  onUncomplete={handleUncomplete}
-                  onPhoto={handlePhoto}
-                  onSaveNote={handleSaveNote}
-                  busy={rowBusy(row)}
-                />
-              ))
-            )}
-          </ul>
-        </section>
-        <section>
-          <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
-            <h3 className="text-base font-semibold text-zinc-900 dark:text-zinc-50">
-              Evening Shift (PM)
-            </h3>
-            <p className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
-              {pmDone} of {data.pm.length} complete
-            </p>
-          </div>
-          <ul className="max-h-[min(50vh,28rem)] overflow-y-auto overflow-x-hidden rounded-xl border border-zinc-200 bg-white px-4 md:max-h-none md:overflow-visible dark:border-zinc-800 dark:bg-zinc-900">
-            {data.pm.length === 0 ? (
-              <li className="py-4 text-sm text-zinc-500">No PM tasks today.</li>
-            ) : (
-              data.pm.map((row) => (
-                <TaskRow
-                  key={`pm-${row.task.id}`}
-                  row={row}
-                  completionDate={data.date}
-                  onComplete={handleComplete}
-                  onUncomplete={handleUncomplete}
-                  onPhoto={handlePhoto}
-                  onSaveNote={handleSaveNote}
-                  busy={rowBusy(row)}
-                />
-              ))
-            )}
-          </ul>
-        </section>
-      </div>
-    );
-  }
+  const sections = data.sections || [];
 
-  if (fullDay && data && (!Array.isArray(data.am) || !Array.isArray(data.pm))) {
+  if (fullDay) {
     return (
-      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
-        Full-day checklist data could not be loaded. Refresh the page or try again in a moment.
+      <div className="space-y-3">
+        {error ? <p className="text-sm text-red-600">{error}</p> : null}
+        <ChecklistRoleSections
+          sections={sections}
+          completionDate={data.date}
+          onComplete={handleComplete}
+          onUncomplete={handleUncomplete}
+          onPhoto={handlePhoto}
+          onSaveNote={handleSaveNote}
+          rowBusy={rowBusy}
+          scrollableLists
+        />
       </div>
     );
   }
@@ -296,24 +215,17 @@ export default function ChecklistWidget({
         </div>
       </div>
       {error ? <p className="px-4 pt-2 text-sm text-red-600">{error}</p> : null}
-      <ul className="px-4">
-        {data.rows.length === 0 ? (
-          <li className="py-4 text-sm text-zinc-500">No tasks for this shift.</li>
-        ) : (
-          data.rows.map((row) => (
-            <TaskRow
-              key={row.task.id}
-              row={row}
-              completionDate={data.date}
-              onComplete={handleComplete}
-              onUncomplete={handleUncomplete}
-              onPhoto={handlePhoto}
-              onSaveNote={handleSaveNote}
-              busy={rowBusy(row)}
-            />
-          ))
-        )}
-      </ul>
+      <div className="p-3">
+        <ChecklistRoleSections
+          sections={sections}
+          completionDate={data.date}
+          onComplete={handleComplete}
+          onUncomplete={handleUncomplete}
+          onPhoto={handlePhoto}
+          onSaveNote={handleSaveNote}
+          rowBusy={rowBusy}
+        />
+      </div>
     </section>
   );
 }
