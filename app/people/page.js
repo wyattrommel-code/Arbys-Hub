@@ -412,6 +412,23 @@ export default function PeoplePage() {
     setShowAddEmployee(true);
   }
 
+  function handleRosterEdit(emp) {
+    setMenuOpenId(null);
+    const record = employeesById.get(emp.id) || emp;
+    openEmployeeEdit(record);
+  }
+
+  function handleRosterLifecycle(emp, status) {
+    setMenuOpenId(null);
+    setEmployeeLifecycle(emp.id, status);
+  }
+
+  function handleRosterDelete(emp) {
+    setMenuOpenId(null);
+    const record = employeesById.get(emp.id) || emp;
+    deleteEmployeeRecord(record);
+  }
+
   async function setEmployeeLifecycle(empId, status) {
     setError("");
     const is_active = status === "active";
@@ -1100,7 +1117,7 @@ export default function PeoplePage() {
             </div>
           </div>
 
-          <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+          <div className="rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
             <RosterTable
               rows={rosterRows}
               sortKey={sortKey}
@@ -1114,11 +1131,11 @@ export default function PeoplePage() {
               onOpenDetail={(emp) => {
                 setDetailEmployeeId(emp.id);
               }}
-              onEdit={openEmployeeEdit}
-              onDeactivate={(emp) => setEmployeeLifecycle(emp.id, "inactive")}
-              onTerminate={(emp) => setEmployeeLifecycle(emp.id, "terminated")}
-              onReactivate={(emp) => setEmployeeLifecycle(emp.id, "active")}
-              onDelete={deleteEmployeeRecord}
+              onEdit={handleRosterEdit}
+              onDeactivate={(emp) => handleRosterLifecycle(emp, "inactive")}
+              onTerminate={(emp) => handleRosterLifecycle(emp, "terminated")}
+              onReactivate={(emp) => handleRosterLifecycle(emp, "active")}
+              onDelete={handleRosterDelete}
             />
           </div>
         </article>

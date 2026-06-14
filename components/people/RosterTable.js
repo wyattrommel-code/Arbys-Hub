@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { MoreVertical } from "lucide-react";
 
 const HUB_ROLE_LABELS = {
@@ -57,31 +58,152 @@ function StationChips({ stations }) {
   );
 }
 
-function MenuAction({ onClick, children, className = "" }) {
+function MenuAction({ onAction, children, className = "" }) {
   return (
-    <button type="button" className={className} onMouseDown={(e) => e.preventDefault()} onClick={onClick}>
+    <button
+      type="button"
+      className={className}
+      onPointerDown={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onAction();
+      }}
+    >
       {children}
     </button>
   );
 }
 
 function ActionsMenu({ emp, statusFilter, open, onToggle, onClose, onEdit, onDeactivate, onTerminate, onReactivate, onDelete }) {
-  const ref = useRef(null);
+  const rootRef = useRef(null);
+  const buttonRef = useRef(null);
+  const menuRef = useRef(null);
+  const [menuStyle, setMenuStyle] = useState(null);
+
+  useEffect(() => {
+    if (!open || !buttonRef.current) {
+      setMenuStyle(null);
+      return;
+    }
+    function positionMenu() {
+      const rect = buttonRef.current.getBoundingClientRect();
+      setMenuStyle({
+        position: "fixed",
+        top: rect.bottom + 4,
+        left: Math.max(8, rect.right - 160),
+        zIndex: 60,
+        minWidth: "10rem",
+      });
+    }
+    positionMenu();
+    window.addEventListener("scroll", positionMenu, true);
+    window.addEventListener("resize", positionMenu);
+    return () => {
+      window.removeEventListener("scroll", positionMenu, true);
+      window.removeEventListener("resize", positionMenu);
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
-    function handleClick(e) {
-      if (ref.current && !ref.current.contains(e.target)) onClose();
+    function handlePointerDown(e) {
+      const target = e.target;
+      if (rootRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      onClose();
     }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
   }, [open, onClose]);
 
   const category = statusFilter === "all" ? (emp._rosterCategory || "active") : statusFilter;
 
+  const menu = open && menuStyle ? (
+    <div
+      ref={menuRef}
+      style={menuStyle}
+      className="rounded-lg border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+      role="menu"
+    >
+      <MenuAction
+        className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800"
+        onAction={() => {
+          onEdit(emp);
+          onClose();
+        }}
+      >
+        Edit
+      </MenuAction>
+      {category === "active" ? (
+        <>
+          <MenuAction
+            className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800"
+            onAction={() => {
+              onDeactivate(emp);
+              onClose();
+            }}
+          >
+            Deactivate
+          </MenuAction>
+          <MenuAction
+            className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800"
+            onAction={() => {
+              onTerminate(emp);
+              onClose();
+            }}
+          >
+            Terminate
+          </MenuAction>
+        </>
+      ) : null}
+      {category === "inactive" ? (
+        <>
+          <MenuAction
+            className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800"
+            onAction={() => {
+              onReactivate(emp);
+              onClose();
+            }}
+          >
+            Reactivate
+          </MenuAction>
+          <MenuAction
+            className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800"
+            onAction={() => {
+              onTerminate(emp);
+              onClose();
+            }}
+          >
+            Terminate
+          </MenuAction>
+        </>
+      ) : null}
+      {category === "terminated" ? (
+        <MenuAction
+          className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800"
+          onAction={() => {
+            onReactivate(emp);
+            onClose();
+          }}
+        >
+          Reactivate
+        </MenuAction>
+      ) : null}
+      <MenuAction
+        className="block w-full px-3 py-2 text-left text-sm text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30"
+        onAction={() => {
+          onDelete(emp);
+          onClose();
+        }}
+      >
+        Delete
+      </MenuAction>
+    </div>
+  ) : null;
+
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative" ref={rootRef}>
       <button
+        ref={buttonRef}
         type="button"
         onClick={(e) => {
           e.stopPropagation();
@@ -89,86 +211,12 @@ function ActionsMenu({ emp, statusFilter, open, onToggle, onClose, onEdit, onDea
         }}
         className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-lg border border-zinc-200 hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
         aria-label={`Actions for ${emp._displayName}`}
+        aria-expanded={open}
+        aria-haspopup="menu"
       >
         <MoreVertical className="h-4 w-4" />
       </button>
-      {open ? (
-        <div className="absolute right-0 z-30 mt-1 min-w-[10rem] rounded-lg border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
-          <MenuAction
-            className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800"
-            onClick={() => {
-              onEdit(emp);
-              onClose();
-            }}
-          >
-            Edit
-          </MenuAction>
-          {category === "active" ? (
-            <>
-              <MenuAction
-                className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800"
-                onClick={() => {
-                  onDeactivate(emp);
-                  onClose();
-                }}
-              >
-                Deactivate
-              </MenuAction>
-              <MenuAction
-                className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800"
-                onClick={() => {
-                  onTerminate(emp);
-                  onClose();
-                }}
-              >
-                Terminate
-              </MenuAction>
-            </>
-          ) : null}
-          {category === "inactive" ? (
-            <>
-              <MenuAction
-                className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800"
-                onClick={() => {
-                  onReactivate(emp);
-                  onClose();
-                }}
-              >
-                Reactivate
-              </MenuAction>
-              <MenuAction
-                className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800"
-                onClick={() => {
-                  onTerminate(emp);
-                  onClose();
-                }}
-              >
-                Terminate
-              </MenuAction>
-            </>
-          ) : null}
-          {category === "terminated" ? (
-            <MenuAction
-              className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800"
-              onClick={() => {
-                onReactivate(emp);
-                onClose();
-              }}
-            >
-              Reactivate
-            </MenuAction>
-          ) : null}
-          <MenuAction
-            className="block w-full px-3 py-2 text-left text-sm text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30"
-            onClick={() => {
-              onDelete(emp);
-              onClose();
-            }}
-          >
-            Delete
-          </MenuAction>
-        </div>
-      ) : null}
+      {typeof document !== "undefined" && menu ? createPortal(menu, document.body) : null}
     </div>
   );
 }
@@ -246,7 +294,7 @@ export default function RosterTable({
                   <StationChips stations={emp._stations} />
                 </td>
                 <td className="whitespace-nowrap px-3 py-2 text-xs text-zinc-600 dark:text-zinc-400">{emp._modifiedLabel}</td>
-                <td className="px-3 py-2 text-right">
+                <td className="relative px-3 py-2 text-right">
                   <ActionsMenu
                     emp={emp}
                     statusFilter={statusFilter}
