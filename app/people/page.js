@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import RosterTable from "@/components/people/RosterTable";
 import { STORE_ID } from "@/lib/constants";
 import { getSupabase } from "@/lib/supabase";
 
@@ -95,6 +96,42 @@ function normalizeStatus(value) {
   return "active";
 }
 
+function rosterCategory(emp) {
+  const status = normalizeStatus(emp.status);
+  if (status === "terminated") return "terminated";
+  if (status === "inactive" || emp.is_active === false) return "inactive";
+  return "active";
+}
+
+function employeeModifiedAt(emp) {
+  return emp.updated_at || emp.created_at || null;
+}
+
+function formatRelativeTime(value) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  const sec = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (sec < 45) return "just now";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return min === 1 ? "1 minute ago" : `${min} minutes ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return hr === 1 ? "1 hour ago" : `${hr} hours ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 30) return day === 1 ? "1 day ago" : `${day} days ago`;
+  const month = Math.floor(day / 30);
+  if (month < 12) return month === 1 ? "1 month ago" : `${month} months ago`;
+  const year = Math.floor(day / 365);
+  return year === 1 ? "1 year ago" : `${year} years ago`;
+}
+
+const ROSTER_STATUS_TABS = [
+  { key: "active", label: "Active" },
+  { key: "inactive", label: "Inactive" },
+  { key: "terminated", label: "Terminated" },
+  { key: "all", label: "All" },
+];
+
 function statusBadgeClass(status) {
   if (status === "terminated") return "bg-red-100 text-red-700";
   if (status === "inactive") return "bg-yellow-100 text-yellow-800";
@@ -137,9 +174,15 @@ export default function PeoplePage() {
   const [attempts, setAttempts] = useState([]);
 
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [expandedId, setExpandedId] = useState(null);
+  const [statusFilter, setStatusFilter] = useState("active");
+  const [detailEmployeeId, setDetailEmployeeId] = useState(null);
   const [editingId, setEditingId] = useState(null);
+  const [sortKey, setSortKey] = useState("name");
+  const [sortDir, setSortDir] = useState("asc");
+  const [revealedPinId, setRevealedPinId] = useState(null);
+  const [menuOpenId, setMenuOpenId] = useState(null);
+  const pinRevealTimeoutRef = useRef(null);
+  const addFirstNameRef = useRef(null);
   const [editForm, setEditForm] = useState({});
 
   const [showAddEmployee, setShowAddEmployee] = useState(false);
@@ -235,19 +278,67 @@ export default function PeoplePage() {
     return out;
   }, [certs]);
 
-  const rosterEmployees = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return [...employees]
-      .filter((e) => {
-        const status = normalizeStatus(e.status);
-        if (statusFilter !== "all" && status !== statusFilter) return false;
-        if (!q) return true;
-        return fullName(e).toLowerCase().includes(q) || String(e.primary_role || "").toLowerCase().includes(q);
-      })
-      .sort(byLastName);
-  }, [employees, search, statusFilter]);
+  const stationsByEmployee = useMemo(() => {
+    const map = new Map();
+    for (const c of certs) {
+      if (!c.station) continue;
+      const list = map.get(c.employee_id) || [];
+      if (!list.includes(c.station)) list.push(c.station);
+      map.set(c.employee_id, list);
+    }
+    return map;
+  }, [certs]);
 
-  const activeEmployees = useMemo(() => employees.filter((e) => normalizeStatus(e.status) === "active").sort(byLastName), [employees]);
+  const rosterStatusCounts = useMemo(() => {
+    const counts = { all: employees.length, active: 0, inactive: 0, terminated: 0 };
+    for (const e of employees) counts[rosterCategory(e)]++;
+    return counts;
+  }, [employees]);
+
+  const rosterRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const rows = employees.filter((e) => {
+      const cat = rosterCategory(e);
+      if (statusFilter !== "all" && cat !== statusFilter) return false;
+      if (!q) return true;
+      const stations = (stationsByEmployee.get(e.id) || []).join(" ").toLowerCase();
+      return (
+        fullName(e).toLowerCase().includes(q) ||
+        String(e.employee_code || "").includes(q) ||
+        stations.includes(q)
+      );
+    });
+
+    const dir = sortDir === "asc" ? 1 : -1;
+    rows.sort((a, b) => {
+      if (sortKey === "name") return dir * byLastName(a, b);
+      if (sortKey === "pin") return dir * String(a.employee_code || "").localeCompare(String(b.employee_code || ""));
+      if (sortKey === "role") return dir * String(a.role || "crew").localeCompare(String(b.role || "crew"));
+      if (sortKey === "stations") {
+        const sa = (stationsByEmployee.get(a.id) || []).join(", ");
+        const sb = (stationsByEmployee.get(b.id) || []).join(", ");
+        return dir * sa.localeCompare(sb);
+      }
+      if (sortKey === "modified") {
+        const ta = new Date(employeeModifiedAt(a) || 0).getTime();
+        const tb = new Date(employeeModifiedAt(b) || 0).getTime();
+        return dir * (ta - tb);
+      }
+      return 0;
+    });
+
+    return rows.map((e) => ({
+      ...e,
+      _displayName: fullName(e),
+      _rosterCategory: rosterCategory(e),
+      _stations: stationsByEmployee.get(e.id) || [],
+      _modifiedLabel: formatRelativeTime(employeeModifiedAt(e)),
+    }));
+  }, [employees, search, statusFilter, sortKey, sortDir, stationsByEmployee]);
+
+  const activeEmployees = useMemo(() => employees.filter((e) => rosterCategory(e) === "active").sort(byLastName), [employees]);
+
+  const detailEmployee = detailEmployeeId ? employeesById.get(detailEmployeeId) : null;
 
   const activeTrainers = useMemo(() => activeEmployees.filter((e) => Boolean(e.is_trainer)), [activeEmployees]);
 
@@ -260,6 +351,85 @@ export default function PeoplePage() {
     if (!editingId) return "";
     return validateEmployeePin(editForm.employee_code, employees, editingId);
   }, [editForm.employee_code, employees, editingId]);
+
+  useEffect(() => {
+    if (showAddEmployee && addFirstNameRef.current) {
+      addFirstNameRef.current.focus();
+    }
+  }, [showAddEmployee]);
+
+  useEffect(() => {
+    return () => {
+      if (pinRevealTimeoutRef.current) clearTimeout(pinRevealTimeoutRef.current);
+    };
+  }, []);
+
+  function handleSort(column) {
+    if (sortKey === column) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(column);
+      setSortDir(column === "modified" ? "desc" : "asc");
+    }
+  }
+
+  function revealPin(employeeId) {
+    setRevealedPinId(employeeId);
+    if (pinRevealTimeoutRef.current) clearTimeout(pinRevealTimeoutRef.current);
+    pinRevealTimeoutRef.current = setTimeout(() => setRevealedPinId(null), 5000);
+  }
+
+  function openEmployeeEdit(emp) {
+    setDetailEmployeeId(emp.id);
+    setEditingId(emp.id);
+    setEditForm({
+      first_name: emp.first_name || "",
+      last_name: emp.last_name || "",
+      employee_code: emp.employee_code || "",
+      role: emp.role || "crew",
+      phone: emp.phone || "",
+      email: emp.email || "",
+      hire_date: emp.hire_date || "",
+      status: rosterCategory(emp) === "terminated" ? "terminated" : rosterCategory(emp) === "inactive" ? "inactive" : "active",
+      primary_role: emp.primary_role || ROLE_OPTIONS[0],
+      is_shift_lead: Boolean(emp.is_shift_lead),
+      is_trainer: Boolean(emp.is_trainer),
+      notes: emp.notes || "",
+    });
+  }
+
+  async function setEmployeeLifecycle(empId, status) {
+    setError("");
+    const is_active = status === "active";
+    const { error: upErr } = await supabase.from("employees").update({ status, is_active }).eq("id", empId);
+    if (upErr) {
+      setError(upErr.message || "Failed to update employee status.");
+      return;
+    }
+    setDetailEmployeeId(null);
+    setEditingId(null);
+    reloadAll();
+  }
+
+  async function deleteEmployeeRecord(emp) {
+    if (!window.confirm(`Delete ${fullName(emp)} permanently? This cannot be undone.`)) return;
+    setError("");
+    const { error: delErr } = await supabase.from("employees").delete().eq("id", emp.id);
+    if (delErr) {
+      setError(delErr.message || "Failed to delete employee.");
+      return;
+    }
+    setDetailEmployeeId(null);
+    setEditingId(null);
+    reloadAll();
+  }
+
+  const rosterHeaderSuffix =
+    tab === "ROSTER" && statusFilter !== "all"
+      ? ROSTER_STATUS_TABS.find((t) => t.key === statusFilter)?.label || ""
+      : tab === "ROSTER" && statusFilter === "all"
+        ? "All"
+        : "";
 
   async function saveEmployeeEdit(employeeId) {
     if (!editForm.first_name?.trim() || !editForm.last_name?.trim()) {
@@ -868,7 +1038,9 @@ export default function PeoplePage() {
   return (
     <section className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 py-5">
       <header>
-        <h2 className="text-2xl font-bold text-[#C8102E]">People</h2>
+        <h2 className="text-2xl font-bold text-[#C8102E]">
+          People{rosterHeaderSuffix ? ` · ${rosterHeaderSuffix}` : ""}
+        </h2>
         <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">GM-only people management. 🔒</p>
       </header>
 
@@ -917,257 +1089,275 @@ export default function PeoplePage() {
                 </button>
               </div>
             </div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {[
-                { key: "all", label: "All" },
-                { key: "active", label: "Active" },
-                { key: "inactive", label: "Inactive" },
-                { key: "terminated", label: "Terminated" },
-              ].map((f) => (
+            <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {ROSTER_STATUS_TABS.map((f) => (
                 <button
                   key={f.key}
                   type="button"
                   onClick={() => setStatusFilter(f.key)}
-                  className={`rounded-full border px-3 py-1 text-xs font-semibold ${
-                    statusFilter === f.key ? "border-[#C8102E] bg-[#C8102E] text-white" : "border-zinc-300 text-zinc-700"
+                  className={`rounded-lg border px-3 py-2.5 text-sm font-semibold transition-colors ${
+                    statusFilter === f.key
+                      ? "border-[#C8102E] bg-[#C8102E] text-white"
+                      : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
                   }`}
                 >
-                  {f.label}
+                  {f.label} ({rosterStatusCounts[f.key]})
                 </button>
               ))}
             </div>
           </div>
 
-          {rosterEmployees.map((emp) => {
-            const expanded = expandedId === emp.id;
+          <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+            <RosterTable
+              rows={rosterRows}
+              sortKey={sortKey}
+              sortDir={sortDir}
+              onSort={handleSort}
+              revealedPinId={revealedPinId}
+              onRevealPin={revealPin}
+              menuOpenId={menuOpenId}
+              setMenuOpenId={setMenuOpenId}
+              statusFilter={statusFilter}
+              onOpenDetail={(emp) => {
+                setDetailEmployeeId(emp.id);
+                setEditingId(null);
+              }}
+              onEdit={openEmployeeEdit}
+              onDeactivate={(emp) => setEmployeeLifecycle(emp.id, "inactive")}
+              onTerminate={(emp) => setEmployeeLifecycle(emp.id, "terminated")}
+              onReactivate={(emp) => setEmployeeLifecycle(emp.id, "active")}
+              onDelete={deleteEmployeeRecord}
+            />
+          </div>
+        </article>
+      ) : null}
+
+      {detailEmployee ? (
+        <Modal
+          title={fullName(detailEmployee)}
+          onClose={() => {
+            setDetailEmployeeId(null);
+            setEditingId(null);
+          }}
+        >
+          {(() => {
+            const emp = detailEmployee;
             const isEditing = editingId === emp.id;
-            const status = normalizeStatus(emp.status);
             const currentWage = currentWageByEmployee.get(emp.id);
             const employeeCerts = certs.filter((c) => c.employee_id === emp.id);
+            const category = rosterCategory(emp);
             return (
-              <article key={emp.id} className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-                <button type="button" className="w-full text-left" onClick={() => setExpandedId((prev) => (prev === emp.id ? null : emp.id))}>
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="font-bold text-zinc-900 dark:text-zinc-100">
-                        {fullName(emp)} {emp.is_shift_lead ? "⭐" : ""}
+              <div className="text-sm">
+                {!isEditing ? (
+                  <>
+                    <div className="mb-3 flex flex-wrap items-center gap-2">
+                      <span className="rounded px-2 py-0.5 text-xs text-white" style={{ background: roleColor(emp.primary_role) }}>
+                        {emp.primary_role || "Unassigned role"}
+                      </span>
+                      <span className={`rounded px-2 py-0.5 text-xs font-semibold ${statusBadgeClass(category === "terminated" ? "terminated" : category === "inactive" ? "inactive" : "active")}`}>
+                        {category === "terminated" ? "Terminated" : category === "inactive" ? "Inactive" : "Active"}
+                      </span>
+                      {emp.is_trainer ? (
+                        <span className="rounded bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">🎓 TRAINER</span>
+                      ) : null}
+                      {emp.is_shift_lead ? (
+                        <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900">⭐ Shift Lead</span>
+                      ) : null}
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <p>
+                        <span className="font-semibold">Phone:</span> {emp.phone || "—"}
                       </p>
-                      <div className="mt-1 flex flex-wrap items-center gap-2">
-                        <span className="rounded px-2 py-0.5 text-xs text-white" style={{ background: roleColor(emp.primary_role) }}>
-                          {emp.primary_role || "Unassigned role"}
-                        </span>
-                        <span className={`rounded px-2 py-0.5 text-xs font-semibold ${statusBadgeClass(status)}`}>{status}</span>
-                        {emp.is_trainer ? (
-                          <span className="rounded bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">🎓 TRAINER</span>
-                        ) : null}
+                      <p>
+                        <span className="font-semibold">Email:</span> {emp.email || "—"}
+                      </p>
+                      <p>
+                        <span className="font-semibold">Hire Date:</span> {emp.hire_date || "—"}
+                      </p>
+                      <p>
+                        <span className="font-semibold">Access Role:</span>{" "}
+                        {HUB_ROLE_OPTIONS.find((o) => o.value === emp.role)?.label || emp.role || "Crew"}
+                      </p>
+                      <p>
+                        <span className="font-semibold">PIN:</span>{" "}
+                        <button type="button" onClick={() => revealPin(emp.id)} className="font-mono text-xs hover:underline">
+                          {revealedPinId === emp.id ? emp.employee_code || "—" : "****"}
+                        </button>
+                      </p>
+                      <p>
+                        <span className="font-semibold">Last Modified:</span> {formatRelativeTime(employeeModifiedAt(emp))}
+                      </p>
+                      <p>
+                        <span className="font-semibold">Current Wage 🔒:</span> {money(currentWage?.hourly_rate)}
+                      </p>
+                      <p>
+                        <span className="font-semibold">Regular:</span> {money(currentWage?.hourly_rate)}
+                      </p>
+                      <p>
+                        <span className="font-semibold">Overtime:</span> {money((Number(currentWage?.hourly_rate) || 0) * 1.5)} (1.5x)
+                      </p>
+                      {emp.notes ? (
+                        <p className="sm:col-span-2">
+                          <span className="font-semibold">Notes:</span> {emp.notes}
+                        </p>
+                      ) : null}
+                    </div>
+                    <div className="mt-3">
+                      <p className="mb-1 font-semibold">Stations</p>
+                      <div className="flex flex-wrap gap-1">
+                        {employeeCerts.length ? (
+                          employeeCerts.map((c) => (
+                            <span key={`${c.employee_id}-${c.station}`} className={`rounded px-2 py-0.5 text-[11px] ${stationStatusBadge(c)}`}>
+                              {c.station}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-xs text-zinc-400">No station progress yet</span>
+                        )}
                       </div>
                     </div>
-                  </div>
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {employeeCerts.length ? (
-                      employeeCerts.map((c) => (
-                        <span key={`${c.employee_id}-${c.station}`} className={`rounded px-2 py-0.5 text-[11px] ${stationStatusBadge(c)}`}>
-                          {c.station}
-                        </span>
-                      ))
-                    ) : (
-                      <span className="text-xs text-zinc-400">No station progress yet</span>
-                    )}
-                  </div>
-                </button>
-
-                {expanded ? (
-                  <div className="mt-4 border-t border-zinc-200 pt-4 text-sm dark:border-zinc-800">
-                    {!isEditing ? (
-                      <>
-                        <div className="grid gap-2 text-sm sm:grid-cols-2">
-                          <p>
-                            <span className="font-semibold">Phone:</span> {emp.phone || "—"}
-                          </p>
-                          <p>
-                            <span className="font-semibold">Email:</span> {emp.email || "—"}
-                          </p>
-                          <p>
-                            <span className="font-semibold">Hire Date:</span> {emp.hire_date || "—"}
-                          </p>
-                          <p>
-                            <span className="font-semibold">Current Wage 🔒:</span> {money(currentWage?.hourly_rate)}
-                          </p>
-                          <p>
-                            <span className="font-semibold">Regular:</span> {money(currentWage?.hourly_rate)}
-                          </p>
-                          <p>
-                            <span className="font-semibold">Overtime:</span> {money((Number(currentWage?.hourly_rate) || 0) * 1.5)} (1.5x)
-                          </p>
-                        </div>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <button type="button" onClick={() => setWageHistoryEmployee(emp)} className="rounded-lg border border-zinc-300 px-3 py-2 text-xs font-semibold">
-                            Wage History
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditingId(emp.id);
-                              setEditForm({
-                                first_name: emp.first_name || "",
-                                last_name: emp.last_name || "",
-                                employee_code: emp.employee_code || "",
-                                role: emp.role || "crew",
-                                phone: emp.phone || "",
-                                email: emp.email || "",
-                                hire_date: emp.hire_date || "",
-                                status: normalizeStatus(emp.status),
-                                primary_role: emp.primary_role || ROLE_OPTIONS[0],
-                                is_shift_lead: Boolean(emp.is_shift_lead),
-                                is_trainer: Boolean(emp.is_trainer),
-                                notes: emp.notes || "",
-                              });
-                            }}
-                            className="rounded-lg border border-zinc-300 px-3 py-2 text-xs font-semibold"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setRaiseEmployee(emp);
-                              setRaiseForm({ new_rate: "", effective_date: toDateStr(new Date()), reason: "Performance Review", notes: "" });
-                            }}
-                            className="rounded-lg bg-[#C8102E] px-3 py-2 text-xs font-semibold text-white"
-                          >
-                            Give Raise
-                          </button>
-                        </div>
-                      </>
-                    ) : (
-                      <div className="grid gap-2 sm:grid-cols-2">
-                        {[
-                          ["first_name", "First Name"],
-                          ["last_name", "Last Name"],
-                          ["phone", "Phone"],
-                          ["email", "Email"],
-                        ].map(([key, label]) => (
-                          <label key={key} className="text-xs font-medium text-zinc-600">
-                            {label}
-                            <input
-                              type="text"
-                              value={editForm[key]}
-                              onChange={(e) => setEditForm((s) => ({ ...s, [key]: e.target.value }))}
-                              className="mt-1 h-10 w-full rounded-lg border border-zinc-300 px-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                            />
-                          </label>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <button type="button" onClick={() => setWageHistoryEmployee(emp)} className="rounded-lg border border-zinc-300 px-3 py-2 text-xs font-semibold">
+                        Wage History
+                      </button>
+                      <button type="button" onClick={() => openEmployeeEdit(emp)} className="rounded-lg border border-zinc-300 px-3 py-2 text-xs font-semibold">
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRaiseEmployee(emp);
+                          setRaiseForm({ new_rate: "", effective_date: toDateStr(new Date()), reason: "Performance Review", notes: "" });
+                        }}
+                        className="rounded-lg bg-[#C8102E] px-3 py-2 text-xs font-semibold text-white"
+                      >
+                        Give Raise
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {[
+                      ["first_name", "First Name"],
+                      ["last_name", "Last Name"],
+                      ["phone", "Phone"],
+                      ["email", "Email"],
+                    ].map(([key, label]) => (
+                      <label key={key} className="text-xs font-medium text-zinc-600">
+                        {label}
+                        <input
+                          type="text"
+                          value={editForm[key]}
+                          onChange={(e) => setEditForm((s) => ({ ...s, [key]: e.target.value }))}
+                          className="mt-1 h-10 w-full rounded-lg border border-zinc-300 px-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                        />
+                      </label>
+                    ))}
+                    <label className="text-xs font-medium text-zinc-600">
+                      Employee PIN (4 digits) *
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        autoComplete="off"
+                        maxLength={4}
+                        value={editForm.employee_code || ""}
+                        onChange={(e) => setEditForm((s) => ({ ...s, employee_code: sanitizePinInput(e.target.value) }))}
+                        className="mt-1 h-10 w-full rounded-lg border border-zinc-300 px-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                      />
+                      {editPinError ? <span className="mt-1 block text-xs text-red-600">{editPinError}</span> : null}
+                    </label>
+                    <label className="text-xs font-medium text-zinc-600">
+                      Access Role
+                      <select
+                        value={editForm.role || "crew"}
+                        onChange={(e) => setEditForm((s) => ({ ...s, role: e.target.value }))}
+                        className="mt-1 h-10 w-full rounded-lg border border-zinc-300 px-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                      >
+                        {HUB_ROLE_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
                         ))}
-                        <label className="text-xs font-medium text-zinc-600">
-                          Employee PIN (4 digits) *
-                          <input
-                            type="text"
-                            inputMode="numeric"
-                            autoComplete="off"
-                            maxLength={4}
-                            value={editForm.employee_code || ""}
-                            onChange={(e) =>
-                              setEditForm((s) => ({ ...s, employee_code: sanitizePinInput(e.target.value) }))
-                            }
-                            className="mt-1 h-10 w-full rounded-lg border border-zinc-300 px-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                          />
-                          {editPinError ? (
-                            <span className="mt-1 block text-xs text-red-600">{editPinError}</span>
-                          ) : null}
-                        </label>
-                        <label className="text-xs font-medium text-zinc-600">
-                          Access Role
-                          <select
-                            value={editForm.role || "crew"}
-                            onChange={(e) => setEditForm((s) => ({ ...s, role: e.target.value }))}
-                            className="mt-1 h-10 w-full rounded-lg border border-zinc-300 px-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                          >
-                            {HUB_ROLE_OPTIONS.map((opt) => (
-                              <option key={opt.value} value={opt.value}>
-                                {opt.label}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="text-xs font-medium text-zinc-600">
-                          Hire Date
-                          <input
-                            type="date"
-                            value={editForm.hire_date}
-                            onChange={(e) => setEditForm((s) => ({ ...s, hire_date: e.target.value }))}
-                            className="mt-1 h-10 w-full rounded-lg border border-zinc-300 px-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                          />
-                        </label>
-                        <label className="text-xs font-medium text-zinc-600">
-                          Status
-                          <select
-                            value={editForm.status}
-                            onChange={(e) => setEditForm((s) => ({ ...s, status: e.target.value }))}
-                            className="mt-1 h-10 w-full rounded-lg border border-zinc-300 px-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                          >
-                            <option value="active">Active</option>
-                            <option value="inactive">Inactive</option>
-                            <option value="terminated">Terminated</option>
-                          </select>
-                        </label>
-                        <label className="text-xs font-medium text-zinc-600 sm:col-span-2">
-                          Primary Role
-                          <select
-                            value={editForm.primary_role}
-                            onChange={(e) => setEditForm((s) => ({ ...s, primary_role: e.target.value }))}
-                            className="mt-1 h-10 w-full rounded-lg border border-zinc-300 px-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                          >
-                            {ROLE_OPTIONS.map((role) => (
-                              <option key={role} value={role}>
-                                {role}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <div className="sm:col-span-2 flex flex-wrap gap-4">
-                          <label className="inline-flex items-center gap-2 text-xs font-medium text-zinc-600">
-                            <input
-                              type="checkbox"
-                              checked={Boolean(editForm.is_shift_lead)}
-                              onChange={(e) => setEditForm((s) => ({ ...s, is_shift_lead: e.target.checked }))}
-                              className="h-4 w-4 accent-[#C8102E]"
-                            />
-                            Is shift lead
-                          </label>
-                          <label className="inline-flex items-center gap-2 text-xs font-medium text-zinc-600">
-                            <input
-                              type="checkbox"
-                              checked={Boolean(editForm.is_trainer)}
-                              onChange={(e) => setEditForm((s) => ({ ...s, is_trainer: e.target.checked }))}
-                              className="h-4 w-4 accent-[#C8102E]"
-                            />
-                            Can Train Other Employees
-                          </label>
-                        </div>
-                        <label className="text-xs font-medium text-zinc-600 sm:col-span-2">
-                          Notes
-                          <textarea
-                            value={editForm.notes}
-                            onChange={(e) => setEditForm((s) => ({ ...s, notes: e.target.value }))}
-                            rows={3}
-                            className="mt-1 w-full rounded-lg border border-zinc-300 px-2 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                          />
-                        </label>
-                        <div className="sm:col-span-2 flex gap-2">
-                          <button type="button" onClick={() => saveEmployeeEdit(emp.id)} disabled={Boolean(editPinError)} className="rounded-lg bg-[#C8102E] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">
-                            Save
-                          </button>
-                          <button type="button" onClick={() => setEditingId(null)} className="rounded-lg border border-zinc-300 px-3 py-2 text-xs font-semibold">
-                            Cancel
-                          </button>
-                        </div>
-                      </div>
-                    )}
+                      </select>
+                    </label>
+                    <label className="text-xs font-medium text-zinc-600">
+                      Hire Date
+                      <input
+                        type="date"
+                        value={editForm.hire_date}
+                        onChange={(e) => setEditForm((s) => ({ ...s, hire_date: e.target.value }))}
+                        className="mt-1 h-10 w-full rounded-lg border border-zinc-300 px-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                      />
+                    </label>
+                    <label className="text-xs font-medium text-zinc-600">
+                      Status
+                      <select
+                        value={editForm.status}
+                        onChange={(e) => setEditForm((s) => ({ ...s, status: e.target.value }))}
+                        className="mt-1 h-10 w-full rounded-lg border border-zinc-300 px-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                      >
+                        <option value="active">Active</option>
+                        <option value="inactive">Inactive</option>
+                        <option value="terminated">Terminated</option>
+                      </select>
+                    </label>
+                    <label className="text-xs font-medium text-zinc-600 sm:col-span-2">
+                      Primary Role
+                      <select
+                        value={editForm.primary_role}
+                        onChange={(e) => setEditForm((s) => ({ ...s, primary_role: e.target.value }))}
+                        className="mt-1 h-10 w-full rounded-lg border border-zinc-300 px-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                      >
+                        {ROLE_OPTIONS.map((role) => (
+                          <option key={role} value={role}>
+                            {role}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="flex flex-wrap gap-4 sm:col-span-2">
+                      <label className="inline-flex items-center gap-2 text-xs font-medium text-zinc-600">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(editForm.is_shift_lead)}
+                          onChange={(e) => setEditForm((s) => ({ ...s, is_shift_lead: e.target.checked }))}
+                          className="h-4 w-4 accent-[#C8102E]"
+                        />
+                        Is shift lead
+                      </label>
+                      <label className="inline-flex items-center gap-2 text-xs font-medium text-zinc-600">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(editForm.is_trainer)}
+                          onChange={(e) => setEditForm((s) => ({ ...s, is_trainer: e.target.checked }))}
+                          className="h-4 w-4 accent-[#C8102E]"
+                        />
+                        Can Train Other Employees
+                      </label>
+                    </div>
+                    <label className="text-xs font-medium text-zinc-600 sm:col-span-2">
+                      Notes
+                      <textarea
+                        value={editForm.notes}
+                        onChange={(e) => setEditForm((s) => ({ ...s, notes: e.target.value }))}
+                        rows={3}
+                        className="mt-1 w-full rounded-lg border border-zinc-300 px-2 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                      />
+                    </label>
+                    <div className="flex gap-2 sm:col-span-2">
+                      <button type="button" onClick={() => saveEmployeeEdit(emp.id)} disabled={Boolean(editPinError)} className="rounded-lg bg-[#C8102E] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">
+                        Save
+                      </button>
+                      <button type="button" onClick={() => setEditingId(null)} className="rounded-lg border border-zinc-300 px-3 py-2 text-xs font-semibold">
+                        Cancel
+                      </button>
+                    </div>
                   </div>
-                ) : null}
-              </article>
+                )}
+              </div>
             );
-          })}
-        </article>
+          })()}
+        </Modal>
       ) : null}
 
       {!loading && tab === "CERTIFICATIONS" ? (
@@ -1458,8 +1648,17 @@ export default function PeoplePage() {
       {showAddEmployee ? (
         <Modal title="Add New Employee" onClose={() => setShowAddEmployee(false)}>
           <div className="grid gap-2 sm:grid-cols-2">
+            <label className="text-xs font-medium text-zinc-600">
+              First Name *
+              <input
+                ref={addFirstNameRef}
+                type="text"
+                value={addForm.first_name}
+                onChange={(e) => setAddForm((s) => ({ ...s, first_name: e.target.value }))}
+                className="mt-1 h-10 w-full rounded-lg border border-zinc-300 px-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+              />
+            </label>
             {[
-              ["first_name", "First Name *"],
               ["last_name", "Last Name *"],
               ["phone", "Phone"],
               ["email", "Email"],
