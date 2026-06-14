@@ -316,7 +316,7 @@ export default function DeploymentPage() {
             minutes_late: minutesLate,
             store_id: STORE_ID,
           },
-          { onConflict: "log_date,shift,store_id" }
+          { onConflict: "log_date,shift" }
         )
         .select("id, submitted_by, submitted_at, is_late, minutes_late")
         .single();
