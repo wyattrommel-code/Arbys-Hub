@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { STORE_ID } from "@/lib/constants";
 import { getSupabase } from "@/lib/supabase";
 
 const RED = "#C8102E";
@@ -9,6 +10,40 @@ const QUESTION_CATEGORIES = ["safety", "quality", "speed", "knowledge"];
 const RAISE_REASONS = ["Performance Review", "Annual Raise", "Promotion", "Correction", "Other"];
 const TABS = ["ROSTER", "CERTIFICATIONS", "TRAINING", "QUESTION BANK"];
 const ROLE_OPTIONS = ["Morning", "Breakfast", "Open", "Day Lead", "Mid Shift", "Night", "Night Lead", "Closing"];
+const HUB_ROLE_OPTIONS = [
+  { value: "crew", label: "Crew" },
+  { value: "shift_lead", label: "Shift Lead" },
+  { value: "manager", label: "Manager" },
+  { value: "gm", label: "GM" },
+];
+
+function isValidEmployeePin(pin) {
+  return /^\d{4}$/.test(String(pin || "").trim());
+}
+
+function pinExistsForStore(employees, pin, excludeEmployeeId = null) {
+  const normalized = String(pin || "").trim();
+  if (!normalized) return false;
+  return employees.some((e) => {
+    if (excludeEmployeeId && e.id === excludeEmployeeId) return false;
+    const store = String(e.store_id || STORE_ID);
+    return store === STORE_ID && String(e.employee_code || "") === normalized;
+  });
+}
+
+function validateEmployeePin(pin, employees, excludeEmployeeId = null) {
+  const trimmed = String(pin || "").trim();
+  if (!trimmed) return "Employee PIN is required.";
+  if (!isValidEmployeePin(trimmed)) return "PIN must be exactly 4 digits.";
+  if (pinExistsForStore(employees, trimmed, excludeEmployeeId)) return "This PIN is already in use at this store.";
+  return "";
+}
+
+function sanitizePinInput(value) {
+  return String(value || "")
+    .replace(/\D/g, "")
+    .slice(0, 4);
+}
 
 function toDateStr(dateValue) {
   const d = new Date(dateValue);
@@ -111,6 +146,8 @@ export default function PeoplePage() {
   const [addForm, setAddForm] = useState({
     first_name: "",
     last_name: "",
+    employee_code: "",
+    role: "crew",
     phone: "",
     email: "",
     hire_date: toDateStr(new Date()),
@@ -214,10 +251,33 @@ export default function PeoplePage() {
 
   const activeTrainers = useMemo(() => activeEmployees.filter((e) => Boolean(e.is_trainer)), [activeEmployees]);
 
+  const addPinError = useMemo(
+    () => validateEmployeePin(addForm.employee_code, employees),
+    [addForm.employee_code, employees]
+  );
+
+  const editPinError = useMemo(() => {
+    if (!editingId) return "";
+    return validateEmployeePin(editForm.employee_code, employees, editingId);
+  }, [editForm.employee_code, employees, editingId]);
+
   async function saveEmployeeEdit(employeeId) {
+    if (!editForm.first_name?.trim() || !editForm.last_name?.trim()) {
+      setError("First and last name are required.");
+      return;
+    }
+    const pinErr = validateEmployeePin(editForm.employee_code, employees, employeeId);
+    if (pinErr) {
+      setError(pinErr);
+      return;
+    }
     const payload = {
-      first_name: editForm.first_name,
-      last_name: editForm.last_name,
+      first_name: editForm.first_name.trim(),
+      last_name: editForm.last_name.trim(),
+      employee_code: String(editForm.employee_code).trim(),
+      role: editForm.role || "crew",
+      store_id: STORE_ID,
+      is_active: normalizeStatus(editForm.status) === "active",
       phone: editForm.phone || null,
       email: editForm.email || null,
       hire_date: editForm.hire_date || null,
@@ -241,6 +301,11 @@ export default function PeoplePage() {
       setError("First and last name are required.");
       return;
     }
+    const pinErr = validateEmployeePin(addForm.employee_code, employees);
+    if (pinErr) {
+      setError(pinErr);
+      return;
+    }
     if (!addForm.starting_wage || Number(addForm.starting_wage) <= 0) {
       setError("Starting wage is required.");
       return;
@@ -249,8 +314,12 @@ export default function PeoplePage() {
     const { data: inserted, error: empErr } = await supabase
       .from("employees")
       .insert({
+        store_id: STORE_ID,
         first_name: addForm.first_name.trim(),
         last_name: addForm.last_name.trim(),
+        employee_code: String(addForm.employee_code).trim(),
+        role: addForm.role || "crew",
+        is_active: normalizeStatus(addForm.status) === "active",
         phone: addForm.phone || null,
         email: addForm.email || null,
         hire_date: addForm.hire_date || null,
@@ -279,6 +348,8 @@ export default function PeoplePage() {
     setAddForm({
       first_name: "",
       last_name: "",
+      employee_code: "",
+      role: "crew",
       phone: "",
       email: "",
       hire_date: toDateStr(new Date()),
@@ -940,6 +1011,8 @@ export default function PeoplePage() {
                               setEditForm({
                                 first_name: emp.first_name || "",
                                 last_name: emp.last_name || "",
+                                employee_code: emp.employee_code || "",
+                                role: emp.role || "crew",
                                 phone: emp.phone || "",
                                 email: emp.email || "",
                                 hire_date: emp.hire_date || "",
@@ -984,6 +1057,37 @@ export default function PeoplePage() {
                             />
                           </label>
                         ))}
+                        <label className="text-xs font-medium text-zinc-600">
+                          Employee PIN (4 digits) *
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            autoComplete="off"
+                            maxLength={4}
+                            value={editForm.employee_code || ""}
+                            onChange={(e) =>
+                              setEditForm((s) => ({ ...s, employee_code: sanitizePinInput(e.target.value) }))
+                            }
+                            className="mt-1 h-10 w-full rounded-lg border border-zinc-300 px-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                          />
+                          {editPinError ? (
+                            <span className="mt-1 block text-xs text-red-600">{editPinError}</span>
+                          ) : null}
+                        </label>
+                        <label className="text-xs font-medium text-zinc-600">
+                          Access Role
+                          <select
+                            value={editForm.role || "crew"}
+                            onChange={(e) => setEditForm((s) => ({ ...s, role: e.target.value }))}
+                            className="mt-1 h-10 w-full rounded-lg border border-zinc-300 px-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                          >
+                            {HUB_ROLE_OPTIONS.map((opt) => (
+                              <option key={opt.value} value={opt.value}>
+                                {opt.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
                         <label className="text-xs font-medium text-zinc-600">
                           Hire Date
                           <input
@@ -1049,7 +1153,7 @@ export default function PeoplePage() {
                           />
                         </label>
                         <div className="sm:col-span-2 flex gap-2">
-                          <button type="button" onClick={() => saveEmployeeEdit(emp.id)} className="rounded-lg bg-[#C8102E] px-3 py-2 text-xs font-semibold text-white">
+                          <button type="button" onClick={() => saveEmployeeEdit(emp.id)} disabled={Boolean(editPinError)} className="rounded-lg bg-[#C8102E] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">
                             Save
                           </button>
                           <button type="button" onClick={() => setEditingId(null)} className="rounded-lg border border-zinc-300 px-3 py-2 text-xs font-semibold">
@@ -1371,6 +1475,33 @@ export default function PeoplePage() {
               </label>
             ))}
             <label className="text-xs font-medium text-zinc-600">
+              Employee PIN (4 digits) *
+              <input
+                type="text"
+                inputMode="numeric"
+                autoComplete="off"
+                maxLength={4}
+                value={addForm.employee_code}
+                onChange={(e) => setAddForm((s) => ({ ...s, employee_code: sanitizePinInput(e.target.value) }))}
+                className="mt-1 h-10 w-full rounded-lg border border-zinc-300 px-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+              />
+              {addPinError ? <span className="mt-1 block text-xs text-red-600">{addPinError}</span> : null}
+            </label>
+            <label className="text-xs font-medium text-zinc-600">
+              Access Role
+              <select
+                value={addForm.role}
+                onChange={(e) => setAddForm((s) => ({ ...s, role: e.target.value }))}
+                className="mt-1 h-10 w-full rounded-lg border border-zinc-300 px-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+              >
+                {HUB_ROLE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-xs font-medium text-zinc-600">
               Hire Date
               <input
                 type="date"
@@ -1435,7 +1566,12 @@ export default function PeoplePage() {
               Can Train Other Employees
             </label>
           </div>
-          <button type="button" onClick={addEmployee} className="mt-3 h-11 rounded-lg bg-[#C8102E] px-4 text-sm font-semibold text-white">
+          <button
+            type="button"
+            onClick={addEmployee}
+            disabled={Boolean(addPinError) || !addForm.first_name.trim() || !addForm.last_name.trim()}
+            className="mt-3 h-11 rounded-lg bg-[#C8102E] px-4 text-sm font-semibold text-white disabled:opacity-50"
+          >
             Save Employee
           </button>
         </Modal>
