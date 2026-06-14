@@ -4,12 +4,17 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   BarChart3,
+  Calendar,
   ClipboardList,
   Flame,
+  Gauge,
   Home,
+  LayoutGrid,
+  Package,
   Settings,
   Trash2,
   Upload,
+  Users,
   X,
 } from "lucide-react";
 import { SIDEBAR_NAV, isNavActive } from "@/lib/nav";
@@ -19,6 +24,11 @@ const ICONS = {
   "clipboard-list": ClipboardList,
   flame: Flame,
   "trash-2": Trash2,
+  package: Package,
+  users: Users,
+  calendar: Calendar,
+  "layout-grid": LayoutGrid,
+  gauge: Gauge,
   upload: Upload,
   "bar-chart-3": BarChart3,
   settings: Settings,
