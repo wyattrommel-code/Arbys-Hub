@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { fetchActiveEmployees, fetchActiveShiftLeadsOrAbove } from "@/lib/employees";
 import { getSupabase } from "@/lib/supabase";
 
 const STORE_ID = "payson";
@@ -30,16 +31,6 @@ const STATIONS = [
   "Slicer",
   "Backline",
   "Floater",
-];
-
-const SUBMITTERS = [
-  "Jared Campbell",
-  "Jesus Martinez",
-  "Myriam Cortez",
-  "Cole Palmer",
-  "Ryan Meade",
-  "Darrin Proctor",
-  "Wyatt Rommel",
 ];
 
 function toDateStr(dateValue) {
@@ -124,6 +115,7 @@ export default function DeploymentPage() {
   const [submittedBy, setSubmittedBy] = useState("");
   const [employees, setEmployees] = useState([]);
   const [activeEmployees, setActiveEmployees] = useState([]);
+  const [submitterOptions, setSubmitterOptions] = useState([]);
   const [unscheduledEmployeeId, setUnscheduledEmployeeId] = useState("");
   const [loadingSchedule, setLoadingSchedule] = useState(false);
   const [fetchError, setFetchError] = useState("");
@@ -195,27 +187,23 @@ export default function DeploymentPage() {
 
   useEffect(() => {
     let cancelled = false;
-    async function fetchActiveEmployees() {
-      const { data, error: empErr } = await supabase
-        .from("employees")
-        .select("id, first_name, last_name, status")
-        .eq("status", "active")
-        .order("last_name", { ascending: true })
-        .order("first_name", { ascending: true });
-      if (cancelled) return;
-      if (empErr) {
-        setFetchError(empErr.message || "Failed to load active employees.");
+    async function loadEmployeePicklists() {
+      try {
+        const [active, submitters] = await Promise.all([
+          fetchActiveEmployees(supabase),
+          fetchActiveShiftLeadsOrAbove(supabase),
+        ]);
+        if (cancelled) return;
+        setActiveEmployees(active);
+        setSubmitterOptions(submitters);
+      } catch (err) {
+        if (cancelled) return;
+        setFetchError(err?.message || "Failed to load employees.");
         setActiveEmployees([]);
-        return;
+        setSubmitterOptions([]);
       }
-      setActiveEmployees(
-        (data || []).map((row) => ({
-          id: row.id,
-          name: `${row.first_name || ""} ${row.last_name || ""}`.trim(),
-        }))
-      );
     }
-    fetchActiveEmployees();
+    loadEmployeePicklists();
     return () => {
       cancelled = true;
     };
@@ -478,9 +466,9 @@ export default function DeploymentPage() {
                 className="mt-1 h-11 w-full rounded-lg border border-zinc-300 bg-white px-3 text-sm dark:border-zinc-700 dark:bg-zinc-950"
               >
                 <option value="">Select shift lead...</option>
-                {SUBMITTERS.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
+                {submitterOptions.map((person) => (
+                  <option key={person.id} value={person.name}>
+                    {person.name}
                   </option>
                 ))}
               </select>
