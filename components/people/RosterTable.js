@@ -57,6 +57,14 @@ function StationChips({ stations }) {
   );
 }
 
+function MenuAction({ onClick, children, className = "" }) {
+  return (
+    <button type="button" className={className} onMouseDown={(e) => e.preventDefault()} onClick={onClick}>
+      {children}
+    </button>
+  );
+}
+
 function ActionsMenu({ emp, statusFilter, open, onToggle, onClose, onEdit, onDeactivate, onTerminate, onReactivate, onDelete }) {
   const ref = useRef(null);
 
@@ -85,38 +93,80 @@ function ActionsMenu({ emp, statusFilter, open, onToggle, onClose, onEdit, onDea
         <MoreVertical className="h-4 w-4" />
       </button>
       {open ? (
-        <div className="absolute right-0 z-20 mt-1 min-w-[10rem] rounded-lg border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
-          <button type="button" className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800" onClick={() => { onEdit(emp); onClose(); }}>
+        <div className="absolute right-0 z-30 mt-1 min-w-[10rem] rounded-lg border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+          <MenuAction
+            className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800"
+            onClick={() => {
+              onEdit(emp);
+              onClose();
+            }}
+          >
             Edit
-          </button>
+          </MenuAction>
           {category === "active" ? (
             <>
-              <button type="button" className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800" onClick={() => { onDeactivate(emp); onClose(); }}>
+              <MenuAction
+                className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800"
+                onClick={() => {
+                  onDeactivate(emp);
+                  onClose();
+                }}
+              >
                 Deactivate
-              </button>
-              <button type="button" className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800" onClick={() => { onTerminate(emp); onClose(); }}>
+              </MenuAction>
+              <MenuAction
+                className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800"
+                onClick={() => {
+                  onTerminate(emp);
+                  onClose();
+                }}
+              >
                 Terminate
-              </button>
+              </MenuAction>
             </>
           ) : null}
           {category === "inactive" ? (
             <>
-              <button type="button" className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800" onClick={() => { onReactivate(emp); onClose(); }}>
+              <MenuAction
+                className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800"
+                onClick={() => {
+                  onReactivate(emp);
+                  onClose();
+                }}
+              >
                 Reactivate
-              </button>
-              <button type="button" className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800" onClick={() => { onTerminate(emp); onClose(); }}>
+              </MenuAction>
+              <MenuAction
+                className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800"
+                onClick={() => {
+                  onTerminate(emp);
+                  onClose();
+                }}
+              >
                 Terminate
-              </button>
+              </MenuAction>
             </>
           ) : null}
           {category === "terminated" ? (
-            <button type="button" className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800" onClick={() => { onReactivate(emp); onClose(); }}>
+            <MenuAction
+              className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800"
+              onClick={() => {
+                onReactivate(emp);
+                onClose();
+              }}
+            >
               Reactivate
-            </button>
+            </MenuAction>
           ) : null}
-          <button type="button" className="block w-full px-3 py-2 text-left text-sm text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30" onClick={() => { onDelete(emp); onClose(); }}>
+          <MenuAction
+            className="block w-full px-3 py-2 text-left text-sm text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30"
+            onClick={() => {
+              onDelete(emp);
+              onClose();
+            }}
+          >
             Delete
-          </button>
+          </MenuAction>
         </div>
       ) : null}
     </div>

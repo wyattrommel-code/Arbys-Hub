@@ -145,6 +145,24 @@ function stationStatusBadge(cert) {
   return "bg-zinc-100 text-zinc-600";
 }
 
+function defaultEmployeeForm() {
+  return {
+    first_name: "",
+    last_name: "",
+    employee_code: "",
+    role: "crew",
+    phone: "",
+    email: "",
+    hire_date: toDateStr(new Date()),
+    primary_role: ROLE_OPTIONS[0],
+    is_shift_lead: false,
+    is_trainer: false,
+    status: "active",
+    starting_wage: "",
+    notes: "",
+  };
+}
+
 function Modal({ title, onClose, children }) {
   return (
     <div className="fixed inset-0 z-50 bg-black/50">
@@ -176,30 +194,16 @@ export default function PeoplePage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("active");
   const [detailEmployeeId, setDetailEmployeeId] = useState(null);
-  const [editingId, setEditingId] = useState(null);
+  const [editingEmployeeId, setEditingEmployeeId] = useState(null);
   const [sortKey, setSortKey] = useState("name");
   const [sortDir, setSortDir] = useState("asc");
   const [revealedPinId, setRevealedPinId] = useState(null);
   const [menuOpenId, setMenuOpenId] = useState(null);
   const pinRevealTimeoutRef = useRef(null);
   const addFirstNameRef = useRef(null);
-  const [editForm, setEditForm] = useState({});
 
   const [showAddEmployee, setShowAddEmployee] = useState(false);
-  const [addForm, setAddForm] = useState({
-    first_name: "",
-    last_name: "",
-    employee_code: "",
-    role: "crew",
-    phone: "",
-    email: "",
-    hire_date: toDateStr(new Date()),
-    primary_role: ROLE_OPTIONS[0],
-    is_shift_lead: false,
-    is_trainer: false,
-    status: "active",
-    starting_wage: "",
-  });
+  const [addForm, setAddForm] = useState(defaultEmployeeForm);
 
   const [wageHistoryEmployee, setWageHistoryEmployee] = useState(null);
   const [raiseEmployee, setRaiseEmployee] = useState(null);
@@ -343,14 +347,9 @@ export default function PeoplePage() {
   const activeTrainers = useMemo(() => activeEmployees.filter((e) => Boolean(e.is_trainer)), [activeEmployees]);
 
   const addPinError = useMemo(
-    () => validateEmployeePin(addForm.employee_code, employees),
-    [addForm.employee_code, employees]
+    () => validateEmployeePin(addForm.employee_code, employees, editingEmployeeId),
+    [addForm.employee_code, employees, editingEmployeeId]
   );
-
-  const editPinError = useMemo(() => {
-    if (!editingId) return "";
-    return validateEmployeePin(editForm.employee_code, employees, editingId);
-  }, [editForm.employee_code, employees, editingId]);
 
   useEffect(() => {
     if (showAddEmployee && addFirstNameRef.current) {
@@ -379,10 +378,23 @@ export default function PeoplePage() {
     pinRevealTimeoutRef.current = setTimeout(() => setRevealedPinId(null), 5000);
   }
 
+  function openAddEmployeeModal() {
+    setEditingEmployeeId(null);
+    setAddForm(defaultEmployeeForm());
+    setShowAddEmployee(true);
+  }
+
+  function closeEmployeeModal() {
+    setShowAddEmployee(false);
+    setEditingEmployeeId(null);
+    setAddForm(defaultEmployeeForm());
+  }
+
   function openEmployeeEdit(emp) {
-    setDetailEmployeeId(emp.id);
-    setEditingId(emp.id);
-    setEditForm({
+    const cat = rosterCategory(emp);
+    const currentWage = currentWageByEmployee.get(emp.id);
+    setEditingEmployeeId(emp.id);
+    setAddForm({
       first_name: emp.first_name || "",
       last_name: emp.last_name || "",
       employee_code: emp.employee_code || "",
@@ -390,12 +402,14 @@ export default function PeoplePage() {
       phone: emp.phone || "",
       email: emp.email || "",
       hire_date: emp.hire_date || "",
-      status: rosterCategory(emp) === "terminated" ? "terminated" : rosterCategory(emp) === "inactive" ? "inactive" : "active",
       primary_role: emp.primary_role || ROLE_OPTIONS[0],
       is_shift_lead: Boolean(emp.is_shift_lead),
       is_trainer: Boolean(emp.is_trainer),
+      status: cat === "terminated" ? "terminated" : cat === "inactive" ? "inactive" : "active",
+      starting_wage: currentWage?.hourly_rate != null ? String(currentWage.hourly_rate) : "",
       notes: emp.notes || "",
     });
+    setShowAddEmployee(true);
   }
 
   async function setEmployeeLifecycle(empId, status) {
@@ -407,7 +421,6 @@ export default function PeoplePage() {
       return;
     }
     setDetailEmployeeId(null);
-    setEditingId(null);
     reloadAll();
   }
 
@@ -420,7 +433,6 @@ export default function PeoplePage() {
       return;
     }
     setDetailEmployeeId(null);
-    setEditingId(null);
     reloadAll();
   }
 
@@ -431,51 +443,45 @@ export default function PeoplePage() {
         ? "All"
         : "";
 
-  async function saveEmployeeEdit(employeeId) {
-    if (!editForm.first_name?.trim() || !editForm.last_name?.trim()) {
-      setError("First and last name are required.");
-      return;
-    }
-    const pinErr = validateEmployeePin(editForm.employee_code, employees, employeeId);
-    if (pinErr) {
-      setError(pinErr);
-      return;
-    }
-    const payload = {
-      first_name: editForm.first_name.trim(),
-      last_name: editForm.last_name.trim(),
-      employee_code: String(editForm.employee_code).trim(),
-      role: editForm.role || "crew",
-      store_id: STORE_ID,
-      is_active: normalizeStatus(editForm.status) === "active",
-      phone: editForm.phone || null,
-      email: editForm.email || null,
-      hire_date: editForm.hire_date || null,
-      status: editForm.status,
-      primary_role: editForm.primary_role || null,
-      is_shift_lead: Boolean(editForm.is_shift_lead),
-      is_trainer: Boolean(editForm.is_trainer),
-      notes: editForm.notes || null,
-    };
-    const { error: upErr } = await supabase.from("employees").update(payload).eq("id", employeeId);
-    if (upErr) {
-      setError(upErr.message || "Failed to update employee.");
-      return;
-    }
-    setEditingId(null);
-    reloadAll();
-  }
-
-  async function addEmployee() {
+  async function saveEmployeeFromModal() {
     if (!addForm.first_name.trim() || !addForm.last_name.trim()) {
       setError("First and last name are required.");
       return;
     }
-    const pinErr = validateEmployeePin(addForm.employee_code, employees);
+    const pinErr = validateEmployeePin(addForm.employee_code, employees, editingEmployeeId);
     if (pinErr) {
       setError(pinErr);
       return;
     }
+
+    if (editingEmployeeId) {
+      setError("");
+      const payload = {
+        first_name: addForm.first_name.trim(),
+        last_name: addForm.last_name.trim(),
+        employee_code: String(addForm.employee_code).trim(),
+        role: addForm.role || "crew",
+        store_id: STORE_ID,
+        is_active: normalizeStatus(addForm.status) === "active",
+        phone: addForm.phone || null,
+        email: addForm.email || null,
+        hire_date: addForm.hire_date || null,
+        status: addForm.status,
+        primary_role: addForm.primary_role || null,
+        is_shift_lead: Boolean(addForm.is_shift_lead),
+        is_trainer: Boolean(addForm.is_trainer),
+        notes: addForm.notes || null,
+      };
+      const { error: upErr } = await supabase.from("employees").update(payload).eq("id", editingEmployeeId);
+      if (upErr) {
+        setError(upErr.message || "Failed to update employee.");
+        return;
+      }
+      closeEmployeeModal();
+      reloadAll();
+      return;
+    }
+
     if (!addForm.starting_wage || Number(addForm.starting_wage) <= 0) {
       setError("Starting wage is required.");
       return;
@@ -497,6 +503,7 @@ export default function PeoplePage() {
         is_shift_lead: Boolean(addForm.is_shift_lead),
         is_trainer: Boolean(addForm.is_trainer),
         status: addForm.status || "active",
+        notes: addForm.notes || null,
       })
       .select("id")
       .single();
@@ -514,21 +521,7 @@ export default function PeoplePage() {
     if (wageErr) {
       setError(wageErr.message || "Employee added but starting wage failed.");
     }
-    setShowAddEmployee(false);
-    setAddForm({
-      first_name: "",
-      last_name: "",
-      employee_code: "",
-      role: "crew",
-      phone: "",
-      email: "",
-      hire_date: toDateStr(new Date()),
-      primary_role: ROLE_OPTIONS[0],
-      is_shift_lead: false,
-      is_trainer: false,
-      status: "active",
-      starting_wage: "",
-    });
+    closeEmployeeModal();
     reloadAll();
   }
 
@@ -1084,7 +1077,7 @@ export default function PeoplePage() {
                 >
                   Bulk Edit Trainers
                 </button>
-                <button type="button" onClick={() => setShowAddEmployee(true)} className="h-11 rounded-lg bg-[#C8102E] px-4 text-sm font-semibold text-white">
+                <button type="button" onClick={openAddEmployeeModal} className="h-11 rounded-lg bg-[#C8102E] px-4 text-sm font-semibold text-white">
                   Add New Employee
                 </button>
               </div>
@@ -1120,7 +1113,6 @@ export default function PeoplePage() {
               statusFilter={statusFilter}
               onOpenDetail={(emp) => {
                 setDetailEmployeeId(emp.id);
-                setEditingId(null);
               }}
               onEdit={openEmployeeEdit}
               onDeactivate={(emp) => setEmployeeLifecycle(emp.id, "inactive")}
@@ -1135,225 +1127,106 @@ export default function PeoplePage() {
       {detailEmployee ? (
         <Modal
           title={fullName(detailEmployee)}
-          onClose={() => {
-            setDetailEmployeeId(null);
-            setEditingId(null);
-          }}
+          onClose={() => setDetailEmployeeId(null)}
         >
           {(() => {
             const emp = detailEmployee;
-            const isEditing = editingId === emp.id;
             const currentWage = currentWageByEmployee.get(emp.id);
             const employeeCerts = certs.filter((c) => c.employee_id === emp.id);
             const category = rosterCategory(emp);
             return (
               <div className="text-sm">
-                {!isEditing ? (
-                  <>
-                    <div className="mb-3 flex flex-wrap items-center gap-2">
-                      <span className="rounded px-2 py-0.5 text-xs text-white" style={{ background: roleColor(emp.primary_role) }}>
-                        {emp.primary_role || "Unassigned role"}
-                      </span>
-                      <span className={`rounded px-2 py-0.5 text-xs font-semibold ${statusBadgeClass(category === "terminated" ? "terminated" : category === "inactive" ? "inactive" : "active")}`}>
-                        {category === "terminated" ? "Terminated" : category === "inactive" ? "Inactive" : "Active"}
-                      </span>
-                      {emp.is_trainer ? (
-                        <span className="rounded bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">🎓 TRAINER</span>
-                      ) : null}
-                      {emp.is_shift_lead ? (
-                        <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900">⭐ Shift Lead</span>
-                      ) : null}
-                    </div>
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      <p>
-                        <span className="font-semibold">Phone:</span> {emp.phone || "—"}
-                      </p>
-                      <p>
-                        <span className="font-semibold">Email:</span> {emp.email || "—"}
-                      </p>
-                      <p>
-                        <span className="font-semibold">Hire Date:</span> {emp.hire_date || "—"}
-                      </p>
-                      <p>
-                        <span className="font-semibold">Access Role:</span>{" "}
-                        {HUB_ROLE_OPTIONS.find((o) => o.value === emp.role)?.label || emp.role || "Crew"}
-                      </p>
-                      <p>
-                        <span className="font-semibold">PIN:</span>{" "}
-                        <button type="button" onClick={() => revealPin(emp.id)} className="font-mono text-xs hover:underline">
-                          {revealedPinId === emp.id ? emp.employee_code || "—" : "****"}
-                        </button>
-                      </p>
-                      <p>
-                        <span className="font-semibold">Last Modified:</span> {formatRelativeTime(employeeModifiedAt(emp))}
-                      </p>
-                      <p>
-                        <span className="font-semibold">Current Wage 🔒:</span> {money(currentWage?.hourly_rate)}
-                      </p>
-                      <p>
-                        <span className="font-semibold">Regular:</span> {money(currentWage?.hourly_rate)}
-                      </p>
-                      <p>
-                        <span className="font-semibold">Overtime:</span> {money((Number(currentWage?.hourly_rate) || 0) * 1.5)} (1.5x)
-                      </p>
-                      {emp.notes ? (
-                        <p className="sm:col-span-2">
-                          <span className="font-semibold">Notes:</span> {emp.notes}
-                        </p>
-                      ) : null}
-                    </div>
-                    <div className="mt-3">
-                      <p className="mb-1 font-semibold">Stations</p>
-                      <div className="flex flex-wrap gap-1">
-                        {employeeCerts.length ? (
-                          employeeCerts.map((c) => (
-                            <span key={`${c.employee_id}-${c.station}`} className={`rounded px-2 py-0.5 text-[11px] ${stationStatusBadge(c)}`}>
-                              {c.station}
-                            </span>
-                          ))
-                        ) : (
-                          <span className="text-xs text-zinc-400">No station progress yet</span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <button type="button" onClick={() => setWageHistoryEmployee(emp)} className="rounded-lg border border-zinc-300 px-3 py-2 text-xs font-semibold">
-                        Wage History
-                      </button>
-                      <button type="button" onClick={() => openEmployeeEdit(emp)} className="rounded-lg border border-zinc-300 px-3 py-2 text-xs font-semibold">
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setRaiseEmployee(emp);
-                          setRaiseForm({ new_rate: "", effective_date: toDateStr(new Date()), reason: "Performance Review", notes: "" });
-                        }}
-                        className="rounded-lg bg-[#C8102E] px-3 py-2 text-xs font-semibold text-white"
-                      >
-                        Give Raise
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    {[
-                      ["first_name", "First Name"],
-                      ["last_name", "Last Name"],
-                      ["phone", "Phone"],
-                      ["email", "Email"],
-                    ].map(([key, label]) => (
-                      <label key={key} className="text-xs font-medium text-zinc-600">
-                        {label}
-                        <input
-                          type="text"
-                          value={editForm[key]}
-                          onChange={(e) => setEditForm((s) => ({ ...s, [key]: e.target.value }))}
-                          className="mt-1 h-10 w-full rounded-lg border border-zinc-300 px-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                        />
-                      </label>
-                    ))}
-                    <label className="text-xs font-medium text-zinc-600">
-                      Employee PIN (4 digits) *
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        autoComplete="off"
-                        maxLength={4}
-                        value={editForm.employee_code || ""}
-                        onChange={(e) => setEditForm((s) => ({ ...s, employee_code: sanitizePinInput(e.target.value) }))}
-                        className="mt-1 h-10 w-full rounded-lg border border-zinc-300 px-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                      />
-                      {editPinError ? <span className="mt-1 block text-xs text-red-600">{editPinError}</span> : null}
-                    </label>
-                    <label className="text-xs font-medium text-zinc-600">
-                      Access Role
-                      <select
-                        value={editForm.role || "crew"}
-                        onChange={(e) => setEditForm((s) => ({ ...s, role: e.target.value }))}
-                        className="mt-1 h-10 w-full rounded-lg border border-zinc-300 px-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                      >
-                        {HUB_ROLE_OPTIONS.map((opt) => (
-                          <option key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="text-xs font-medium text-zinc-600">
-                      Hire Date
-                      <input
-                        type="date"
-                        value={editForm.hire_date}
-                        onChange={(e) => setEditForm((s) => ({ ...s, hire_date: e.target.value }))}
-                        className="mt-1 h-10 w-full rounded-lg border border-zinc-300 px-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                      />
-                    </label>
-                    <label className="text-xs font-medium text-zinc-600">
-                      Status
-                      <select
-                        value={editForm.status}
-                        onChange={(e) => setEditForm((s) => ({ ...s, status: e.target.value }))}
-                        className="mt-1 h-10 w-full rounded-lg border border-zinc-300 px-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                      >
-                        <option value="active">Active</option>
-                        <option value="inactive">Inactive</option>
-                        <option value="terminated">Terminated</option>
-                      </select>
-                    </label>
-                    <label className="text-xs font-medium text-zinc-600 sm:col-span-2">
-                      Primary Role
-                      <select
-                        value={editForm.primary_role}
-                        onChange={(e) => setEditForm((s) => ({ ...s, primary_role: e.target.value }))}
-                        className="mt-1 h-10 w-full rounded-lg border border-zinc-300 px-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                      >
-                        {ROLE_OPTIONS.map((role) => (
-                          <option key={role} value={role}>
-                            {role}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <div className="flex flex-wrap gap-4 sm:col-span-2">
-                      <label className="inline-flex items-center gap-2 text-xs font-medium text-zinc-600">
-                        <input
-                          type="checkbox"
-                          checked={Boolean(editForm.is_shift_lead)}
-                          onChange={(e) => setEditForm((s) => ({ ...s, is_shift_lead: e.target.checked }))}
-                          className="h-4 w-4 accent-[#C8102E]"
-                        />
-                        Is shift lead
-                      </label>
-                      <label className="inline-flex items-center gap-2 text-xs font-medium text-zinc-600">
-                        <input
-                          type="checkbox"
-                          checked={Boolean(editForm.is_trainer)}
-                          onChange={(e) => setEditForm((s) => ({ ...s, is_trainer: e.target.checked }))}
-                          className="h-4 w-4 accent-[#C8102E]"
-                        />
-                        Can Train Other Employees
-                      </label>
-                    </div>
-                    <label className="text-xs font-medium text-zinc-600 sm:col-span-2">
-                      Notes
-                      <textarea
-                        value={editForm.notes}
-                        onChange={(e) => setEditForm((s) => ({ ...s, notes: e.target.value }))}
-                        rows={3}
-                        className="mt-1 w-full rounded-lg border border-zinc-300 px-2 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                      />
-                    </label>
-                    <div className="flex gap-2 sm:col-span-2">
-                      <button type="button" onClick={() => saveEmployeeEdit(emp.id)} disabled={Boolean(editPinError)} className="rounded-lg bg-[#C8102E] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">
-                        Save
-                      </button>
-                      <button type="button" onClick={() => setEditingId(null)} className="rounded-lg border border-zinc-300 px-3 py-2 text-xs font-semibold">
-                        Cancel
-                      </button>
-                    </div>
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                  <span className="rounded px-2 py-0.5 text-xs text-white" style={{ background: roleColor(emp.primary_role) }}>
+                    {emp.primary_role || "Unassigned role"}
+                  </span>
+                  <span className={`rounded px-2 py-0.5 text-xs font-semibold ${statusBadgeClass(category === "terminated" ? "terminated" : category === "inactive" ? "inactive" : "active")}`}>
+                    {category === "terminated" ? "Terminated" : category === "inactive" ? "Inactive" : "Active"}
+                  </span>
+                  {emp.is_trainer ? (
+                    <span className="rounded bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">🎓 TRAINER</span>
+                  ) : null}
+                  {emp.is_shift_lead ? (
+                    <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900">⭐ Shift Lead</span>
+                  ) : null}
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <p>
+                    <span className="font-semibold">Phone:</span> {emp.phone || "—"}
+                  </p>
+                  <p>
+                    <span className="font-semibold">Email:</span> {emp.email || "—"}
+                  </p>
+                  <p>
+                    <span className="font-semibold">Hire Date:</span> {emp.hire_date || "—"}
+                  </p>
+                  <p>
+                    <span className="font-semibold">Access Role:</span>{" "}
+                    {HUB_ROLE_OPTIONS.find((o) => o.value === emp.role)?.label || emp.role || "Crew"}
+                  </p>
+                  <p>
+                    <span className="font-semibold">PIN:</span>{" "}
+                    <button type="button" onClick={() => revealPin(emp.id)} className="font-mono text-xs hover:underline">
+                      {revealedPinId === emp.id ? emp.employee_code || "—" : "****"}
+                    </button>
+                  </p>
+                  <p>
+                    <span className="font-semibold">Last Modified:</span> {formatRelativeTime(employeeModifiedAt(emp))}
+                  </p>
+                  <p>
+                    <span className="font-semibold">Current Wage 🔒:</span> {money(currentWage?.hourly_rate)}
+                  </p>
+                  <p>
+                    <span className="font-semibold">Regular:</span> {money(currentWage?.hourly_rate)}
+                  </p>
+                  <p>
+                    <span className="font-semibold">Overtime:</span> {money((Number(currentWage?.hourly_rate) || 0) * 1.5)} (1.5x)
+                  </p>
+                  {emp.notes ? (
+                    <p className="sm:col-span-2">
+                      <span className="font-semibold">Notes:</span> {emp.notes}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="mt-3">
+                  <p className="mb-1 font-semibold">Stations</p>
+                  <div className="flex flex-wrap gap-1">
+                    {employeeCerts.length ? (
+                      employeeCerts.map((c) => (
+                        <span key={`${c.employee_id}-${c.station}`} className={`rounded px-2 py-0.5 text-[11px] ${stationStatusBadge(c)}`}>
+                          {c.station}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-xs text-zinc-400">No station progress yet</span>
+                    )}
                   </div>
-                )}
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <button type="button" onClick={() => setWageHistoryEmployee(emp)} className="rounded-lg border border-zinc-300 px-3 py-2 text-xs font-semibold">
+                    Wage History
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDetailEmployeeId(null);
+                      openEmployeeEdit(emp);
+                    }}
+                    className="rounded-lg border border-zinc-300 px-3 py-2 text-xs font-semibold"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRaiseEmployee(emp);
+                      setRaiseForm({ new_rate: "", effective_date: toDateStr(new Date()), reason: "Performance Review", notes: "" });
+                    }}
+                    className="rounded-lg bg-[#C8102E] px-3 py-2 text-xs font-semibold text-white"
+                  >
+                    Give Raise
+                  </button>
+                </div>
               </div>
             );
           })()}
@@ -1646,7 +1519,10 @@ export default function PeoplePage() {
       ) : null}
 
       {showAddEmployee ? (
-        <Modal title="Add New Employee" onClose={() => setShowAddEmployee(false)}>
+        <Modal
+          title={editingEmployeeId ? `Edit Employee — ${addForm.first_name} ${addForm.last_name}`.trim() : "Add New Employee"}
+          onClose={closeEmployeeModal}
+        >
           <div className="grid gap-2 sm:grid-cols-2">
             <label className="text-xs font-medium text-zinc-600">
               First Name *
@@ -1724,15 +1600,22 @@ export default function PeoplePage() {
               </select>
             </label>
             <label className="text-xs font-medium text-zinc-600">
-              Starting Wage *
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={addForm.starting_wage}
-                onChange={(e) => setAddForm((s) => ({ ...s, starting_wage: e.target.value }))}
-                className="mt-1 h-10 w-full rounded-lg border border-zinc-300 px-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-              />
+              {editingEmployeeId ? "Current Wage 🔒" : "Starting Wage *"}
+              {editingEmployeeId ? (
+                <p className="mt-1 text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                  {money(addForm.starting_wage)}
+                  <span className="ml-2 text-xs font-normal text-zinc-500">Use Give Raise to change wage</span>
+                </p>
+              ) : (
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={addForm.starting_wage}
+                  onChange={(e) => setAddForm((s) => ({ ...s, starting_wage: e.target.value }))}
+                  className="mt-1 h-10 w-full rounded-lg border border-zinc-300 px-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                />
+              )}
             </label>
             <label className="text-xs font-medium text-zinc-600">
               Status
@@ -1764,14 +1647,28 @@ export default function PeoplePage() {
               />
               Can Train Other Employees
             </label>
+            <label className="text-xs font-medium text-zinc-600 sm:col-span-2">
+              Notes
+              <textarea
+                value={addForm.notes}
+                onChange={(e) => setAddForm((s) => ({ ...s, notes: e.target.value }))}
+                rows={3}
+                className="mt-1 w-full rounded-lg border border-zinc-300 px-2 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+              />
+            </label>
           </div>
           <button
             type="button"
-            onClick={addEmployee}
-            disabled={Boolean(addPinError) || !addForm.first_name.trim() || !addForm.last_name.trim()}
+            onClick={saveEmployeeFromModal}
+            disabled={
+              Boolean(addPinError) ||
+              !addForm.first_name.trim() ||
+              !addForm.last_name.trim() ||
+              (!editingEmployeeId && (!addForm.starting_wage || Number(addForm.starting_wage) <= 0))
+            }
             className="mt-3 h-11 rounded-lg bg-[#C8102E] px-4 text-sm font-semibold text-white disabled:opacity-50"
           >
-            Save Employee
+            {editingEmployeeId ? "Save Changes" : "Save Employee"}
           </button>
         </Modal>
       ) : null}
