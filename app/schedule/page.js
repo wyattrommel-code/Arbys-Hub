@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { canAccess } from "@/lib/permissions";
 import { getSupabase } from "@/lib/supabase";
 
 const RED = "#C8102E";
@@ -202,6 +203,17 @@ function dayNameFromDate(dateStr) {
   return new Date(`${dateStr}T00:00:00`).toLocaleDateString("en-US", { weekday: "long" });
 }
 
+function rowMatchesSession(rowName, employee) {
+  if (!employee) return false;
+  const target = `${employee.first_name || ""} ${employee.last_name || ""}`.trim().toLowerCase();
+  const row = String(rowName || "").trim().toLowerCase();
+  if (!target || !row) return false;
+  if (row === target) return true;
+  const last = String(employee.last_name || "").trim().toLowerCase();
+  const rowLast = row.split(/\s+/).pop() || "";
+  return Boolean(last && (rowLast === last || rowLast.includes(last) || last.includes(rowLast)));
+}
+
 export default function SchedulePage() {
   const [tab, setTab] = useState("WEEK VIEW");
   const [weekStart, setWeekStart] = useState(() => toDateStr(getWeekStartSunday()));
@@ -212,7 +224,37 @@ export default function SchedulePage() {
   const [laborRows, setLaborRows] = useState([]);
   const [dayOpen, setDayOpen] = useState({});
   const [employeeOpen, setEmployeeOpen] = useState({});
+  const [sessionEmployee, setSessionEmployee] = useState(null);
+  const [canViewFullSchedule, setCanViewFullSchedule] = useState(false);
   const todayStr = toDateStr(new Date());
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/auth/me")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json) => {
+        if (!cancelled && json?.employee) {
+          setSessionEmployee(json.employee);
+          setCanViewFullSchedule(canAccess(json.employee.role, "schedule.full"));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const visibleScheduleRows = useMemo(() => {
+    if (canViewFullSchedule) return scheduleRows;
+    if (!sessionEmployee) return [];
+    return scheduleRows.filter((row) => rowMatchesSession(row.employee_name, sessionEmployee));
+  }, [scheduleRows, canViewFullSchedule, sessionEmployee]);
+
+  const visibleLaborRows = useMemo(() => {
+    if (canViewFullSchedule) return laborRows;
+    if (!sessionEmployee) return [];
+    return laborRows.filter((row) => rowMatchesSession(row.employee_name, sessionEmployee));
+  }, [laborRows, canViewFullSchedule, sessionEmployee]);
 
   const weekEnd = useMemo(() => toDateStr(addDays(new Date(`${weekStart}T00:00:00`), 6)), [weekStart]);
 
@@ -251,18 +293,18 @@ export default function SchedulePage() {
 
   const laborByDate = useMemo(() => {
     const map = new Map();
-    for (const row of laborRows) {
+    for (const row of visibleLaborRows) {
       const key = row.log_date;
       if (!map.has(key)) map.set(key, []);
       map.get(key).push(row);
     }
     return map;
-  }, [laborRows]);
+  }, [visibleLaborRows]);
 
   const weekDays = useMemo(() => Array.from({ length: 7 }, (_, i) => toDateStr(addDays(new Date(`${weekStart}T00:00:00`), i))), [weekStart]);
 
   const weekComparisonsByDay = useMemo(() => {
-    const rows = scheduleRows.filter((r) => r.shift_date >= weekStart && r.shift_date <= weekEnd);
+    const rows = visibleScheduleRows.filter((r) => r.shift_date >= weekStart && r.shift_date <= weekEnd);
     const byDay = new Map(weekDays.map((d) => [d, []]));
     for (const shift of rows) {
       const laborMatch = getLaborMatchForShift(shift, laborByDate);
@@ -273,7 +315,7 @@ export default function SchedulePage() {
       byDay.get(day)?.sort((a, b) => (a.schedInMin ?? 0) - (b.schedInMin ?? 0));
     }
     return byDay;
-  }, [scheduleRows, weekStart, weekEnd, weekDays, laborByDate, todayStr]);
+  }, [visibleScheduleRows, weekStart, weekEnd, weekDays, laborByDate, todayStr]);
 
   const weekSummary = useMemo(() => {
     const all = weekDays.flatMap((d) => weekComparisonsByDay.get(d) || []);
@@ -301,7 +343,7 @@ export default function SchedulePage() {
 
   const comparisonsByDay = useMemo(() => {
     const otByShiftKey = new Map();
-    const scheduledRowsForOt = scheduleRows
+    const scheduledRowsForOt = visibleScheduleRows
       .filter((r) => r.shift_date >= rangeStart && r.shift_date <= rangeEnd)
       .sort((a, b) => {
         const nameCmp = String(a.employee_name || "").localeCompare(String(b.employee_name || ""));
@@ -326,7 +368,7 @@ export default function SchedulePage() {
 
     const out = new Map();
     for (const day of comparisonDays) out.set(day, []);
-    const schedInRange = scheduleRows.filter((r) => r.shift_date >= rangeStart && r.shift_date <= rangeEnd);
+    const schedInRange = visibleScheduleRows.filter((r) => r.shift_date >= rangeStart && r.shift_date <= rangeEnd);
     for (const shift of schedInRange) {
       const laborMatch = getLaborMatchForShift(shift, laborByDate);
       const key = `${shift.employee_name}::${shift.shift_date}::${shift.scheduled_start}`;
@@ -362,13 +404,13 @@ export default function SchedulePage() {
       out.set(day, list);
     }
     return out;
-  }, [scheduleRows, laborByDate, comparisonDays, rangeStart, rangeEnd, todayStr]);
+  }, [visibleScheduleRows, laborByDate, comparisonDays, rangeStart, rangeEnd, todayStr]);
 
   const employeeWeekStats = useMemo(() => {
     const currentWeekStart = toDateStr(getWeekStartSunday(new Date()));
     const currentWeekEnd = toDateStr(addDays(new Date(`${currentWeekStart}T00:00:00`), 6));
     const out = new Map();
-    for (const labor of laborRows) {
+    for (const labor of visibleLaborRows) {
       if (labor.log_date < currentWeekStart || labor.log_date > currentWeekEnd) continue;
       const key = String(labor.employee_name || "").toLowerCase().trim();
       if (!out.has(key)) out.set(key, { workedHours: 0, otHours: 0, scheduledRemainingHours: 0 });
@@ -376,7 +418,7 @@ export default function SchedulePage() {
       row.workedHours += Number(labor.total_hours ?? labor.hours ?? 0) || 0;
       row.otHours += Number(labor.overtime_hours ?? 0) || 0;
     }
-    for (const shift of scheduleRows) {
+    for (const shift of visibleScheduleRows) {
       if (shift.shift_date < currentWeekStart || shift.shift_date > currentWeekEnd) continue;
       if (shift.shift_date < todayStr) continue;
       const key = String(shift.employee_name || "").toLowerCase().trim();
@@ -384,11 +426,11 @@ export default function SchedulePage() {
       out.get(key).scheduledRemainingHours += Number(shift.scheduled_hours) || 0;
     }
     return out;
-  }, [laborRows, scheduleRows, todayStr]);
+  }, [visibleLaborRows, visibleScheduleRows, todayStr]);
 
   const employeeCards = useMemo(() => {
     const start = toDateStr(addDays(new Date(), -30));
-    const shifts = scheduleRows.filter((s) => s.shift_date >= start);
+    const shifts = visibleScheduleRows.filter((s) => s.shift_date >= start);
     const byEmployee = new Map();
     for (const shift of shifts) {
       const key = shift.employee_name.toLowerCase();
@@ -472,10 +514,15 @@ export default function SchedulePage() {
       };
     });
     return cards.sort((a, b) => b.totalFlags - a.totalFlags || a.name.localeCompare(b.name));
-  }, [scheduleRows, laborByDate, todayStr, employeeWeekStats]);
+  }, [visibleScheduleRows, laborByDate, todayStr, employeeWeekStats]);
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 py-5">
+      {!canViewFullSchedule ? (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          Showing your shifts only. Shift leads and GMs can view the full store schedule.
+        </p>
+      ) : null}
       <div className="grid grid-cols-3 gap-2 rounded-xl border border-zinc-200 bg-white p-1 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
         {TABS.map((name) => (
           <button

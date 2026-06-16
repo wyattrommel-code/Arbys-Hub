@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import {
   BarChart3,
@@ -18,6 +19,7 @@ import {
   X,
 } from "lucide-react";
 import { SIDEBAR_NAV, isNavActive } from "@/lib/nav";
+import { canAccess } from "@/lib/permissions";
 
 const ICONS = {
   home: Home,
@@ -34,12 +36,13 @@ const ICONS = {
   settings: Settings,
 };
 
-function NavLinks({ onNavigate }) {
+function NavLinks({ role, onNavigate }) {
   const pathname = usePathname();
+  const visibleItems = SIDEBAR_NAV.filter((item) => canAccess(role, item.feature));
 
   return (
     <ul className="space-y-1">
-      {SIDEBAR_NAV.map((item) => {
+      {visibleItems.map((item) => {
         const active = isNavActive(pathname, item);
         const Icon = ICONS[item.icon];
         return (
@@ -65,6 +68,23 @@ function NavLinks({ onNavigate }) {
 }
 
 export default function Sidebar({ mobileOpen, onClose }) {
+  const [role, setRole] = useState("crew");
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/auth/me")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json) => {
+        if (!cancelled && json?.employee?.role) {
+          setRole(json.employee.role);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <>
       {mobileOpen ? (
@@ -85,7 +105,7 @@ export default function Sidebar({ mobileOpen, onClose }) {
           <span className="text-xl font-bold tracking-tight">Arby&apos;s</span>
         </div>
         <nav className="flex-1 overflow-y-auto px-3 py-4" aria-label="Main navigation">
-          <NavLinks />
+          <NavLinks role={role} />
         </nav>
       </aside>
 
@@ -109,7 +129,7 @@ export default function Sidebar({ mobileOpen, onClose }) {
           </button>
         </div>
         <nav className="flex-1 overflow-y-auto px-3 py-4" aria-label="Main navigation">
-          <NavLinks onNavigate={onClose} />
+          <NavLinks role={role} onNavigate={onClose} />
         </nav>
       </aside>
     </>

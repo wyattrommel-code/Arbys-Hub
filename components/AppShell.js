@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import AppHeader from "@/components/AppHeader";
+import FlashBanner from "@/components/FlashBanner";
 import Sidebar from "@/components/Sidebar";
 
 export default function AppShell({ children }) {
@@ -34,6 +35,7 @@ export default function AppShell({ children }) {
       <Sidebar mobileOpen={mobileOpen} onClose={closeMobile} />
       <div className="flex min-h-dvh min-w-0 flex-col md:pl-60">
         <AppHeader onMenuToggle={toggleMobile} menuOpen={mobileOpen} />
+        <FlashBanner />
         <main className="flex min-h-0 flex-1 flex-col">{children}</main>
       </div>
     </div>

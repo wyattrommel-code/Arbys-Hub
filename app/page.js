@@ -1,56 +1,71 @@
 import Link from "next/link";
+import { getCurrentEmployee, employeeCanAccess } from "@/lib/auth";
 
 const navCards = [
   {
     href: "/checklist",
     title: "Checklist",
     description: "Daily AM/PM task checklist with photo verification.",
+    feature: "checklists.complete",
   },
   {
     href: "/import",
     title: "Import",
     description: "Upload labor and hourly sales CSV files.",
+    feature: "import",
   },
   {
     href: "/waste",
     title: "Waste Tracker",
     description: "Log food waste with shift and retail-loss totals.",
+    feature: "waste.submit",
   },
   {
     href: "/roast-beef",
     title: "Roast Beef",
     description: "Open the daily roast beef sheet and forecast view.",
+    feature: "roast_beef",
   },
   {
     href: "/inventory",
     title: "Inventory",
     description: "Inventory tools placeholder page.",
+    feature: "inventory.view_edit",
   },
   {
     href: "/dashboard",
     title: "Dashboard",
     description: "GM dashboard placeholder page.",
+    feature: "dashboard",
   },
   {
     href: "/schedule",
     title: "Schedule & Attendance",
     description:
       "Compare scheduled vs actual shifts, track attendance patterns and flags.",
+    feature: "schedule.own",
   },
   {
     href: "/deployment",
     title: "Deployment Chart",
     description:
       "Enter station assignments for each shift. Morning by 10:30am, Night by 4:30pm.",
+    feature: "deployment.view",
   },
   {
     href: "/people",
     title: "People",
     description: "Manage employees, wages, certifications and training.",
+    feature: "people",
   },
 ];
 
-export default function Home() {
+export default async function Home() {
+  const employee = await getCurrentEmployee();
+  const visibleCards = navCards.filter((card) =>
+    employeeCanAccess(employee, card.feature)
+  );
+
   return (
     <section className="mx-auto flex w-full max-w-4xl flex-1 flex-col px-4 py-6 sm:px-6 sm:py-8">
       <p className="mb-5 text-sm text-zinc-600 dark:text-zinc-400">
@@ -61,7 +76,7 @@ export default function Home() {
         className="grid gap-3 sm:grid-cols-2"
         aria-label="Operations sections"
       >
-        {navCards.map(({ href, title, description }) => (
+        {visibleCards.map(({ href, title, description }) => (
           <Link
             key={href}
             href={href}

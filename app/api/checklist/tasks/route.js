@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getCurrentEmployee, isManager } from "@/lib/auth";
+import { getCurrentEmployee } from "@/lib/auth";
+import { canAccess } from "@/lib/permissions";
 import { STORE_ID } from "@/lib/constants";
 import { fetchCompletionsForDay, fetchTasksForDay } from "@/lib/checklist";
 import { groupTasksByRole } from "@/lib/checklist-roles";
@@ -24,8 +25,8 @@ export async function GET(request) {
     const supabase = getSupabaseServer();
 
     if (mode === "manage") {
-      if (!isManager(employee)) {
-        return NextResponse.json({ error: "Manager access required" }, { status: 403 });
+      if (!canAccess(employee.role, "checklists.manage")) {
+        return NextResponse.json({ error: "Access denied" }, { status: 403 });
       }
       const { data, error } = await supabase
         .from("checklist_tasks")
@@ -69,8 +70,8 @@ export async function POST(request) {
   if (!employee) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!isManager(employee)) {
-    return NextResponse.json({ error: "Manager access required" }, { status: 403 });
+  if (!canAccess(employee.role, "checklists.manage")) {
+    return NextResponse.json({ error: "Access denied" }, { status: 403 });
   }
 
   try {
@@ -109,8 +110,8 @@ export async function PATCH(request) {
   if (!employee) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!isManager(employee)) {
-    return NextResponse.json({ error: "Manager access required" }, { status: 403 });
+  if (!canAccess(employee.role, "checklists.manage")) {
+    return NextResponse.json({ error: "Access denied" }, { status: 403 });
   }
 
   try {

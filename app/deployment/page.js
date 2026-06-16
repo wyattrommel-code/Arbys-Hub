@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { fetchActiveEmployees, fetchActiveShiftLeadsOrAbove } from "@/lib/employees";
+import { canAccess } from "@/lib/permissions";
 import { getSupabase } from "@/lib/supabase";
 
 const STORE_ID = "payson";
@@ -123,6 +124,22 @@ export default function DeploymentPage() {
   const [submitError, setSubmitError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [successState, setSuccessState] = useState(null);
+  const [canSubmit, setCanSubmit] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/auth/me")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json) => {
+        if (!cancelled && json?.employee?.role) {
+          setCanSubmit(canAccess(json.employee.role, "deployment.submit"));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -403,17 +420,21 @@ export default function DeploymentPage() {
           >
             View History
           </Link>
-          <button
-            type="button"
-            onClick={submitAnother}
-            className="min-h-11 rounded-lg bg-[#C8102E] px-4 text-sm font-semibold text-white hover:bg-[#ab0d26]"
-          >
-            Submit Another
-          </button>
+          {canSubmit ? (
+            <button
+              type="button"
+              onClick={submitAnother}
+              className="min-h-11 rounded-lg bg-[#C8102E] px-4 text-sm font-semibold text-white hover:bg-[#ab0d26]"
+            >
+              Submit Another
+            </button>
+          ) : null}
         </div>
       </section>
     );
   }
+
+  const readOnly = !canSubmit;
 
   return (
     <section className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-4 px-4 py-6 sm:px-6 sm:py-8">
@@ -422,7 +443,13 @@ export default function DeploymentPage() {
         <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">{fmtLongDate(today)}</p>
       </header>
 
-      <form onSubmit={handleSubmit} className="space-y-4">
+      {readOnly ? (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          View only — shift lead or GM access is required to submit deployments.
+        </p>
+      ) : null}
+
+      <form onSubmit={readOnly ? (e) => e.preventDefault() : handleSubmit} className="space-y-4">
         <article className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
           <div className="grid gap-4">
             <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
@@ -431,7 +458,9 @@ export default function DeploymentPage() {
                 type="date"
                 value={logDate}
                 onChange={(e) => setLogDate(e.target.value)}
-                className="mt-1 h-11 w-full rounded-lg border border-zinc-300 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                readOnly={readOnly}
+                disabled={readOnly}
+                className="mt-1 h-11 w-full rounded-lg border border-zinc-300 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-950 disabled:opacity-70"
               />
             </label>
 
@@ -442,8 +471,9 @@ export default function DeploymentPage() {
                   <button
                     key={key}
                     type="button"
-                    onClick={() => setShiftKey(key)}
-                    className={`min-h-11 rounded-lg border text-sm font-bold ${
+                    onClick={() => !readOnly && setShiftKey(key)}
+                    disabled={readOnly}
+                    className={`min-h-11 rounded-lg border text-sm font-bold disabled:cursor-not-allowed disabled:opacity-70 ${
                       shiftKey === key
                         ? "border-[#C8102E] bg-[#C8102E] text-white"
                         : "border-zinc-300 bg-white text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200"
@@ -463,7 +493,8 @@ export default function DeploymentPage() {
               <select
                 value={submittedBy}
                 onChange={(e) => setSubmittedBy(e.target.value)}
-                className="mt-1 h-11 w-full rounded-lg border border-zinc-300 bg-white px-3 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                disabled={readOnly}
+                className="mt-1 h-11 w-full rounded-lg border border-zinc-300 bg-white px-3 text-sm disabled:opacity-70 dark:border-zinc-700 dark:bg-zinc-950"
               >
                 <option value="">Select shift lead...</option>
                 {submitterOptions.map((person) => (
@@ -535,8 +566,9 @@ export default function DeploymentPage() {
                           <input
                             type="checkbox"
                             checked={checked}
-                            onChange={() => toggleStation(row.id, station)}
-                            className="mr-2 h-4 w-4 accent-[#C8102E]"
+                            onChange={() => !readOnly && toggleStation(row.id, station)}
+                            disabled={readOnly}
+                            className="mr-2 h-4 w-4 accent-[#C8102E] disabled:cursor-not-allowed"
                           />
                           {station}
                         </label>
@@ -548,14 +580,17 @@ export default function DeploymentPage() {
                     type="text"
                     value={row.notes}
                     onChange={(e) => setRowField(row.id, "notes", e.target.value)}
+                    readOnly={readOnly}
+                    disabled={readOnly}
                     placeholder="Notes (optional)"
-                    className="mt-3 h-10 w-full rounded-lg border border-zinc-300 px-3 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                    className="mt-3 h-10 w-full rounded-lg border border-zinc-300 px-3 text-sm disabled:opacity-70 dark:border-zinc-700 dark:bg-zinc-950"
                   />
                 </div>
               ))}
             </div>
           )}
 
+          {!readOnly ? (
           <div className="border-t border-zinc-200 p-4 dark:border-zinc-800">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <select
@@ -587,6 +622,7 @@ export default function DeploymentPage() {
               </button>
             </div>
           </div>
+          ) : null}
         </article>
 
         <article className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
@@ -611,6 +647,7 @@ export default function DeploymentPage() {
 
         {submitError ? <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{submitError}</p> : null}
 
+        {canSubmit ? (
         <button
           type="submit"
           disabled={submitting}
@@ -618,6 +655,7 @@ export default function DeploymentPage() {
         >
           {submitting ? "Submitting..." : "Submit"}
         </button>
+        ) : null}
       </form>
     </section>
   );

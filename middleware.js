@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { canAccess, featureForPathname } from "./lib/permissions";
 import {
   SESSION_COOKIE,
   createSessionToken,
@@ -29,6 +30,15 @@ export async function middleware(request) {
     loginUrl.pathname = "/login";
     loginUrl.searchParams.set("from", pathname);
     return NextResponse.redirect(loginUrl);
+  }
+
+  const requiredFeature = featureForPathname(pathname);
+  if (requiredFeature && !canAccess(session.role, requiredFeature)) {
+    const homeUrl = request.nextUrl.clone();
+    homeUrl.pathname = "/";
+    homeUrl.search = "";
+    homeUrl.searchParams.set("flash", "access-denied");
+    return NextResponse.redirect(homeUrl);
   }
 
   const response = NextResponse.next();

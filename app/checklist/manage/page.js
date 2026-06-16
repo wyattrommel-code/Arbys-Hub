@@ -1,11 +1,11 @@
 import { redirect } from "next/navigation";
 import ManageTasksPanel from "@/components/checklist/ManageTasksPanel";
-import { getCurrentEmployee, isManager } from "@/lib/auth";
+import { employeeCanAccess, getCurrentEmployee } from "@/lib/auth";
 
 export default async function ChecklistManagePage() {
   const employee = await getCurrentEmployee();
-  if (!isManager(employee)) {
-    redirect("/checklist?flash=manager-required");
+  if (!employeeCanAccess(employee, "checklists.manage")) {
+    redirect("/?flash=access-denied");
   }
 
   return (
