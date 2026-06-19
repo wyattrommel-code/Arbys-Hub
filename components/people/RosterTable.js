@@ -3,22 +3,22 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { MoreVertical } from "lucide-react";
+import { normalizeRole } from "@/lib/permissions";
 
 const HUB_ROLE_LABELS = {
   crew: "Crew",
   shift_lead: "Shift Lead",
-  manager: "Manager",
   gm: "GM",
 };
 
 function hubRoleLabel(role) {
-  return HUB_ROLE_LABELS[role] || role || "Crew";
+  return HUB_ROLE_LABELS[normalizeRole(role)] || "Crew";
 }
 
 function hubRoleBadgeClass(role) {
-  if (role === "gm") return "bg-purple-100 text-purple-800";
-  if (role === "manager") return "bg-blue-100 text-blue-800";
-  if (role === "shift_lead") return "bg-amber-100 text-amber-900";
+  const normalized = normalizeRole(role);
+  if (normalized === "gm") return "bg-purple-100 text-purple-800";
+  if (normalized === "shift_lead") return "bg-amber-100 text-amber-900";
   return "bg-zinc-100 text-zinc-700";
 }
 

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import RosterTable from "@/components/people/RosterTable";
 import { STORE_ID } from "@/lib/constants";
+import { normalizeRole } from "@/lib/permissions";
 import { getSupabase } from "@/lib/supabase";
 
 const RED = "#C8102E";
@@ -14,7 +15,6 @@ const ROLE_OPTIONS = ["Morning", "Breakfast", "Open", "Day Lead", "Mid Shift", "
 const HUB_ROLE_OPTIONS = [
   { value: "crew", label: "Crew" },
   { value: "shift_lead", label: "Shift Lead" },
-  { value: "manager", label: "Manager" },
   { value: "gm", label: "GM" },
 ];
 
@@ -398,7 +398,7 @@ export default function PeoplePage() {
       first_name: emp.first_name || "",
       last_name: emp.last_name || "",
       employee_code: emp.employee_code || "",
-      role: emp.role || "crew",
+      role: normalizeRole(emp.role),
       phone: emp.phone || "",
       email: emp.email || "",
       hire_date: emp.hire_date || "",
@@ -477,7 +477,7 @@ export default function PeoplePage() {
         first_name: addForm.first_name.trim(),
         last_name: addForm.last_name.trim(),
         employee_code: String(addForm.employee_code).trim(),
-        role: addForm.role || "crew",
+        role: normalizeRole(addForm.role),
         store_id: STORE_ID,
         is_active: normalizeStatus(addForm.status) === "active",
         phone: addForm.phone || null,
@@ -511,7 +511,7 @@ export default function PeoplePage() {
         first_name: addForm.first_name.trim(),
         last_name: addForm.last_name.trim(),
         employee_code: String(addForm.employee_code).trim(),
-        role: addForm.role || "crew",
+        role: normalizeRole(addForm.role),
         is_active: normalizeStatus(addForm.status) === "active",
         phone: addForm.phone || null,
         email: addForm.email || null,
@@ -1179,7 +1179,7 @@ export default function PeoplePage() {
                   </p>
                   <p>
                     <span className="font-semibold">Access Role:</span>{" "}
-                    {HUB_ROLE_OPTIONS.find((o) => o.value === emp.role)?.label || emp.role || "Crew"}
+                    {HUB_ROLE_OPTIONS.find((o) => o.value === normalizeRole(emp.role))?.label || "Crew"}
                   </p>
                   <p>
                     <span className="font-semibold">PIN:</span>{" "}
@@ -1662,7 +1662,7 @@ export default function PeoplePage() {
                 onChange={(e) => setAddForm((s) => ({ ...s, is_trainer: e.target.checked }))}
                 className="h-4 w-4 accent-[#C8102E]"
               />
-              Can Train Other Employees
+              Trainer
             </label>
             <label className="text-xs font-medium text-zinc-600 sm:col-span-2">
               Notes
