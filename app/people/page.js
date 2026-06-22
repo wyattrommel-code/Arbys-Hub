@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import RosterTable from "@/components/people/RosterTable";
 import { STORE_ID } from "@/lib/constants";
+import { fetchEmployees, getRosterCategory, normalizeEmployeeStatus } from "@/lib/employees";
 import { normalizeRole } from "@/lib/permissions";
 import { getSupabase } from "@/lib/supabase";
 
@@ -89,18 +90,12 @@ function daysBetween(startDate, endDate = new Date()) {
   return Math.max(0, Math.floor(ms / 86400000));
 }
 
-function normalizeStatus(value) {
-  const v = String(value || "").toLowerCase();
-  if (v === "terminated") return "terminated";
-  if (v === "inactive") return "inactive";
-  return "active";
+function rosterCategory(emp) {
+  return getRosterCategory(emp);
 }
 
-function rosterCategory(emp) {
-  const status = normalizeStatus(emp.status);
-  if (status === "terminated") return "terminated";
-  if (status === "inactive" || emp.is_active === false) return "inactive";
-  return "active";
+function normalizeStatus(value) {
+  return normalizeEmployeeStatus(value);
 }
 
 function employeeModifiedAt(emp) {
@@ -237,17 +232,17 @@ export default function PeoplePage() {
     setLoading(true);
     setError("");
     try {
-      const [empRes, wageRes, certRes, sessionRes, questionRes, attemptRes] = await Promise.all([
-        supabase.from("employees").select("*"),
+      const [empData, wageRes, certRes, sessionRes, questionRes, attemptRes] = await Promise.all([
+        fetchEmployees(supabase, { includeInactive: true }),
         supabase.from("employee_wages").select("*"),
         supabase.from("station_certifications").select("*"),
         supabase.from("training_sessions").select("*"),
         supabase.from("station_questions").select("*"),
         supabase.from("certification_attempts").select("*"),
       ]);
-      const firstError = [empRes.error, wageRes.error, certRes.error, sessionRes.error, questionRes.error, attemptRes.error].find(Boolean);
+      const firstError = [wageRes.error, certRes.error, sessionRes.error, questionRes.error, attemptRes.error].find(Boolean);
       if (firstError) throw firstError;
-      setEmployees(empRes.data || []);
+      setEmployees(empData || []);
       setWages(wageRes.data || []);
       setCerts(certRes.data || []);
       setSessions(sessionRes.data || []);

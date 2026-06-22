@@ -4,6 +4,7 @@ import { STORE_ID } from "@/lib/constants";
 import { fetchCompletionsForDay, fetchTasksForDay } from "@/lib/checklist";
 import { normalizeTaskRole, roleDisplayName } from "@/lib/checklist-roles";
 import { CHECKLIST_ROLE_ORDER } from "@/lib/constants";
+import { fetchEmployees } from "@/lib/employees";
 import { addDaysISO, getStoreDayOfWeek, getStoreToday } from "@/lib/store-time";
 import { getSupabaseServer } from "@/lib/supabase-server";
 
@@ -70,13 +71,10 @@ export async function GET(request) {
       .eq("is_active", true);
     if (tasksErr) throw tasksErr;
 
-    const { data: employees, error: empErr } = await supabase
-      .from("employees")
-      .select("id, first_name, last_name")
-      .eq("store_id", STORE_ID)
-      .eq("is_active", true)
-      .order("first_name");
-    if (empErr) throw empErr;
+    const employees = await fetchEmployees(supabase, {
+      select: "id, first_name, last_name",
+      orderBy: { column: "first_name", ascending: true },
+    });
 
     const completionKeys = new Set(
       (completions || []).map((c) => `${c.completion_date}:${c.shift}:${c.task_id}`)

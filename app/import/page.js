@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
+import { fetchEmployees } from "@/lib/employees";
 import { getSupabase } from "@/lib/supabase";
 import { calculateOvertimeForWeekRows, getWeekEndSaturday, getWeekStartSunday } from "@/lib/laborOvertime";
 
@@ -205,11 +206,10 @@ async function upsertLaborOvertimeRows(supabase, updates) {
 }
 
 async function buildActiveEmployeeWageLookup(supabase) {
-  const [{ data: employees, error: empErr }, { data: wageRows, error: wageErr }] = await Promise.all([
-    supabase.from("employees").select("id, first_name, last_name, status").eq("status", "active"),
+  const [employees, { data: wageRows, error: wageErr }] = await Promise.all([
+    fetchEmployees(supabase, { select: "id, first_name, last_name, status" }),
     supabase.from("employee_wages").select("employee_id, hourly_rate, effective_date, created_at"),
   ]);
-  if (empErr) throw empErr;
   if (wageErr) throw wageErr;
 
   const activeByNameKey = new Map();

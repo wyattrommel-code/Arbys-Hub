@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { MoreVertical } from "lucide-react";
 import { normalizeRole } from "@/lib/permissions";
+import { getRosterCategory } from "@/lib/employees";
 
 const HUB_ROLE_LABELS = {
   crew: "Crew",
@@ -268,12 +269,24 @@ export default function RosterTable({
             </tr>
           </thead>
           <tbody>
-            {rows.map((emp) => (
-              <tr key={emp.id} className="h-11 border-b border-zinc-100 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/50">
+            {rows.map((emp) => {
+              const inactive = getRosterCategory(emp) !== "active";
+              return (
+              <tr
+                key={emp.id}
+                className={`h-11 border-b border-zinc-100 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/50 ${
+                  inactive ? "bg-zinc-50/80 opacity-70 dark:bg-zinc-900/40" : ""
+                }`}
+              >
                 <td className="px-3 py-2">
                   <button type="button" onClick={() => onOpenDetail(emp)} className="font-medium text-[#C8102E] hover:underline">
                     {emp._displayName}
                     {emp.is_shift_lead ? " ⭐" : ""}
+                    {inactive ? (
+                      <span className="ml-2 rounded bg-zinc-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300">
+                        {getRosterCategory(emp) === "terminated" ? "Terminated" : "Inactive"}
+                      </span>
+                    ) : null}
                   </button>
                 </td>
                 <td className="px-3 py-2">
@@ -309,20 +322,33 @@ export default function RosterTable({
                   />
                 </td>
               </tr>
-            ))}
+            );
+            })}
           </tbody>
         </table>
       </div>
 
       {/* Mobile list */}
       <div className="divide-y divide-zinc-100 dark:divide-zinc-800 md:hidden">
-        {rows.map((emp) => (
-          <div key={emp.id} className="px-3 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-900/50">
+        {rows.map((emp) => {
+          const inactive = getRosterCategory(emp) !== "active";
+          return (
+          <div
+            key={emp.id}
+            className={`px-3 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-900/50 ${
+              inactive ? "bg-zinc-50/80 opacity-70 dark:bg-zinc-900/40" : ""
+            }`}
+          >
             <div className="flex items-start justify-between gap-2">
               <button type="button" onClick={() => onOpenDetail(emp)} className="min-w-0 flex-1 text-left">
                 <p className="font-medium text-[#C8102E]">
                   {emp._displayName}
                   {emp.is_shift_lead ? " ⭐" : ""}
+                  {inactive ? (
+                    <span className="ml-2 rounded bg-zinc-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300">
+                      {getRosterCategory(emp) === "terminated" ? "Terminated" : "Inactive"}
+                    </span>
+                  ) : null}
                 </p>
                 <p className="mt-0.5">
                   <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${hubRoleBadgeClass(emp.role)}`}>
@@ -348,7 +374,8 @@ export default function RosterTable({
               <span className="text-[10px] text-zinc-500">{emp._modifiedLabel}</span>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </>
   );

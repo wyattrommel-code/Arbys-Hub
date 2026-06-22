@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { fetchEmployees, isNameAmongActiveEmployees } from "@/lib/employees";
 import {
   Bar,
   BarChart,
@@ -448,6 +449,14 @@ export default function DashboardPage() {
           return { rows: [], disconnected: true };
         }
       };
+      const loadEmployees = async () => {
+        try {
+          const rows = await fetchEmployees(supabase);
+          return { rows, disconnected: false };
+        } catch {
+          return { rows: [], disconnected: true };
+        }
+      };
       const currentWeekStart = currentWeekStartSundayISO();
       const currentWeekEnd = addDays(currentWeekStart, 6);
       const reportStartWeek = addDays(reportStart, -new Date(`${reportStart}T00:00:00`).getDay());
@@ -461,7 +470,7 @@ export default function DashboardPage() {
         readRange("dt_logs", "log_date"),
         readRange("deployment_logs", "log_date"),
         readRange("schedule_shifts", "shift_date", "*", todayLocalISODate(), currentWeekEnd),
-        readAll("employees"),
+        loadEmployees(),
         readAll("employee_wages"),
         readRange("labor_logs", "log_date", "*", reportStartWeek, reportEndWeek),
       ]);
@@ -885,7 +894,6 @@ export default function DashboardPage() {
       (reportState.employeeRows || []).map((row) => [fullNameFromEmployeeRow(row).toLowerCase(), row.primary_role || "—"])
     );
     const activeEmployeeNames = (reportState.employeeRows || [])
-      .filter((row) => String(row.status || "").toLowerCase() === "active")
       .map((row) => fullNameFromEmployeeRow(row))
       .filter(Boolean);
     const activeSet = new Set(activeEmployeeNames.map((n) => n.toLowerCase()));
@@ -971,7 +979,7 @@ export default function DashboardPage() {
     const currentWeekStart = currentWeekStartSundayISO();
     const currentWeekEnd = addDays(currentWeekStart, 6);
     const today = todayLocalISODate();
-    const activeEmployeesForWeek = (reportState.employeeRows || []).filter((row) => String(row.status || "").toLowerCase() === "active");
+    const activeEmployeesForWeek = reportState.employeeRows || [];
     const weekWorkedMap = new Map();
     for (const labor of reportState.laborContextRows || []) {
       if (labor.log_date < currentWeekStart || labor.log_date > currentWeekEnd) continue;

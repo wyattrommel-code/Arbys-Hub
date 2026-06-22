@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { fetchEmployees, isNameAmongActiveEmployees } from "@/lib/employees";
 import { canAccess } from "@/lib/permissions";
 import { getSupabase } from "@/lib/supabase";
 
@@ -226,7 +227,22 @@ export default function SchedulePage() {
   const [employeeOpen, setEmployeeOpen] = useState({});
   const [sessionEmployee, setSessionEmployee] = useState(null);
   const [canViewFullSchedule, setCanViewFullSchedule] = useState(false);
+  const [activeEmployeeRecords, setActiveEmployeeRecords] = useState([]);
   const todayStr = toDateStr(new Date());
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchEmployees(getSupabase(), { select: "id, first_name, last_name, is_active, status" })
+      .then((rows) => {
+        if (!cancelled) setActiveEmployeeRecords(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setActiveEmployeeRecords([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -513,8 +529,10 @@ export default function SchedulePage() {
           40,
       };
     });
-    return cards.sort((a, b) => b.totalFlags - a.totalFlags || a.name.localeCompare(b.name));
-  }, [visibleScheduleRows, laborByDate, todayStr, employeeWeekStats]);
+    return cards
+      .filter((card) => isNameAmongActiveEmployees(card.name, activeEmployeeRecords))
+      .sort((a, b) => b.totalFlags - a.totalFlags || a.name.localeCompare(b.name));
+  }, [visibleScheduleRows, laborByDate, todayStr, employeeWeekStats, activeEmployeeRecords]);
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 py-5">

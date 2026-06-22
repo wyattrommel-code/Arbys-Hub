@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { STORE_ID } from "@/lib/constants";
+import { fetchEmployeeByPin } from "@/lib/employees";
 import { getSupabaseServer } from "@/lib/supabase-server";
 import {
   SESSION_COOKIE,
@@ -17,17 +18,7 @@ export async function POST(request) {
     }
 
     const supabase = getSupabaseServer();
-    const { data: employee, error } = await supabase
-      .from("employees")
-      .select("id, first_name, last_name, role")
-      .eq("store_id", STORE_ID)
-      .eq("employee_code", pin)
-      .eq("is_active", true)
-      .maybeSingle();
-
-    if (error) {
-      return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-    }
+    const employee = await fetchEmployeeByPin(supabase, pin, STORE_ID);
 
     if (!employee) {
       return NextResponse.json({ ok: false, error: "Invalid PIN" }, { status: 401 });
