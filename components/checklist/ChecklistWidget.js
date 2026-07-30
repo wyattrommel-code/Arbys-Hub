@@ -72,7 +72,6 @@ export default function ChecklistWidget({
         });
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || "Failed");
-        await load();
       } catch (err) {
         setData(prev);
         setError(err.message);
@@ -80,7 +79,7 @@ export default function ChecklistWidget({
         setBusyId(null);
       }
     },
-    [data, load]
+    [data]
   );
 
   const handleUncomplete = useCallback(
@@ -101,7 +100,6 @@ export default function ChecklistWidget({
         });
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || "Failed");
-        await load();
       } catch (err) {
         setData(prev);
         setError(err.message);
@@ -109,7 +107,7 @@ export default function ChecklistWidget({
         setBusyId(null);
       }
     },
-    [data, load]
+    [data]
   );
 
   const handlePhoto = useCallback(
@@ -138,6 +136,19 @@ export default function ChecklistWidget({
 
   const handleSaveNote = useCallback(
     async ({ completion_id, notes }) => {
+      const prev = data;
+      if (prev?.sections) {
+        setData({
+          ...prev,
+          sections: prev.sections.map((section) => ({
+            ...section,
+            rows: section.rows.map((row) => {
+              if (!row.completion || row.completion.id !== completion_id) return row;
+              return { ...row, completion: { ...row.completion, notes } };
+            }),
+          })),
+        });
+      }
       try {
         const res = await fetch("/api/checklist/complete", {
           method: "PATCH",
@@ -146,12 +157,12 @@ export default function ChecklistWidget({
         });
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || "Failed to save note");
-        await load();
       } catch (err) {
+        setData(prev);
         setError(err.message);
       }
     },
-    [load]
+    [data]
   );
 
   const rowBusy = (row) => busyId === `${row.completionShift}-${row.task.id}`;
