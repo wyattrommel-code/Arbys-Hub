@@ -4,6 +4,7 @@ import {
   SESSION_COOKIE,
   createSessionToken,
   sessionCookieOptions,
+  sessionNeedsRefresh,
   verifySessionToken,
 } from "./lib/session";
 
@@ -42,8 +43,12 @@ export async function middleware(request) {
   }
 
   const response = NextResponse.next();
-  const refreshed = await createSessionToken(session);
-  response.cookies.set(SESSION_COOKIE, refreshed, sessionCookieOptions());
+  const dest = request.headers.get("sec-fetch-dest");
+  const isDocumentNav = dest === "document" || dest === null;
+  if (isDocumentNav && sessionNeedsRefresh(session)) {
+    const refreshed = await createSessionToken(session);
+    response.cookies.set(SESSION_COOKIE, refreshed, sessionCookieOptions());
+  }
   return response;
 }
 
