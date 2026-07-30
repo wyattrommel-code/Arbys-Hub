@@ -1,20 +1,21 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  CHECKLIST_ROLE_OPTIONS,
+  CHECKLIST_ROLE_LABELS,
+  CHECKLIST_ROLE_ORDER,
   DAY_OF_WEEK_OPTIONS,
   SHIFT_OPTIONS,
   VERIFICATION_METHOD_OPTIONS,
 } from "@/lib/constants";
 
-function emptyTask() {
+function emptyTask(role = "any") {
   return {
     title: "",
     description: "",
     day_of_week: "",
     shift: "BOTH",
-    role: "any",
+    role,
     verification_method: "checkbox",
     display_order: 0,
     is_active: true,
@@ -26,6 +27,7 @@ export default function ManageTasksPanel() {
   const [error, setError] = useState("");
   const [draft, setDraft] = useState(emptyTask());
   const [savingId, setSavingId] = useState(null);
+  const [selectedRole, setSelectedRole] = useState(null);
 
   const load = useCallback(async () => {
     setError("");
@@ -53,7 +55,7 @@ export default function ManageTasksPanel() {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Save failed");
-      if (!id) setDraft(emptyTask());
+      if (!id) setDraft(emptyTask(selectedRole || "any"));
       await load();
     } catch (err) {
       setError(err.message);
@@ -68,9 +70,85 @@ export default function ManageTasksPanel() {
     );
   }
 
+  function openChecklist(role) {
+    setSelectedRole(role);
+    setDraft(emptyTask(role));
+  }
+
+  function backToList() {
+    setSelectedRole(null);
+    setDraft(emptyTask());
+  }
+
+  const roleCounts = useMemo(() => {
+    const counts = Object.fromEntries(CHECKLIST_ROLE_ORDER.map((role) => [role, 0]));
+    for (const task of tasks) {
+      const role = task.role || "any";
+      if (role in counts) counts[role] += 1;
+    }
+    return counts;
+  }, [tasks]);
+
+  const detailTasks = useMemo(() => {
+    if (!selectedRole) return [];
+    return tasks
+      .filter((task) => (task.role || "any") === selectedRole)
+      .slice()
+      .sort((a, b) => {
+        const orderDiff = (a.display_order ?? 0) - (b.display_order ?? 0);
+        if (orderDiff !== 0) return orderDiff;
+        return String(a.title || "").localeCompare(String(b.title || ""));
+      });
+  }, [tasks, selectedRole]);
+
+  if (selectedRole === null) {
+    return (
+      <div className="space-y-4">
+        {error ? <p className="text-sm text-red-600">{error}</p> : null}
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          {CHECKLIST_ROLE_ORDER.map((role) => {
+            const count = roleCounts[role] ?? 0;
+            return (
+              <button
+                key={role}
+                type="button"
+                onClick={() => openChecklist(role)}
+                className="rounded-xl border border-zinc-200 bg-white px-4 py-4 text-left shadow-sm transition hover:border-[#C8102E]/40 dark:border-zinc-800 dark:bg-zinc-900"
+              >
+                <p className="text-base font-semibold text-[#C8102E]">
+                  {CHECKLIST_ROLE_LABELS[role] || role}
+                </p>
+                <p className="mt-1 text-sm text-zinc-500">
+                  {count} {count === 1 ? "item" : "items"}
+                </p>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
+
+      <div className="space-y-2">
+        <button
+          type="button"
+          onClick={backToList}
+          className="text-sm font-semibold text-[#C8102E] hover:underline"
+        >
+          ← All checklists
+        </button>
+        <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">
+          {CHECKLIST_ROLE_LABELS[selectedRole] || selectedRole}
+        </h2>
+        <p className="text-sm text-zinc-500">
+          {detailTasks.length} {detailTasks.length === 1 ? "item" : "items"}
+        </p>
+      </div>
 
       <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
         <table className="min-w-full text-left text-sm">
@@ -81,14 +159,13 @@ export default function ManageTasksPanel() {
               <th className="px-2 py-2">Description</th>
               <th className="px-2 py-2">Day</th>
               <th className="px-2 py-2">Shift</th>
-              <th className="px-2 py-2">Role</th>
               <th className="px-2 py-2">Method</th>
               <th className="px-2 py-2">Active</th>
               <th className="px-2 py-2" />
             </tr>
           </thead>
           <tbody>
-            {tasks.map((task) => (
+            {detailTasks.map((task) => (
               <tr key={task.id} className="border-b border-zinc-50 dark:border-zinc-800">
                 <td className="px-2 py-2">
                   <input
@@ -143,19 +220,6 @@ export default function ManageTasksPanel() {
                 <td className="px-2 py-2">
                   <select
                     className="rounded border px-1 py-1 dark:border-zinc-700 dark:bg-zinc-950"
-                    value={task.role || "any"}
-                    onChange={(e) => updateLocal(task.id, "role", e.target.value)}
-                  >
-                    {CHECKLIST_ROLE_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
-                </td>
-                <td className="px-2 py-2">
-                  <select
-                    className="rounded border px-1 py-1 dark:border-zinc-700 dark:bg-zinc-950"
                     value={task.verification_method || "checkbox"}
                     onChange={(e) => updateLocal(task.id, "verification_method", e.target.value)}
                   >
@@ -185,6 +249,13 @@ export default function ManageTasksPanel() {
                 </td>
               </tr>
             ))}
+            {detailTasks.length === 0 ? (
+              <tr>
+                <td colSpan={8} className="px-3 py-6 text-center text-sm text-zinc-500">
+                  No tasks in this checklist yet. Add one below.
+                </td>
+              </tr>
+            ) : null}
           </tbody>
         </table>
       </div>
@@ -228,17 +299,6 @@ export default function ManageTasksPanel() {
           </select>
           <select
             className="rounded border px-3 py-2 dark:border-zinc-700 dark:bg-zinc-950"
-            value={draft.role}
-            onChange={(e) => setDraft((d) => ({ ...d, role: e.target.value }))}
-          >
-            {CHECKLIST_ROLE_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-          <select
-            className="rounded border px-3 py-2 dark:border-zinc-700 dark:bg-zinc-950"
             value={draft.verification_method}
             onChange={(e) => setDraft((d) => ({ ...d, verification_method: e.target.value }))}
           >
@@ -259,7 +319,7 @@ export default function ManageTasksPanel() {
         <button
           type="button"
           disabled={!draft.title.trim() || savingId === "new"}
-          onClick={() => saveTask(null, draft)}
+          onClick={() => saveTask(null, { ...draft, role: selectedRole })}
           className="mt-3 rounded-lg bg-[#C8102E] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
         >
           Add new task
