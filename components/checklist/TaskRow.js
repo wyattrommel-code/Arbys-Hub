@@ -74,7 +74,8 @@ export default function TaskRow({
 }) {
   const fileRef = useRef(null);
   const { task, completion, completionShift } = row;
-  const done = Boolean(completion);
+  const uploading = Boolean(completion?.uploading);
+  const done = Boolean(completion) && !uploading;
   const captureTask = isCaptureMethod(task.verification_method);
   const signatureTask = isSignatureMethod(task.verification_method);
 
@@ -82,6 +83,7 @@ export default function TaskRow({
   const [draftNote, setDraftNote] = useState("");
   const [savingNote, setSavingNote] = useState(false);
   const [imageOpen, setImageOpen] = useState(false);
+  const controlsDisabled = busy || savingNote || uploading;
 
   useEffect(() => {
     if (noteOpen && done) {
@@ -90,7 +92,7 @@ export default function TaskRow({
   }, [noteOpen, done, completion?.id, completion?.notes]);
 
   async function handleCheckboxClick() {
-    if (busy || savingNote) return;
+    if (controlsDisabled) return;
     if (done) {
       const ok = window.confirm("Mark as incomplete?");
       if (!ok) return;
@@ -115,7 +117,7 @@ export default function TaskRow({
   async function handleCaptureSelected(e) {
     const file = e.target.files?.[0];
     e.target.value = "";
-    if (!file || busy || savingNote) return;
+    if (!file || controlsDisabled) return;
     if (done) {
       const ok = window.confirm(
         signatureTask ? "Mark as incomplete and upload a new signature?" : "Mark as incomplete and retake photo?"
@@ -159,7 +161,7 @@ export default function TaskRow({
           <>
             <button
               type="button"
-              disabled={busy || savingNote}
+              disabled={controlsDisabled}
               onClick={() => fileRef.current?.click()}
               className="shrink-0 disabled:opacity-50"
               aria-label={
@@ -182,7 +184,7 @@ export default function TaskRow({
         ) : (
           <button
             type="button"
-            disabled={busy || savingNote}
+            disabled={controlsDisabled}
             onClick={handleCheckboxClick}
             className="shrink-0 disabled:opacity-50"
             aria-label={done ? `Uncheck ${task.title}` : `Complete ${task.title}`}
@@ -204,6 +206,15 @@ export default function TaskRow({
           </div>
           {task.description ? (
             <p className="mt-0.5 text-xs text-zinc-500">{task.description}</p>
+          ) : null}
+          {uploading ? (
+            <p className="mt-1 flex items-center gap-1.5 text-xs text-zinc-500">
+              <span
+                className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-zinc-300 border-t-zinc-600"
+                aria-hidden="true"
+              />
+              Uploading…
+            </p>
           ) : null}
           {done && completion ? (
             <p className="mt-1 text-xs text-green-700 dark:text-green-400">
@@ -246,7 +257,7 @@ export default function TaskRow({
                 <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
-                    disabled={savingNote || busy}
+                    disabled={controlsDisabled}
                     onClick={handleSaveNoteClick}
                     className="rounded-lg bg-[#C8102E] px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
                   >

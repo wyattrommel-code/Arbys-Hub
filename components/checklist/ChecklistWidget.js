@@ -113,6 +113,16 @@ export default function ChecklistWidget({
   const handlePhoto = useCallback(
     async ({ file, notes, ...payload }) => {
       setBusyId(`${payload.shift}-${payload.task_id}`);
+      const prev = data;
+      if (prev?.sections) {
+        setData({
+          ...prev,
+          sections: patchSections(prev.sections, payload, {
+            uploading: true,
+            notes: notes || null,
+          }),
+        });
+      }
       try {
         const compressed = await compressImageFile(file);
         const form = new FormData();
@@ -124,14 +134,25 @@ export default function ChecklistWidget({
         const res = await fetch("/api/checklist/upload", { method: "POST", body: form });
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || "Upload failed");
-        await load();
+        setData((current) => {
+          if (!current?.sections) return current;
+          return {
+            ...current,
+            sections: patchSections(current.sections, payload, {
+              ...(json.completion || {}),
+              photo_url: json.photo_url || json.completion?.photo_url || null,
+              uploading: false,
+            }),
+          };
+        });
       } catch (err) {
+        setData(prev);
         setError(err.message);
       } finally {
         setBusyId(null);
       }
     },
-    [load]
+    [data]
   );
 
   const handleSaveNote = useCallback(
