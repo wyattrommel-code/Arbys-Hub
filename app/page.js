@@ -46,6 +46,20 @@ const navCards = [
     feature: "schedule.own",
   },
   {
+    href: "/schedule/builder",
+    title: "Schedule Builder",
+    description:
+      "Build and publish the weekly schedule. Drag shifts, apply templates, export.",
+    feature: "schedule.full",
+  },
+  {
+    href: "/schedule/me",
+    title: "My Schedule",
+    description:
+      "See your published shifts, update availability, and request time off.",
+    feature: "schedule.own",
+  },
+  {
     href: "/deployment",
     title: "Deployment Chart",
     description:

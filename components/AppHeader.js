@@ -10,7 +10,7 @@ export default function AppHeader({ onMenuToggle, menuOpen = false }) {
   const title = titleForPath(pathname);
 
   return (
-    <header className="sticky top-0 z-40 border-b border-[#9e0f25] bg-[#C8102E] text-white shadow-md">
+    <header className="sticky top-0 z-40 border-b border-[#9e0f25] bg-[#C8102E] text-white shadow-md print:hidden">
       <div className="flex h-16 w-full items-center justify-between gap-2 px-3 sm:px-4">
         <div className="flex min-w-[44px] shrink-0 items-center md:min-w-0">
           <button

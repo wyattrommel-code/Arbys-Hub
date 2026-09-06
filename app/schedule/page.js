@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import ScheduleSubnav from "@/components/schedule/ScheduleSubnav";
 import { fetchEmployees, isNameAmongActiveEmployees } from "@/lib/employees";
 import { canAccess } from "@/lib/permissions";
 import { getSupabase } from "@/lib/supabase";
@@ -536,6 +537,7 @@ export default function SchedulePage() {
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 py-5">
+      <ScheduleSubnav current="attendance" canBuild={canViewFullSchedule} />
       {!canViewFullSchedule ? (
         <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           Showing your shifts only. Shift leads and GMs can view the full store schedule.
@@ -591,8 +593,21 @@ export default function SchedulePage() {
             <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
               <p className="font-semibold text-zinc-800 dark:text-zinc-200">No schedule uploaded for this week</p>
               <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                Upload a Jolt schedule CSV on the Import page{" "}
-                <Link href="/import" className="text-[#C8102E] underline">/import</Link>
+                {canViewFullSchedule ? (
+                  <>
+                    Build the week in{" "}
+                    <Link href="/schedule/builder" className="text-[#C8102E] underline">
+                      Schedule Builder
+                    </Link>
+                    , or upload a schedule CSV on{" "}
+                    <Link href="/import" className="text-[#C8102E] underline">
+                      /import
+                    </Link>
+                    .
+                  </>
+                ) : (
+                  "Check back after a manager publishes this week."
+                )}
               </p>
             </div>
           ) : (

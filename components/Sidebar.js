@@ -6,6 +6,8 @@ import { usePathname } from "next/navigation";
 import {
   BarChart3,
   Calendar,
+  CalendarDays,
+  CalendarPlus,
   ClipboardList,
   Flame,
   Gauge,
@@ -29,6 +31,8 @@ const ICONS = {
   package: Package,
   users: Users,
   calendar: Calendar,
+  "calendar-plus": CalendarPlus,
+  "calendar-days": CalendarDays,
   "layout-grid": LayoutGrid,
   gauge: Gauge,
   upload: Upload,
@@ -90,7 +94,7 @@ export default function Sidebar({ mobileOpen, onClose }) {
       {mobileOpen ? (
         <button
           type="button"
-          className="fixed inset-0 z-50 bg-black/50 md:hidden"
+          className="fixed inset-0 z-50 bg-black/50 print:hidden md:hidden"
           aria-label="Close menu"
           onClick={onClose}
         />
@@ -98,7 +102,7 @@ export default function Sidebar({ mobileOpen, onClose }) {
 
       {/* Desktop — fixed full viewport height, stays visible while main scrolls */}
       <aside
-        className="fixed inset-y-0 left-0 z-30 hidden h-dvh w-60 flex-col bg-[#9e0f25] text-white md:flex"
+        className="fixed inset-y-0 left-0 z-30 hidden h-dvh w-60 flex-col bg-[#9e0f25] text-white print:hidden md:flex"
         aria-label="Sidebar"
       >
         <div className="flex h-16 shrink-0 items-center border-b border-white/10 px-5">
@@ -111,7 +115,7 @@ export default function Sidebar({ mobileOpen, onClose }) {
 
       {/* Mobile drawer */}
       <aside
-        className={`fixed inset-y-0 left-0 z-[60] flex h-dvh w-60 flex-col bg-[#9e0f25] text-white shadow-xl transition-transform duration-200 ease-out md:hidden ${
+        className={`fixed inset-y-0 left-0 z-[60] flex h-dvh w-60 flex-col bg-[#9e0f25] text-white shadow-xl transition-transform duration-200 ease-out print:hidden md:hidden ${
           mobileOpen ? "translate-x-0" : "-translate-x-full pointer-events-none"
         }`}
         aria-label="Mobile sidebar"

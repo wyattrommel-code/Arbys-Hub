@@ -38,7 +38,7 @@ function FlashBannerInner() {
 
   return (
     <div
-      className="border-b border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-950 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-100"
+      className="border-b border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-950 print:hidden dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-100"
       role="status"
     >
       {message}

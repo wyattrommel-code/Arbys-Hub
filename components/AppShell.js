@@ -33,7 +33,7 @@ export default function AppShell({ children }) {
   return (
     <div className="min-h-dvh">
       <Sidebar mobileOpen={mobileOpen} onClose={closeMobile} />
-      <div className="flex min-h-dvh min-w-0 flex-col md:pl-60">
+      <div className="flex min-h-dvh min-w-0 flex-col md:pl-60 print:pl-0">
         <AppHeader onMenuToggle={toggleMobile} menuOpen={mobileOpen} />
         <FlashBanner />
         <main className="flex min-h-0 flex-1 flex-col">{children}</main>
