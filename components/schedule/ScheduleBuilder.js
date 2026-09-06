@@ -1,36 +1,41 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import ScheduleSubnav from "@/components/schedule/ScheduleSubnav";
 import ScheduleToast from "@/components/schedule/ScheduleToast";
-import ShiftEditModal from "@/components/schedule/ShiftEditModal";
+import ShiftModal from "@/components/schedule/ShiftModal";
 import { employeeFullName, fetchEmployees, matchesEmployeeByName } from "@/lib/employees";
 import {
   compareEmployees,
   computeScheduledHours,
   contrastText,
   DAY_LABELS,
-  defaultShiftForRole,
   downloadCsv,
   formatClock,
   formatHours,
   formatShortDate,
   formatWeekRange,
+  isUnassignedName,
   nameKey,
+  parseStationNames,
   SCHEDULE_STORE_ID,
-  SHIFT_PALETTE,
   SHIFT_SOURCE_HUB,
   shiftPayload,
   shiftWarningMessages,
   shiftsToCsv,
+  UNASSIGNED_EMPLOYEE_NAME,
+  UNASSIGNED_ROW_ID,
+  unassignedEmployeeRow,
+  unpaidBreakMinutes,
   weekDates,
-  weekEndSaturday,
   weekStartSunday,
 } from "@/lib/schedule";
 import { addDaysISO, getStoreToday } from "@/lib/store-time";
 import { getSupabase } from "@/lib/supabase";
 
 function findEmployeeForShift(shift, employees) {
+  if (isUnassignedName(shift.employee_name)) {
+    return employees.find((emp) => emp.isUnassigned) || null;
+  }
   if (shift.jolt_employee_id) {
     const byJolt = employees.find(
       (emp) =>
@@ -42,13 +47,41 @@ function findEmployeeForShift(shift, employees) {
   return employees.find((emp) => matchesEmployeeByName(shift.employee_name, emp)) || null;
 }
 
-function stationColor(stations, stationName) {
-  const match = stations.find((s) => s.name === stationName);
+function stationColor(stations, stationValue) {
+  const first = parseStationNames(stationValue)[0];
+  const match = stations.find((s) => s.name === first);
   return match?.color || "#6b7280";
 }
 
 function rowKey(emp) {
+  if (emp?.isUnassigned) return emp.id;
   return emp.isSynthetic ? `name:${nameKey(emp.fullName)}` : emp.id;
+}
+
+function timeToMinutesSafe(value) {
+  const text = String(value || "");
+  const match = text.match(/^(\d{2}):(\d{2})/);
+  if (!match) return 0;
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+async function writeShift(supabase, method, payload, id) {
+  const table = supabase.from("schedule_shifts");
+  const query =
+    method === "insert"
+      ? table.insert(payload).select("*").single()
+      : table.update(payload).eq("id", id).select("*").single();
+  let { data, error } = await query;
+  if (error && /unpaid_break/.test(error.message || "")) {
+    const { unpaid_break_minutes: _ignored, ...rest } = payload;
+    const retry =
+      method === "insert"
+        ? await supabase.from("schedule_shifts").insert(rest).select("*").single()
+        : await supabase.from("schedule_shifts").update(rest).eq("id", id).select("*").single();
+    data = retry.data;
+    error = retry.error;
+  }
+  return { data, error };
 }
 
 export default function ScheduleBuilder() {
@@ -64,16 +97,16 @@ export default function ScheduleBuilder() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [sessionEmployee, setSessionEmployee] = useState(null);
-  const [editingShift, setEditingShift] = useState(null);
+  const [modal, setModal] = useState(null);
   const [dropTarget, setDropTarget] = useState(null);
   const [toast, setToast] = useState(null);
-  const [templateName, setTemplateName] = useState("");
-  const [pendingCount, setPendingCount] = useState(0);
-  const [showTimeOff, setShowTimeOff] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [weekTemplateName, setWeekTemplateName] = useState("");
 
   const shiftsRef = useRef(shifts);
   const dragRef = useRef(null);
   const toastTimer = useRef(null);
+  const templatesRef = useRef(null);
 
   useEffect(() => {
     shiftsRef.current = shifts;
@@ -105,6 +138,16 @@ export default function ScheduleBuilder() {
     };
   }, []);
 
+  useEffect(() => {
+    function onDocClick(event) {
+      if (templatesRef.current && !templatesRef.current.contains(event.target)) {
+        setTemplatesOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, []);
+
   const loadWeek = useCallback(async () => {
     setLoading(true);
     setLoadError("");
@@ -120,14 +163,7 @@ export default function ScheduleBuilder() {
         });
       }
 
-      const [
-        shiftsRes,
-        stationsRes,
-        weekRes,
-        templatesRes,
-        timeOffWeekRes,
-        timeOffPendingRes,
-      ] = await Promise.all([
+      const [shiftsRes, stationsRes, weekRes, templatesRes, timeOffRes] = await Promise.all([
         supabase
           .from("schedule_shifts")
           .select("*")
@@ -156,19 +192,13 @@ export default function ScheduleBuilder() {
           .eq("store_id", SCHEDULE_STORE_ID)
           .lte("start_date", weekEnd)
           .gte("end_date", weekStart),
-        supabase
-          .from("time_off_requests")
-          .select("*")
-          .eq("store_id", SCHEDULE_STORE_ID)
-          .eq("status", "pending"),
       ]);
 
       if (shiftsRes.error) throw shiftsRes.error;
       if (stationsRes.error) throw stationsRes.error;
       if (weekRes.error && weekRes.error.code !== "PGRST116") throw weekRes.error;
       if (templatesRes.error) throw templatesRes.error;
-      if (timeOffWeekRes.error) throw timeOffWeekRes.error;
-      if (timeOffPendingRes.error) throw timeOffPendingRes.error;
+      if (timeOffRes.error) throw timeOffRes.error;
 
       const mappedEmployees = (employeeRows || []).map((row) => ({
         ...row,
@@ -177,10 +207,7 @@ export default function ScheduleBuilder() {
       const ids = mappedEmployees.map((e) => e.id).filter(Boolean);
       let availabilityRows = [];
       if (ids.length) {
-        const availRes = await supabase
-          .from("employee_availability")
-          .select("*")
-          .in("employee_id", ids);
+        const availRes = await supabase.from("employee_availability").select("*").in("employee_id", ids);
         if (availRes.error) throw availRes.error;
         availabilityRows = availRes.data || [];
       }
@@ -192,11 +219,7 @@ export default function ScheduleBuilder() {
       setStations(storeStations.length ? storeStations : stationRows);
       setWeekRecord(weekRes.data || null);
       setTemplates(templatesRes.data || []);
-      const mergedTimeOff = new Map();
-      for (const row of [...(timeOffWeekRes.data || []), ...(timeOffPendingRes.data || [])]) {
-        mergedTimeOff.set(row.id, row);
-      }
-      setTimeOff([...mergedTimeOff.values()]);
+      setTimeOff(timeOffRes.data || []);
       setAvailability(availabilityRows);
     } catch (err) {
       setLoadError(err?.message || "Could not load the schedule.");
@@ -210,25 +233,10 @@ export default function ScheduleBuilder() {
     loadWeek();
   }, [loadWeek]);
 
-  useEffect(() => {
-    let cancelled = false;
-    async function loadPending() {
-      const { count, error } = await supabase
-        .from("time_off_requests")
-        .select("id", { count: "exact", head: true })
-        .eq("store_id", SCHEDULE_STORE_ID)
-        .eq("status", "pending");
-      if (!cancelled && !error) setPendingCount(count || 0);
-    }
-    loadPending();
-    return () => {
-      cancelled = true;
-    };
-  }, [supabase, timeOff]);
-
   const rows = useMemo(() => {
-    const list = [...employees];
+    const list = [unassignedEmployeeRow(), ...employees];
     for (const shift of shifts) {
+      if (isUnassignedName(shift.employee_name)) continue;
       const emp = findEmployeeForShift(shift, list);
       if (emp) continue;
       const already = list.some((row) => nameKey(row.fullName) === nameKey(shift.employee_name));
@@ -259,9 +267,7 @@ export default function ScheduleBuilder() {
     }
     for (const list of map.values()) {
       list.sort(
-        (a, b) =>
-          (timeToMinutesSafe(a.scheduled_start) ?? 0) -
-          (timeToMinutesSafe(b.scheduled_start) ?? 0)
+        (a, b) => (timeToMinutesSafe(a.scheduled_start) ?? 0) - (timeToMinutesSafe(b.scheduled_start) ?? 0)
       );
     }
     return map;
@@ -281,6 +287,17 @@ export default function ScheduleBuilder() {
     () => shifts.reduce((sum, s) => sum + (Number(s.scheduled_hours) || 0), 0),
     [shifts]
   );
+
+  const distinctRoles = useMemo(() => {
+    const set = new Set();
+    for (const shift of shifts) {
+      if (shift.role) set.add(shift.role);
+    }
+    for (const emp of employees) {
+      if (emp.primary_role) set.add(emp.primary_role);
+    }
+    return [...set];
+  }, [shifts, employees]);
 
   const availabilityIndex = useMemo(() => {
     const map = new Map();
@@ -307,66 +324,195 @@ export default function ScheduleBuilder() {
   function warningsFor(shift, emp) {
     const dow = dates.indexOf(shift.shift_date);
     const avail =
-      (emp && !emp.isSynthetic && availabilityIndex.get(`${emp.id}|${dow}`)) ||
+      (emp && !emp.isSynthetic && !emp.isUnassigned && availabilityIndex.get(`${emp.id}|${dow}`)) ||
       availabilityIndex.get(`name:${nameKey(shift.employee_name)}|${dow}`) ||
       null;
     const off = approvedTimeOffByName.get(nameKey(shift.employee_name)) || [];
     return shiftWarningMessages(shift, avail, off);
   }
 
-  async function persistInsert(local, tempId) {
-    const { data, error } = await supabase
-      .from("schedule_shifts")
-      .insert(shiftPayload(local, weekStart))
+  function openCreate(employee, date) {
+    if (published) return;
+    setModal({
+      mode: "create",
+      draft: {
+        shift_date: date,
+        employeeId: rowKey(employee),
+        role: employee.primary_role || "",
+        station: "",
+        scheduled_start: "",
+        scheduled_end: "",
+        unpaid_break_minutes: 0,
+      },
+    });
+  }
+
+  function openEdit(shift) {
+    if (published) return;
+    const emp = findEmployeeForShift(shift, rows);
+    setModal({
+      mode: "edit",
+      shift,
+      draft: {
+        shift_date: shift.shift_date,
+        employeeId: emp ? rowKey(emp) : UNASSIGNED_ROW_ID,
+        role: shift.role || "",
+        station: shift.station || "",
+        scheduled_start: shift.scheduled_start,
+        scheduled_end: shift.scheduled_end,
+        unpaid_break_minutes: shift.unpaid_break_minutes || 0,
+      },
+    });
+  }
+
+  async function saveShiftTemplate(fields, date) {
+    const autoName =
+      fields.templateName ||
+      `${fields.role || "Shift"} ${formatClock(fields.scheduled_start)}–${formatClock(fields.scheduled_end)}`;
+    const { data: template, error } = await supabase
+      .from("schedule_templates")
+      .insert({
+        name: autoName,
+        description: "Shift template",
+        store_id: SCHEDULE_STORE_ID,
+      })
       .select("*")
       .single();
+    if (error) {
+      showToast(error.message || "Shift saved, but template failed.");
+      return;
+    }
+    const { error: shiftErr } = await supabase.from("schedule_template_shifts").insert({
+      template_id: template.id,
+      day_of_week: dates.indexOf(date),
+      employee_name: fields.employee?.fullName || UNASSIGNED_EMPLOYEE_NAME,
+      jolt_employee_id: fields.employee?.jolt_employee_id || null,
+      role: fields.role || null,
+      station: fields.station || null,
+      scheduled_start: fields.scheduled_start,
+      scheduled_end: fields.scheduled_end,
+      scheduled_hours: fields.scheduled_hours,
+      unpaid_break_minutes: unpaidBreakMinutes(fields.unpaid_break_minutes),
+    });
+    if (shiftErr && /unpaid_break/.test(shiftErr.message || "")) {
+      await supabase.from("schedule_template_shifts").insert({
+        template_id: template.id,
+        day_of_week: dates.indexOf(date),
+        employee_name: fields.employee?.fullName || UNASSIGNED_EMPLOYEE_NAME,
+        jolt_employee_id: fields.employee?.jolt_employee_id || null,
+        role: fields.role || null,
+        station: fields.station || null,
+        scheduled_start: fields.scheduled_start,
+        scheduled_end: fields.scheduled_end,
+        scheduled_hours: fields.scheduled_hours,
+      });
+    } else if (shiftErr) {
+      showToast(shiftErr.message || "Shift saved, but template shifts failed.");
+      return;
+    }
+    setTemplates((current) => [template, ...current]);
+  }
+
+  async function persistInsert(local, tempId) {
+    const { data, error } = await writeShift(supabase, "insert", shiftPayload(local, weekStart));
     if (error) throw error;
     setShifts((current) =>
       current.map((row) => {
         if (row.id !== tempId) return row;
         const moved =
-          row.shift_date !== local.shift_date ||
-          row.employee_name !== local.employee_name ||
-          row.scheduled_start !== local.scheduled_start;
+          row.shift_date !== local.shift_date || row.employee_name !== local.employee_name;
         const merged = { ...data, ...row, id: data.id };
         if (moved) {
-          supabase
-            .from("schedule_shifts")
-            .update(shiftPayload(merged, weekStart))
-            .eq("id", data.id)
-            .then(({ error: followErr }) => {
-              if (followErr) showToast(followErr.message || "Could not save moved shift.");
-            });
+          writeShift(supabase, "update", shiftPayload(merged, weekStart), data.id).then(({ error: followErr }) => {
+            if (followErr) showToast(followErr.message || "Could not save moved shift.");
+          });
         }
         return merged;
       })
     );
   }
 
-  async function addShift({ employee, date, start, end, role, station }) {
+  async function createFromModal(fields) {
     if (published) return;
+    const employee = fields.employee || unassignedEmployeeRow();
+    const date = modal.draft.shift_date;
     const tempId = `temp-${crypto.randomUUID()}`;
     const local = {
       id: tempId,
       shift_date: date,
-      employee_name: employee.fullName,
+      employee_name: employee.fullName || UNASSIGNED_EMPLOYEE_NAME,
       jolt_employee_id: employee.jolt_employee_id || null,
-      role: role || employee.primary_role || null,
-      station: station || null,
-      scheduled_start: start,
-      scheduled_end: end,
-      scheduled_hours: computeScheduledHours(start, end),
+      role: fields.role,
+      station: fields.station,
+      scheduled_start: fields.scheduled_start,
+      scheduled_end: fields.scheduled_end,
+      unpaid_break_minutes: fields.unpaid_break_minutes,
+      scheduled_hours: computeScheduledHours(
+        fields.scheduled_start,
+        fields.scheduled_end,
+        fields.unpaid_break_minutes
+      ),
       week_start_date: weekStart,
       store_id: SCHEDULE_STORE_ID,
       notes: null,
       source: SHIFT_SOURCE_HUB,
     };
     setShifts((current) => [...current, local]);
+    setModal(null);
     try {
       await persistInsert(local, tempId);
+      if (fields.saveAsTemplate) await saveShiftTemplate(fields, date);
     } catch (err) {
       setShifts((current) => current.filter((row) => row.id !== tempId));
       showToast(err?.message || "Could not add shift.");
+    }
+  }
+
+  async function saveFromModal(fields) {
+    if (published) return;
+    if (modal.mode === "create") {
+      await createFromModal(fields);
+      return;
+    }
+    const prev = shiftsRef.current.find((s) => s.id === modal.shift.id) || modal.shift;
+    const employee = fields.employee || unassignedEmployeeRow();
+    const next = {
+      ...prev,
+      employee_name: employee.fullName || UNASSIGNED_EMPLOYEE_NAME,
+      jolt_employee_id: employee.isUnassigned ? null : employee.jolt_employee_id || null,
+      role: fields.role,
+      station: fields.station,
+      scheduled_start: fields.scheduled_start,
+      scheduled_end: fields.scheduled_end,
+      unpaid_break_minutes: fields.unpaid_break_minutes,
+      scheduled_hours: computeScheduledHours(
+        fields.scheduled_start,
+        fields.scheduled_end,
+        fields.unpaid_break_minutes
+      ),
+    };
+    setShifts((current) => current.map((row) => (row.id === prev.id ? next : row)));
+    setModal(null);
+    if (String(prev.id).startsWith("temp-")) return;
+    const { error } = await writeShift(supabase, "update", shiftPayload(next, weekStart), prev.id);
+    if (error) {
+      setShifts((current) => current.map((row) => (row.id === prev.id ? prev : row)));
+      showToast(error.message || "Could not update shift.");
+      return;
+    }
+    if (fields.saveAsTemplate) await saveShiftTemplate(fields, next.shift_date);
+  }
+
+  async function deleteShift(shift) {
+    if (published) return;
+    const prev = shiftsRef.current;
+    setShifts((current) => current.filter((row) => row.id !== shift.id));
+    setModal(null);
+    if (String(shift.id).startsWith("temp-")) return;
+    const { error } = await supabase.from("schedule_shifts").delete().eq("id", shift.id);
+    if (error) {
+      setShifts(prev);
+      showToast(error.message || "Could not delete shift.");
     }
   }
 
@@ -375,57 +521,17 @@ export default function ScheduleBuilder() {
     const prev = shiftsRef.current.find((s) => s.id === shiftId);
     if (!prev) return;
     const patch = {
-      employee_name: employee.fullName,
-      jolt_employee_id: employee.jolt_employee_id || prev.jolt_employee_id || null,
+      employee_name: employee.fullName || UNASSIGNED_EMPLOYEE_NAME,
+      jolt_employee_id: employee.isUnassigned ? null : employee.jolt_employee_id || prev.jolt_employee_id || null,
       shift_date: date,
       week_start_date: weekStart,
     };
-    setShifts((current) =>
-      current.map((row) => (row.id === shiftId ? { ...row, ...patch } : row))
-    );
+    setShifts((current) => current.map((row) => (row.id === shiftId ? { ...row, ...patch } : row)));
     if (String(shiftId).startsWith("temp-")) return;
-    const { error } = await supabase
-      .from("schedule_shifts")
-      .update(shiftPayload({ ...prev, ...patch }, weekStart))
-      .eq("id", shiftId);
+    const { error } = await writeShift(supabase, "update", shiftPayload({ ...prev, ...patch }, weekStart), shiftId);
     if (error) {
-      setShifts((current) =>
-        current.map((row) => (row.id === shiftId ? prev : row))
-      );
+      setShifts((current) => current.map((row) => (row.id === shiftId ? prev : row)));
       showToast(error.message || "Could not move shift.");
-    }
-  }
-
-  async function saveShiftEdits(shift, patch) {
-    if (published) return;
-    const prev = shiftsRef.current.find((s) => s.id === shift.id) || shift;
-    const next = { ...prev, ...patch };
-    next.scheduled_hours = computeScheduledHours(next.scheduled_start, next.scheduled_end);
-    setShifts((current) => current.map((row) => (row.id === shift.id ? next : row)));
-    setEditingShift(null);
-    if (String(shift.id).startsWith("temp-")) return;
-    const { error } = await supabase
-      .from("schedule_shifts")
-      .update(shiftPayload(next, weekStart))
-      .eq("id", shift.id);
-    if (error) {
-      setShifts((current) =>
-        current.map((row) => (row.id === shift.id ? prev : row))
-      );
-      showToast(error.message || "Could not update shift.");
-    }
-  }
-
-  async function deleteShift(shift) {
-    if (published) return;
-    const prev = shiftsRef.current;
-    setShifts((current) => current.filter((row) => row.id !== shift.id));
-    setEditingShift(null);
-    if (String(shift.id).startsWith("temp-")) return;
-    const { error } = await supabase.from("schedule_shifts").delete().eq("id", shift.id);
-    if (error) {
-      setShifts(prev);
-      showToast(error.message || "Could not delete shift.");
     }
   }
 
@@ -450,8 +556,8 @@ export default function ScheduleBuilder() {
     showToast(nextPublished ? "Schedule published." : "Schedule unlocked.", "success");
   }
 
-  async function saveTemplate() {
-    const name = templateName.trim();
+  async function saveWeekTemplate() {
+    const name = weekTemplateName.trim();
     if (!name) {
       showToast("Name the template before saving.");
       return;
@@ -472,32 +578,41 @@ export default function ScheduleBuilder() {
     const templateShifts = shifts
       .filter((shift) => dates.includes(shift.shift_date))
       .map((shift) => ({
-      template_id: template.id,
-      day_of_week: dates.indexOf(shift.shift_date),
-      employee_name: shift.employee_name,
-      jolt_employee_id: shift.jolt_employee_id || null,
-      role: shift.role || null,
-      station: shift.station || null,
-      scheduled_start: shift.scheduled_start,
-      scheduled_end: shift.scheduled_end,
-      scheduled_hours: Number(shift.scheduled_hours) || computeScheduledHours(shift.scheduled_start, shift.scheduled_end),
-    }));
+        template_id: template.id,
+        day_of_week: dates.indexOf(shift.shift_date),
+        employee_name: shift.employee_name,
+        jolt_employee_id: shift.jolt_employee_id || null,
+        role: shift.role || null,
+        station: shift.station || null,
+        scheduled_start: shift.scheduled_start,
+        scheduled_end: shift.scheduled_end,
+        scheduled_hours:
+          Number(shift.scheduled_hours) ||
+          computeScheduledHours(shift.scheduled_start, shift.scheduled_end, shift.unpaid_break_minutes),
+        unpaid_break_minutes: unpaidBreakMinutes(shift.unpaid_break_minutes),
+      }));
     if (templateShifts.length) {
-      const { error: shiftErr } = await supabase
-        .from("schedule_template_shifts")
-        .insert(templateShifts);
-      if (shiftErr) {
+      const { error: shiftErr } = await supabase.from("schedule_template_shifts").insert(templateShifts);
+      if (shiftErr && /unpaid_break/.test(shiftErr.message || "")) {
+        const stripped = templateShifts.map(({ unpaid_break_minutes: _b, ...rest }) => rest);
+        const retry = await supabase.from("schedule_template_shifts").insert(stripped);
+        if (retry.error) {
+          showToast(retry.error.message || "Template saved, but shifts failed.");
+          return;
+        }
+      } else if (shiftErr) {
         showToast(shiftErr.message || "Template saved, but shifts failed.");
         return;
       }
     }
     setTemplates((current) => [template, ...current]);
-    setTemplateName("");
+    setWeekTemplateName("");
     showToast("Template saved.", "success");
   }
 
   async function loadTemplate(templateId, mode) {
     if (published) return;
+    setTemplatesOpen(false);
     const { data, error } = await supabase
       .from("schedule_template_shifts")
       .select("*")
@@ -533,7 +648,7 @@ export default function ScheduleBuilder() {
             station: item.station || null,
             scheduled_start: item.scheduled_start,
             scheduled_end: item.scheduled_end,
-            scheduled_hours: item.scheduled_hours,
+            unpaid_break_minutes: item.unpaid_break_minutes,
             notes: null,
             source: SHIFT_SOURCE_HUB,
           },
@@ -543,7 +658,12 @@ export default function ScheduleBuilder() {
       .filter(Boolean);
 
     if (payloads.length) {
-      const { error: insErr } = await supabase.from("schedule_shifts").insert(payloads);
+      let { error: insErr } = await supabase.from("schedule_shifts").insert(payloads);
+      if (insErr && /unpaid_break/.test(insErr.message || "")) {
+        const stripped = payloads.map(({ unpaid_break_minutes: _b, ...rest }) => rest);
+        const retry = await supabase.from("schedule_shifts").insert(stripped);
+        insErr = retry.error;
+      }
       if (insErr) {
         showToast(insErr.message || "Could not apply template shifts.");
         await loadWeek();
@@ -554,33 +674,14 @@ export default function ScheduleBuilder() {
     showToast(mode === "replace" ? "Template replaced this week." : "Template added to this week.", "success");
   }
 
-  async function reviewTimeOff(request, status) {
-    const { data, error } = await supabase
-      .from("time_off_requests")
-      .update({
-        status,
-        reviewed_by: sessionName || null,
-        reviewed_at: new Date().toISOString(),
-      })
-      .eq("id", request.id)
-      .select("*")
-      .single();
+  async function deleteTemplate(templateId) {
+    const { error } = await supabase.from("schedule_templates").delete().eq("id", templateId);
     if (error) {
-      showToast(error.message || "Could not update request.");
+      showToast(error.message || "Could not delete template.");
       return;
     }
-    setTimeOff((current) => {
-      const others = current.filter((row) => row.id !== request.id);
-      const overlaps = data.start_date <= weekEnd && data.end_date >= weekStart;
-      return overlaps ? [...others, data] : others;
-    });
-    showToast(`Request ${status}.`, "success");
-  }
-
-  function onDragStartPalette(item, event) {
-    dragRef.current = { kind: "palette", ...item };
-    event.dataTransfer.setData("text/plain", item.label);
-    event.dataTransfer.effectAllowed = "copy";
+    setTemplates((current) => current.filter((t) => t.id !== templateId));
+    showToast("Template deleted.", "success");
   }
 
   function onDragStartShift(shift, event) {
@@ -605,35 +706,17 @@ export default function ScheduleBuilder() {
     const payload = dragRef.current;
     dragRef.current = null;
     if (!payload || published) return;
-    if (payload.kind === "palette") {
-      addShift({
-        employee: emp,
-        date,
-        start: payload.start,
-        end: payload.end,
-        role: payload.role,
-      });
-      return;
-    }
-    if (payload.kind === "shift") {
-      moveShift(payload.id, emp, date);
-    }
+    if (payload.kind === "shift") moveShift(payload.id, emp, date);
   }
 
-  function exportCsv() {
-    const csv = shiftsToCsv(shifts, weekStart);
-    downloadCsv(`schedule-${weekStart}.csv`, csv);
-  }
-
-  const pendingRequests = timeOff.filter((r) => r.status === "pending");
-  const otherRequests = timeOff.filter((r) => r.status !== "pending");
+  const modalEmployees = rows.filter(
+    (emp) => !emp.isSynthetic || emp.isUnassigned || (modal && emp.id === modal.draft?.employeeId)
+  );
 
   return (
     <section className="mx-auto flex w-full flex-1 flex-col gap-3 px-3 py-4 sm:px-4">
-      <ScheduleSubnav current="builder" canBuild />
-
       <div className="schedule-no-print flex flex-wrap items-center justify-between gap-2 rounded-xl border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={() => setWeekStart(addDaysISO(weekStart, -7))}
@@ -658,6 +741,13 @@ export default function ScheduleBuilder() {
           >
             Today
           </button>
+          <span
+            className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+              published ? "bg-green-100 text-green-800" : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+            }`}
+          >
+            {published ? "Published" : "Unpublished"}
+          </span>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <span className="rounded-lg bg-zinc-100 px-2 py-1 font-semibold dark:bg-zinc-800">
@@ -680,72 +770,76 @@ export default function ScheduleBuilder() {
         </div>
       ) : null}
 
-      <div className="schedule-no-print flex flex-wrap items-end gap-2 rounded-xl border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-        <div className="flex flex-wrap gap-2">
-          {SHIFT_PALETTE.map((item) => (
-            <div
-              key={item.label}
-              draggable={!published}
-              onDragStart={(e) => onDragStartPalette(item, e)}
-              onDragEnd={() => {
-                dragRef.current = null;
-                setDropTarget(null);
-              }}
-              className={`rounded-lg border border-[#C8102E]/30 bg-[#C8102E]/10 px-2 py-1 text-left text-xs ${
-                published ? "cursor-not-allowed opacity-60" : "cursor-grab active:cursor-grabbing"
-              }`}
-              title="Drag onto a cell"
-            >
-              <span className="block font-semibold text-[#C8102E]">{item.label}</span>
-              <span className="text-zinc-600 dark:text-zinc-400">
-                {formatClock(item.start)}–{formatClock(item.end)}
-              </span>
-            </div>
-          ))}
-        </div>
-        <p className="text-xs text-zinc-500">Drag a block onto a cell, or double-click a cell.</p>
-      </div>
-
       <div className="schedule-no-print flex flex-wrap items-center gap-2 rounded-xl border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-        <input
-          value={templateName}
-          onChange={(e) => setTemplateName(e.target.value)}
-          placeholder="Template name"
-          disabled={published}
-          className="rounded-lg border border-zinc-200 px-2 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-        />
-        <button
-          type="button"
-          disabled={published}
-          onClick={saveTemplate}
-          className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-semibold disabled:opacity-50 dark:border-zinc-700"
-        >
-          Save week as template
-        </button>
-        <label className="text-xs text-zinc-600">
-          Load
-          <select
-            defaultValue=""
+        <div className="relative" ref={templatesRef}>
+          <button
+            type="button"
             disabled={published}
-            onChange={(e) => {
-              const [id, mode] = e.target.value.split("::");
-              e.target.value = "";
-              if (id && mode) loadTemplate(id, mode);
-            }}
-            className="ml-2 rounded-lg border border-zinc-200 px-2 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+            onClick={() => setTemplatesOpen((v) => !v)}
+            className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-semibold disabled:opacity-50 dark:border-zinc-700"
           >
-            <option value="">Choose template…</option>
-            {templates.map((tpl) => (
-              <optgroup key={tpl.id} label={tpl.name}>
-                <option value={`${tpl.id}::add`}>Add {tpl.name}</option>
-                <option value={`${tpl.id}::replace`}>Replace with {tpl.name}</option>
-              </optgroup>
-            ))}
-          </select>
-        </label>
+            Templates ▾
+          </button>
+          {templatesOpen ? (
+            <div className="absolute left-0 z-20 mt-1 w-72 rounded-xl border border-zinc-200 bg-white p-3 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+              <p className="text-xs font-bold uppercase tracking-wide text-zinc-500">Create template</p>
+              <div className="mt-2 flex gap-2">
+                <input
+                  value={weekTemplateName}
+                  onChange={(e) => setWeekTemplateName(e.target.value)}
+                  placeholder="Name this week"
+                  className="min-w-0 flex-1 rounded-lg border border-zinc-200 px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                />
+                <button
+                  type="button"
+                  onClick={saveWeekTemplate}
+                  className="rounded-lg bg-[#C8102E] px-2 py-1.5 text-xs font-semibold text-white"
+                >
+                  Save
+                </button>
+              </div>
+              <p className="mt-3 text-xs font-bold uppercase tracking-wide text-zinc-500">Apply template</p>
+              {templates.length ? (
+                <ul className="mt-2 max-h-56 space-y-2 overflow-y-auto">
+                  {templates.map((tpl) => (
+                    <li key={tpl.id} className="rounded-lg border border-zinc-200 p-2 text-xs dark:border-zinc-700">
+                      <p className="font-semibold">{tpl.name}</p>
+                      <p className="text-zinc-500">{tpl.description || "Week template"}</p>
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        <button
+                          type="button"
+                          onClick={() => loadTemplate(tpl.id, "add")}
+                          className="rounded border border-zinc-300 px-2 py-0.5 font-semibold"
+                        >
+                          Add to week
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => loadTemplate(tpl.id, "replace")}
+                          className="rounded border border-zinc-300 px-2 py-0.5 font-semibold"
+                        >
+                          Replace week
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteTemplate(tpl.id)}
+                          className="rounded border border-red-200 px-2 py-0.5 font-semibold text-red-700"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 text-xs text-zinc-500">No saved templates yet.</p>
+              )}
+            </div>
+          ) : null}
+        </div>
         <button
           type="button"
-          onClick={exportCsv}
+          onClick={() => downloadCsv(`schedule-${weekStart}.csv`, shiftsToCsv(shifts, weekStart))}
           className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-semibold dark:border-zinc-700"
         >
           Export CSV
@@ -765,62 +859,11 @@ export default function ScheduleBuilder() {
         >
           Publish week
         </button>
-        <button
-          type="button"
-          onClick={() => setShowTimeOff((v) => !v)}
-          className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-semibold dark:border-zinc-700"
-        >
-          Time off{pendingCount ? ` (${pendingCount})` : ""}
-        </button>
+        <p className="text-xs text-zinc-500">Click a cell to add a shift. Drag a card to move it.</p>
       </div>
 
-      {showTimeOff ? (
-        <section className="schedule-no-print rounded-xl border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-          <h2 className="text-sm font-bold text-[#C8102E]">Time-off requests</h2>
-          {![...pendingRequests, ...otherRequests].length ? (
-            <p className="mt-2 text-sm text-zinc-500">No overlapping requests this week.</p>
-          ) : (
-            <ul className="mt-2 space-y-2">
-              {[...pendingRequests, ...otherRequests].map((req) => (
-                <li
-                  key={req.id}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700"
-                >
-                  <div>
-                    <p className="font-semibold">{req.employee_name}</p>
-                    <p className="text-xs text-zinc-500">
-                      {req.start_date} → {req.end_date} · {req.reason || "No reason"} · {req.status}
-                    </p>
-                  </div>
-                  {req.status === "pending" ? (
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => reviewTimeOff(req, "approved")}
-                        className="rounded-md bg-green-700 px-2 py-1 text-xs font-semibold text-white"
-                      >
-                        Approve
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => reviewTimeOff(req, "denied")}
-                        className="rounded-md border border-red-200 px-2 py-1 text-xs font-semibold text-red-700"
-                      >
-                        Deny
-                      </button>
-                    </div>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-      ) : null}
-
       {loadError ? (
-        <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-          {loadError}
-        </p>
+        <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{loadError}</p>
       ) : null}
 
       {loading ? (
@@ -833,122 +876,113 @@ export default function ScheduleBuilder() {
             Arby&apos;s Payson · {formatWeekRange(weekStart)}
           </p>
           <div className="schedule-print-grid overflow-x-auto rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-          <table className="min-w-[980px] w-full border-collapse text-left text-xs">
-            <thead>
-              <tr className="bg-zinc-50 dark:bg-zinc-800">
-                <th className="sticky left-0 z-10 min-w-[140px] border-b border-zinc-200 bg-zinc-50 px-2 py-2 dark:border-zinc-700 dark:bg-zinc-800">
-                  Employee
-                </th>
-                {dates.map((date, idx) => (
-                  <th
-                    key={date}
-                    className="min-w-[120px] border-b border-zinc-200 px-2 py-2 dark:border-zinc-700"
-                  >
-                    <span className="block font-bold">{DAY_LABELS[idx]}</span>
-                    <span className="font-normal text-zinc-500">{formatShortDate(date)}</span>
+            <table className="min-w-[980px] w-full border-collapse text-left text-xs">
+              <thead>
+                <tr className="bg-zinc-50 dark:bg-zinc-800">
+                  <th className="sticky left-0 z-10 min-w-[140px] border-b border-zinc-200 bg-zinc-50 px-2 py-2 dark:border-zinc-700 dark:bg-zinc-800">
+                    Employee
                   </th>
-                ))}
-                <th className="min-w-[72px] border-b border-zinc-200 px-2 py-2 dark:border-zinc-700">
-                  Hours
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((emp) => {
-                const hours = hoursByRow.get(rowKey(emp)) || 0;
-                const overtime = hours > 40;
-                return (
-                  <tr key={rowKey(emp)} className="align-top">
-                    <th className="sticky left-0 z-10 border-b border-zinc-100 bg-white px-2 py-2 text-left font-semibold dark:border-zinc-800 dark:bg-zinc-900">
-                      <span className="block">{emp.fullName}</span>
-                      <span className="text-[10px] font-normal uppercase tracking-wide text-zinc-500">
-                        {emp.role === "gm"
-                          ? "Manager"
-                          : emp.is_shift_lead || emp.role === "shift_lead"
-                            ? "Shift lead"
-                            : "Crew"}
-                      </span>
+                  {dates.map((date, idx) => (
+                    <th key={date} className="min-w-[120px] border-b border-zinc-200 px-2 py-2 dark:border-zinc-700">
+                      <span className="block font-bold">{DAY_LABELS[idx]}</span>
+                      <span className="font-normal text-zinc-500">{formatShortDate(date)}</span>
                     </th>
-                    {dates.map((date) => {
-                      const cellKey = `${rowKey(emp)}|${date}`;
-                      const cellShifts = shiftsByRowDay.get(cellKey) || [];
-                      const active = dropTarget === cellKey;
-                      return (
-                        <td
-                          key={cellKey}
-                          onDragEnter={(e) => onDragOverCell(emp, date, e)}
-                          onDragOver={(e) => onDragOverCell(emp, date, e)}
-                          onDrop={(e) => onDropCell(emp, date, e)}
-                          onDoubleClick={() => {
-                            if (published) return;
-                            const preset = defaultShiftForRole(emp.primary_role);
-                            addShift({
-                              employee: emp,
-                              date,
-                              start: preset.start,
-                              end: preset.end,
-                              role: preset.role,
-                            });
-                          }}
-                          className={`h-[76px] border-b border-r border-zinc-100 p-1 dark:border-zinc-800 ${
-                            active ? "bg-[#C8102E]/10" : ""
-                          }`}
-                        >
-                          <div className="flex min-h-[68px] flex-col gap-1">
-                            {cellShifts.map((shift) => {
-                              const color = stationColor(stations, shift.station);
-                              const warns = warningsFor(shift, emp);
-                              return (
-                                <button
-                                  key={shift.id}
-                                  type="button"
-                                  draggable={!published}
-                                  onDragStart={(e) => onDragStartShift(shift, e)}
-                                  onDragEnd={() => {
-                                    dragRef.current = null;
-                                    setDropTarget(null);
-                                  }}
-                                  onClick={() => {
-                                    if (!published) setEditingShift(shift);
-                                  }}
-                                  onDoubleClick={(e) => e.stopPropagation()}
-                                  className="rounded px-1.5 py-1 text-left shadow-sm"
-                                  style={{
-                                    background: color,
-                                    color: contrastText(color),
-                                  }}
-                                  title={warns.join(" · ") || `${shift.role || "Shift"} ${formatClock(shift.scheduled_start)}–${formatClock(shift.scheduled_end)}`}
-                                >
-                                  <span className="flex items-center justify-between gap-1">
-                                    <span className="truncate font-semibold">
-                                      {formatClock(shift.scheduled_start)}–{formatClock(shift.scheduled_end)}
-                                    </span>
-                                    {warns.length ? <span aria-label={warns.join(". ")}>⚠️</span> : null}
-                                  </span>
-                                  <span className="block truncate text-[10px] opacity-90">
-                                    {shift.station || shift.role || "Shift"}
-                                  </span>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </td>
-                      );
-                    })}
-                    <td className="border-b border-zinc-100 px-2 py-2 font-semibold dark:border-zinc-800">
-                      {formatHours(hours)}
-                      {overtime ? (
-                        <span className="ml-1" title="Over 40 hours this week">
-                          ⚠️
+                  ))}
+                  <th className="min-w-[72px] border-b border-zinc-200 px-2 py-2 dark:border-zinc-700">Hours</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((emp) => {
+                  const hours = hoursByRow.get(rowKey(emp)) || 0;
+                  const overtime = hours > 40;
+                  return (
+                    <tr key={rowKey(emp)} className="align-top">
+                      <th className="sticky left-0 z-10 border-b border-zinc-100 bg-white px-2 py-2 text-left font-semibold dark:border-zinc-800 dark:bg-zinc-900">
+                        <span className="block">{emp.fullName}</span>
+                        <span className="text-[10px] font-normal uppercase tracking-wide text-zinc-500">
+                          {emp.isUnassigned
+                            ? "Open"
+                            : emp.role === "gm"
+                              ? "Manager"
+                              : emp.is_shift_lead || emp.role === "shift_lead"
+                                ? "Shift lead"
+                                : "Crew"}
                         </span>
-                      ) : null}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                      </th>
+                      {dates.map((date) => {
+                        const cellKey = `${rowKey(emp)}|${date}`;
+                        const cellShifts = shiftsByRowDay.get(cellKey) || [];
+                        const active = dropTarget === cellKey;
+                        return (
+                          <td
+                            key={cellKey}
+                            onDragEnter={(e) => onDragOverCell(emp, date, e)}
+                            onDragOver={(e) => onDragOverCell(emp, date, e)}
+                            onDrop={(e) => onDropCell(emp, date, e)}
+                            onClick={(e) => {
+                              if (e.target.closest("[data-shift-card]")) return;
+                              openCreate(emp, date);
+                            }}
+                            className={`h-[76px] cursor-pointer border-b border-r border-zinc-100 p-1 dark:border-zinc-800 ${
+                              active ? "bg-[#C8102E]/10" : "hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
+                            }`}
+                          >
+                            <div className="flex min-h-[68px] flex-col gap-1">
+                              {cellShifts.map((shift) => {
+                                const color = stationColor(stations, shift.station);
+                                const warns = warningsFor(shift, emp);
+                                return (
+                                  <button
+                                    key={shift.id}
+                                    type="button"
+                                    data-shift-card="true"
+                                    draggable={!published}
+                                    onDragStart={(e) => onDragStartShift(shift, e)}
+                                    onDragEnd={() => {
+                                      dragRef.current = null;
+                                      setDropTarget(null);
+                                    }}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openEdit(shift);
+                                    }}
+                                    className="rounded px-1.5 py-1 text-left shadow-sm"
+                                    style={{ background: color, color: contrastText(color) }}
+                                    title={
+                                      warns.join(" · ") ||
+                                      `${shift.role || "Shift"} ${formatClock(shift.scheduled_start)}–${formatClock(shift.scheduled_end)}`
+                                    }
+                                  >
+                                    <span className="flex items-center justify-between gap-1">
+                                      <span className="truncate font-semibold">
+                                        {formatClock(shift.scheduled_start)}–{formatClock(shift.scheduled_end)}
+                                      </span>
+                                      {warns.length ? <span aria-label={warns.join(". ")}>⚠️</span> : null}
+                                    </span>
+                                    <span className="block truncate text-[10px] opacity-90">
+                                      {shift.station || shift.role || "Shift"}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </td>
+                        );
+                      })}
+                      <td className="border-b border-zinc-100 px-2 py-2 font-semibold dark:border-zinc-800">
+                        {formatHours(hours)}
+                        {overtime ? (
+                          <span className="ml-1" title="Over 40 hours this week">
+                            ⚠️
+                          </span>
+                        ) : null}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </>
       )}
 
@@ -956,34 +990,28 @@ export default function ScheduleBuilder() {
         <div className="flex flex-wrap gap-2 text-[11px] text-zinc-600">
           {stations.map((station) => (
             <span key={station.id} className="inline-flex items-center gap-1">
-              <span
-                className="h-2.5 w-2.5 rounded-sm"
-                style={{ background: station.color || "#6b7280" }}
-              />
+              <span className="h-2.5 w-2.5 rounded-sm" style={{ background: station.color || "#6b7280" }} />
               {station.name}
             </span>
           ))}
         </div>
       ) : null}
 
-      {editingShift && !published ? (
-        <ShiftEditModal
-          shift={editingShift}
+      {modal && !published ? (
+        <ShiftModal
+          mode={modal.mode}
+          draft={modal.draft}
+          employees={modalEmployees.length ? modalEmployees : rows}
+          hoursByRow={hoursByRow}
           stations={stations}
-          onClose={() => setEditingShift(null)}
-          onSave={(patch) => saveShiftEdits(editingShift, patch)}
-          onDelete={deleteShift}
+          roles={distinctRoles}
+          onClose={() => setModal(null)}
+          onSave={saveFromModal}
+          onDelete={() => deleteShift(modal.shift)}
         />
       ) : null}
 
       <ScheduleToast toast={toast} />
     </section>
   );
-}
-
-function timeToMinutesSafe(value) {
-  const text = String(value || "");
-  const match = text.match(/^(\d{2}):(\d{2})/);
-  if (!match) return 0;
-  return Number(match[1]) * 60 + Number(match[2]);
 }

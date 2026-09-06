@@ -6,8 +6,6 @@ import { usePathname } from "next/navigation";
 import {
   BarChart3,
   Calendar,
-  CalendarDays,
-  CalendarPlus,
   ClipboardList,
   Flame,
   Gauge,
@@ -31,8 +29,6 @@ const ICONS = {
   package: Package,
   users: Users,
   calendar: Calendar,
-  "calendar-plus": CalendarPlus,
-  "calendar-days": CalendarDays,
   "layout-grid": LayoutGrid,
   gauge: Gauge,
   upload: Upload,

@@ -1,9 +1,9 @@
 import { redirect } from "next/navigation";
-import MyShifts from "@/components/schedule/MyShifts";
+import MyTimeOff from "@/components/schedule/MyTimeOff";
 import { getCurrentEmployee } from "@/lib/auth";
 
-export default async function MyShiftsPage() {
+export default async function MyTimeOffPage() {
   const employee = await getCurrentEmployee();
   if (!employee) redirect("/login");
-  return <MyShifts employee={employee} />;
+  return <MyTimeOff employee={employee} />;
 }

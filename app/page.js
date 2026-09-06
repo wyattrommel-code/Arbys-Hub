@@ -40,23 +40,9 @@ const navCards = [
   },
   {
     href: "/schedule",
-    title: "Schedule & Attendance",
+    title: "Scheduling",
     description:
-      "Compare scheduled vs actual shifts, track attendance patterns and flags.",
-    feature: "schedule.own",
-  },
-  {
-    href: "/schedule/builder",
-    title: "Schedule Builder",
-    description:
-      "Build and publish the weekly schedule. Drag shifts, apply templates, export.",
-    feature: "schedule.full",
-  },
-  {
-    href: "/schedule/me",
-    title: "My Schedule",
-    description:
-      "See your published shifts, update availability, and request time off.",
+      "Build and publish the weekly schedule, manage stations and availability, and view your shifts.",
     feature: "schedule.own",
   },
   {

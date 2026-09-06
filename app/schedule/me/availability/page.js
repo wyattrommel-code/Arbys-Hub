@@ -1,9 +1,9 @@
 import { redirect } from "next/navigation";
-import MyShifts from "@/components/schedule/MyShifts";
+import MyAvailability from "@/components/schedule/MyAvailability";
 import { getCurrentEmployee } from "@/lib/auth";
 
-export default async function MyShiftsPage() {
+export default async function MyAvailabilityPage() {
   const employee = await getCurrentEmployee();
   if (!employee) redirect("/login");
-  return <MyShifts employee={employee} />;
+  return <MyAvailability employee={employee} />;
 }

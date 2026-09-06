@@ -1,0 +1,172 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import ScheduleToast from "@/components/schedule/ScheduleToast";
+import {
+  computeScheduledHours,
+  DAY_LABELS,
+  formatClock,
+  formatHours,
+  formatLongDate,
+  formatWeekRange,
+  nameKey,
+  SCHEDULE_STORE_ID,
+  weekDates,
+  weekStartSunday,
+} from "@/lib/schedule";
+import { addDaysISO, getStoreToday } from "@/lib/store-time";
+import { getSupabase } from "@/lib/supabase";
+
+export default function MyShifts({ employee }) {
+  const supabase = useMemo(() => getSupabase(), []);
+  const [weekStart, setWeekStart] = useState(() => weekStartSunday(getStoreToday()));
+  const [shifts, setShifts] = useState([]);
+  const [published, setPublished] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [toast, setToast] = useState(null);
+
+  const fullName = `${employee?.first_name || ""} ${employee?.last_name || ""}`.trim();
+  const dates = useMemo(() => weekDates(weekStart), [weekStart]);
+  const weekEnd = dates[6];
+
+  const showToast = useCallback((message, type = "error") => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 4000);
+  }, []);
+
+  const loadWeek = useCallback(async () => {
+    if (!employee?.employee_id) return;
+    setLoading(true);
+    try {
+      const [{ data: weekRow, error: weekErr }, { data: shiftRows, error: shiftErr }] = await Promise.all([
+        supabase
+          .from("schedule_weeks")
+          .select("status")
+          .eq("store_id", SCHEDULE_STORE_ID)
+          .eq("week_start_date", weekStart)
+          .maybeSingle(),
+        supabase
+          .from("schedule_shifts")
+          .select("*")
+          .eq("store_id", SCHEDULE_STORE_ID)
+          .gte("shift_date", weekStart)
+          .lte("shift_date", weekEnd),
+      ]);
+      if (weekErr && weekErr.code !== "PGRST116") throw weekErr;
+      if (shiftErr) throw shiftErr;
+      const isPublished = weekRow?.status === "published";
+      setPublished(isPublished);
+      if (!isPublished) {
+        setShifts([]);
+        return;
+      }
+      const mine = (shiftRows || []).filter((row) => {
+        const target = nameKey(fullName);
+        const rowName = nameKey(row.employee_name);
+        if (!target || !rowName) return false;
+        if (rowName === target) return true;
+        const last = nameKey(employee.last_name);
+        const rowLast = rowName.split(" ").pop() || "";
+        return Boolean(last && (rowLast === last || rowLast.includes(last) || last.includes(rowLast)));
+      });
+      mine.sort(
+        (a, b) =>
+          String(a.shift_date).localeCompare(String(b.shift_date)) ||
+          String(a.scheduled_start).localeCompare(String(b.scheduled_start))
+      );
+      setShifts(mine);
+    } catch (err) {
+      showToast(err?.message || "Could not load your schedule.");
+      setShifts([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [employee, fullName, supabase, weekStart, weekEnd, showToast]);
+
+  useEffect(() => {
+    loadWeek();
+  }, [loadWeek]);
+
+  const weekHours = shifts.reduce(
+    (sum, s) =>
+      sum + (Number(s.scheduled_hours) || computeScheduledHours(s.scheduled_start, s.scheduled_end, s.unpaid_break_minutes)),
+    0
+  );
+  const shiftsByDate = useMemo(() => {
+    const map = new Map(dates.map((d) => [d, []]));
+    for (const shift of shifts) map.get(shift.shift_date)?.push(shift);
+    return map;
+  }, [dates, shifts]);
+
+  return (
+    <section className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-4 px-4 py-5">
+      <div className="flex items-center justify-between gap-2 rounded-xl border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+        <button
+          type="button"
+          onClick={() => setWeekStart(addDaysISO(weekStart, -7))}
+          className="rounded-md border border-zinc-300 px-2 py-1 text-sm dark:border-zinc-700"
+        >
+          ←
+        </button>
+        <p className="text-center text-sm font-bold text-[#C8102E]">{formatWeekRange(weekStart)}</p>
+        <button
+          type="button"
+          onClick={() => setWeekStart(addDaysISO(weekStart, 7))}
+          className="rounded-md border border-zinc-300 px-2 py-1 text-sm dark:border-zinc-700"
+        >
+          →
+        </button>
+      </div>
+
+      {loading ? (
+        <p className="rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-500">Loading your shifts…</p>
+      ) : !published ? (
+        <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+          This week has not been published yet. You will see your shifts here after a manager publishes the schedule.
+        </p>
+      ) : (
+        <>
+          <div className="rounded-xl border border-zinc-200 bg-white p-3 text-sm shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+            <p className="font-semibold">{fullName}</p>
+            <p className="text-zinc-500">
+              {shifts.length} shifts · {formatHours(weekHours)}
+            </p>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {dates.map((date, idx) => {
+              const dayShifts = shiftsByDate.get(date) || [];
+              return (
+                <article
+                  key={date}
+                  className="rounded-xl border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
+                >
+                  <p className="text-sm font-bold">
+                    {DAY_LABELS[idx]} · {formatLongDate(date)}
+                  </p>
+                  {dayShifts.length ? (
+                    <ul className="mt-2 space-y-2">
+                      {dayShifts.map((shift) => (
+                        <li key={shift.id} className="rounded-lg border border-zinc-200 px-2 py-2 text-sm dark:border-zinc-700">
+                          <p className="font-semibold">
+                            {formatClock(shift.scheduled_start)} – {formatClock(shift.scheduled_end)}
+                          </p>
+                          <p className="text-xs text-zinc-500">
+                            {[shift.role, shift.station].filter(Boolean).join(" · ") || "Shift"} ·{" "}
+                            {formatHours(shift.scheduled_hours)}
+                          </p>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-2 text-xs text-zinc-500">Off</p>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        </>
+      )}
+      <ScheduleToast toast={toast} />
+    </section>
+  );
+}
