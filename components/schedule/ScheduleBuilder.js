@@ -172,9 +172,9 @@ export default function ScheduleBuilder() {
           .lte("shift_date", weekEnd),
         supabase
           .from("stations")
-          .select("id, name, color, sort_order, is_active, store_id")
+          .select("id, name, color, is_active, store_id")
           .eq("is_active", true)
-          .order("sort_order", { ascending: true }),
+          .order("name", { ascending: true }),
         supabase
           .from("schedule_weeks")
           .select("*")

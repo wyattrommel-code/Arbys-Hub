@@ -7,9 +7,8 @@ import { getSupabase } from "@/lib/supabase";
 
 const DEFAULT_COLOR = "#C8102E";
 
-function nextSortOrder(stations) {
-  const max = stations.reduce((n, station) => Math.max(n, Number(station.sort_order) || 0), 0);
-  return max + 10;
+function byName(a, b) {
+  return String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" });
 }
 
 export default function StationsManager() {
@@ -31,17 +30,17 @@ export default function StationsManager() {
       .from("stations")
       .select("*")
       .eq("store_id", SCHEDULE_STORE_ID)
-      .order("sort_order", { ascending: true });
+      .order("name", { ascending: true });
     if (error) {
-      const fallback = await supabase.from("stations").select("*").order("sort_order", { ascending: true });
+      const fallback = await supabase.from("stations").select("*").order("name", { ascending: true });
       if (fallback.error) {
         showToast(error.message || "Could not load stations.");
         setStations([]);
       } else {
-        setStations(fallback.data || []);
+        setStations([...(fallback.data || [])].sort(byName));
       }
     } else {
-      setStations(data || []);
+      setStations([...(data || [])].sort(byName));
     }
     setLoading(false);
   }, [showToast, supabase]);
@@ -61,7 +60,7 @@ export default function StationsManager() {
       store_id: SCHEDULE_STORE_ID,
     };
     if (!editingId) {
-      payload.sort_order = nextSortOrder(stations);
+      payload.sort_order = 0;
     }
     const query = editingId
       ? supabase.from("stations").update(payload).eq("id", editingId)
@@ -87,27 +86,6 @@ export default function StationsManager() {
       return;
     }
     load();
-  }
-
-  async function moveStation(stationId, direction) {
-    const index = stations.findIndex((station) => station.id === stationId);
-    const nextIndex = index + direction;
-    if (index < 0 || nextIndex < 0 || nextIndex >= stations.length) return;
-    const reordered = [...stations];
-    const [moved] = reordered.splice(index, 1);
-    reordered.splice(nextIndex, 0, moved);
-    const withOrder = reordered.map((station, i) => ({ ...station, sort_order: (i + 1) * 10 }));
-    setStations(withOrder);
-    const results = await Promise.all(
-      withOrder.map((station) =>
-        supabase.from("stations").update({ sort_order: station.sort_order }).eq("id", station.id)
-      )
-    );
-    const failed = results.find((result) => result.error);
-    if (failed?.error) {
-      showToast(failed.error.message || "Could not reorder stations.");
-      load();
-    }
   }
 
   return (
@@ -160,7 +138,7 @@ export default function StationsManager() {
         <p className="text-sm text-zinc-500">Loading stations…</p>
       ) : (
         <ul className="space-y-2">
-          {stations.map((station, index) => (
+          {stations.map((station) => (
             <li
               key={station.id}
               className="flex items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
@@ -173,22 +151,6 @@ export default function StationsManager() {
                 </div>
               </div>
               <div className="flex shrink-0 flex-wrap justify-end gap-2">
-                <button
-                  type="button"
-                  disabled={index === 0}
-                  onClick={() => moveStation(station.id, -1)}
-                  className="rounded border border-zinc-300 px-2 py-1 text-xs font-semibold disabled:opacity-40"
-                >
-                  Up
-                </button>
-                <button
-                  type="button"
-                  disabled={index === stations.length - 1}
-                  onClick={() => moveStation(station.id, 1)}
-                  className="rounded border border-zinc-300 px-2 py-1 text-xs font-semibold disabled:opacity-40"
-                >
-                  Down
-                </button>
                 <button
                   type="button"
                   onClick={() => {
