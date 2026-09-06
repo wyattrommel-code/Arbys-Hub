@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { fetchEmployees, isNameAmongActiveEmployees } from "@/lib/employees";
+import { formatLongDate } from "@/lib/schedule";
 import {
   Bar,
   BarChart,
@@ -1113,7 +1114,7 @@ export default function DashboardPage() {
           <tbody>
             {reportRows.daily.map((r) => (
               <tr key={r.date} className="border-t border-zinc-100 dark:border-zinc-800">
-                <td className="px-3 py-2">{r.date}</td>
+                <td className="px-3 py-2">{formatLongDate(r.date)}</td>
                 <td className="px-3 py-2">{fmtMoney(r.sales)}</td>
                 <td className="px-3 py-2">{fmtPct(r.laborPct)}</td>
                 <td className="px-3 py-2">{fmtMoney(r.waste)}</td>
@@ -1172,7 +1173,9 @@ export default function DashboardPage() {
 
           <section className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
             <h3 className="text-sm font-bold text-[#C8102E]">Current Week Status</h3>
-            <p className="text-xs text-zinc-500">{ot.currentWeekStart} to {ot.currentWeekEnd}</p>
+            <p className="text-xs text-zinc-500">
+              {formatLongDate(ot.currentWeekStart)} – {formatLongDate(ot.currentWeekEnd)}
+            </p>
             <div className="mt-2 overflow-x-auto">
               <table className="min-w-full text-left text-xs">
                 <thead className="bg-zinc-50 dark:bg-zinc-800">
@@ -1219,7 +1222,9 @@ export default function DashboardPage() {
           </section>
 
           <section className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
-            <h3 className="text-sm font-bold text-[#C8102E]">OT by Employee — {reportStart} to {reportEnd}</h3>
+            <h3 className="text-sm font-bold text-[#C8102E]">
+              OT by Employee — {formatLongDate(reportStart)} – {formatLongDate(reportEnd)}
+            </h3>
             <div className="mt-2 space-y-2">
               {ot.otByEmployee.length === 0 ? (
                 <p className="text-xs text-zinc-500">No overtime in this date range.</p>
@@ -1236,7 +1241,7 @@ export default function DashboardPage() {
                         <tbody>
                           {emp.dayRows.map((r, idx) => (
                             <tr key={`${emp.name}-${idx}`} className="border-t border-zinc-100 dark:border-zinc-800">
-                              <td className="px-2 py-1">{r.date}</td><td className="px-2 py-1">{r.day}</td><td className="px-2 py-1">{r.totalHours.toFixed(1)}</td>
+                              <td className="px-2 py-1">{formatLongDate(r.date)}</td><td className="px-2 py-1">{r.day}</td><td className="px-2 py-1">{r.totalHours.toFixed(1)}</td>
                               <td className="px-2 py-1">{r.regHours.toFixed(1)}</td><td className="px-2 py-1">{r.otHours.toFixed(1)}</td>
                               <td className="px-2 py-1">{fmtMoney2(r.regCost)}</td><td className="px-2 py-1">{fmtMoney2(r.otCost)}</td>
                             </tr>
@@ -1251,7 +1256,9 @@ export default function DashboardPage() {
           </section>
 
           <section className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
-            <h3 className="text-sm font-bold text-[#C8102E]">OT by Day — {reportStart} to {reportEnd}</h3>
+            <h3 className="text-sm font-bold text-[#C8102E]">
+              OT by Day — {formatLongDate(reportStart)} – {formatLongDate(reportEnd)}
+            </h3>
             <div className="mt-2 overflow-x-auto">
               <table className="min-w-full text-left text-xs">
                 <thead className="bg-zinc-50 dark:bg-zinc-800">
@@ -1260,7 +1267,7 @@ export default function DashboardPage() {
                 <tbody>
                   {ot.otByDay.flatMap((d) => [
                     <tr key={d.date} className="border-t border-zinc-100 dark:border-zinc-800 cursor-pointer" onClick={() => setOtDayOpen((s) => ({ ...s, [d.date]: !s[d.date] }))}>
-                      <td className="px-2 py-1">{d.date}</td><td className="px-2 py-1">{d.day}</td><td className="px-2 py-1">{d.totalHours.toFixed(1)}</td>
+                      <td className="px-2 py-1">{formatLongDate(d.date)}</td><td className="px-2 py-1">{d.day}</td><td className="px-2 py-1">{d.totalHours.toFixed(1)}</td>
                       <td className="px-2 py-1">{d.otHours.toFixed(1)}</td><td className="px-2 py-1">{fmtMoney2(d.otCost)}</td><td className="px-2 py-1">{d.employeeCount}</td>
                     </tr>,
                     otDayOpen[d.date] ? (
@@ -1292,7 +1299,7 @@ export default function DashboardPage() {
             <div className="mt-2 space-y-1">
               {ot.avoidabilityRows.map((r, idx) => (
                 <p key={`${r.date}-${idx}`} className="text-xs">
-                  {r.date} — {r.employee} ({r.otHours.toFixed(1)}h / {fmtMoney2(r.otCost)}): {r.suggestion}
+                  {formatLongDate(r.date)} — {r.employee} ({r.otHours.toFixed(1)}h / {fmtMoney2(r.otCost)}): {r.suggestion}
                 </p>
               ))}
             </div>
@@ -1308,10 +1315,10 @@ export default function DashboardPage() {
           <tbody>
             {reportRows.salesDetailByDate.flatMap((day) => [
               ...day.rows.map((r, idx) => (
-                <tr key={`${day.date}-${r.hour}`} className="border-t border-zinc-100 dark:border-zinc-800"><td className="px-3 py-2">{idx === 0 ? day.date : ""}</td><td className="px-3 py-2">{r.label}</td><td className="px-3 py-2">{fmtMoney2(r.sales)}</td></tr>
+                <tr key={`${day.date}-${r.hour}`} className="border-t border-zinc-100 dark:border-zinc-800"><td className="px-3 py-2">{idx === 0 ? formatLongDate(day.date) : ""}</td><td className="px-3 py-2">{r.label}</td><td className="px-3 py-2">{fmtMoney2(r.sales)}</td></tr>
               )),
               <tr key={`subtotal-${day.date}`} className="border-t border-zinc-300 bg-zinc-50 font-semibold dark:border-zinc-700 dark:bg-zinc-800/70">
-                <td className="px-3 py-2" colSpan={2}>Subtotal for {day.date}</td>
+                <td className="px-3 py-2" colSpan={2}>Subtotal for {formatLongDate(day.date)}</td>
                 <td className="px-3 py-2">{fmtMoney2(day.subtotal)}</td>
               </tr>,
             ])}
@@ -1327,7 +1334,7 @@ export default function DashboardPage() {
           <thead className="bg-zinc-50 dark:bg-zinc-800"><tr><th className="px-3 py-2">Date</th><th className="px-3 py-2">Employee</th><th className="px-3 py-2">Hours</th><th className="px-3 py-2">Wage</th><th className="px-3 py-2">Shift Cost</th></tr></thead>
           <tbody>
             {reportRows.laborDetail.map((r) => (
-              <tr key={r.id} className="border-t border-zinc-100 dark:border-zinc-800"><td className="px-3 py-2">{r.date}</td><td className="px-3 py-2">{r.employee}</td><td className="px-3 py-2">{r.hours.toFixed(2)}</td><td className="px-3 py-2">{Number.isFinite(r.wage) ? fmtMoney2(r.wage) : "—"}</td><td className="px-3 py-2">{fmtMoney2(r.cost)}</td></tr>
+              <tr key={r.id} className="border-t border-zinc-100 dark:border-zinc-800"><td className="px-3 py-2">{formatLongDate(r.date)}</td><td className="px-3 py-2">{r.employee}</td><td className="px-3 py-2">{r.hours.toFixed(2)}</td><td className="px-3 py-2">{Number.isFinite(r.wage) ? fmtMoney2(r.wage) : "—"}</td><td className="px-3 py-2">{fmtMoney2(r.cost)}</td></tr>
             ))}
             {reportRows.laborDetail.length === 0 ? <tr><td className="px-3 py-3 text-zinc-500" colSpan={5}>Labor Detail data not yet connected</td></tr> : null}
           </tbody>
@@ -1342,10 +1349,10 @@ export default function DashboardPage() {
           <tbody>
             {reportRows.wasteLogByDate.flatMap((day) => [
               ...day.rows.map((r, idx) => (
-                <tr key={r.id} className="border-t border-zinc-100 dark:border-zinc-800"><td className="px-3 py-2">{idx === 0 ? r.date : ""}</td><td className="px-3 py-2">{r.shift}</td><td className="px-3 py-2">{r.submittedBy}</td><td className="px-3 py-2">{r.item}</td><td className="px-3 py-2">{r.qty}</td><td className="px-3 py-2">{r.unit}</td><td className="px-3 py-2">{fmtMoney2(r.retail)}</td><td className="px-3 py-2">{fmtMoney2(r.wholesale)}</td></tr>
+                <tr key={r.id} className="border-t border-zinc-100 dark:border-zinc-800"><td className="px-3 py-2">{idx === 0 ? formatLongDate(r.date) : ""}</td><td className="px-3 py-2">{r.shift}</td><td className="px-3 py-2">{r.submittedBy}</td><td className="px-3 py-2">{r.item}</td><td className="px-3 py-2">{r.qty}</td><td className="px-3 py-2">{r.unit}</td><td className="px-3 py-2">{fmtMoney2(r.retail)}</td><td className="px-3 py-2">{fmtMoney2(r.wholesale)}</td></tr>
               )),
               <tr key={`subtotal-${day.date}`} className="border-t border-zinc-300 bg-zinc-50 font-semibold dark:border-zinc-700 dark:bg-zinc-800/70">
-                <td className="px-3 py-2" colSpan={6}>Subtotal for {day.date}</td>
+                <td className="px-3 py-2" colSpan={6}>Subtotal for {formatLongDate(day.date)}</td>
                 <td className="px-3 py-2">{fmtMoney2(day.retailTotal)}</td>
                 <td className="px-3 py-2">{fmtMoney2(day.wholesaleTotal)}</td>
               </tr>,
@@ -1369,7 +1376,7 @@ export default function DashboardPage() {
           <thead className="bg-zinc-50 dark:bg-zinc-800"><tr><th className="px-3 py-2">Date</th><th className="px-3 py-2">Count Type</th><th className="px-3 py-2">Submitted By</th><th className="px-3 py-2">Category</th><th className="px-3 py-2">Total Value</th></tr></thead>
           <tbody>
             {reportRows.inventory.map((r) => (
-              <tr key={r.id} className="border-t border-zinc-100 dark:border-zinc-800"><td className="px-3 py-2">{r.date}</td><td className="px-3 py-2">{r.countType}</td><td className="px-3 py-2">{r.submittedBy}</td><td className="px-3 py-2">{r.category}</td><td className="px-3 py-2">{fmtMoney2(r.total)}</td></tr>
+              <tr key={r.id} className="border-t border-zinc-100 dark:border-zinc-800"><td className="px-3 py-2">{formatLongDate(r.date)}</td><td className="px-3 py-2">{r.countType}</td><td className="px-3 py-2">{r.submittedBy}</td><td className="px-3 py-2">{r.category}</td><td className="px-3 py-2">{fmtMoney2(r.total)}</td></tr>
             ))}
             {reportRows.inventory.length === 0 ? <tr><td className="px-3 py-3 text-zinc-500" colSpan={5}>Inventory Counts data not yet connected</td></tr> : null}
           </tbody>
@@ -1382,7 +1389,7 @@ export default function DashboardPage() {
         <thead className="bg-zinc-50 dark:bg-zinc-800"><tr><th className="px-3 py-2">Date</th><th className="px-3 py-2">6am Put In</th><th className="px-3 py-2">10am Put In</th><th className="px-3 py-2">2pm Put In</th><th className="px-3 py-2">5pm Put In</th><th className="px-3 py-2">Close On Hand</th><th className="px-3 py-2">Total Used</th><th className="px-3 py-2">AM $/roast</th><th className="px-3 py-2">PM $/roast</th></tr></thead>
         <tbody>
           {reportRows.roast.map((r) => (
-            <tr key={r.date} className="border-t border-zinc-100 dark:border-zinc-800"><td className="px-3 py-2">{r.date}</td><td className="px-3 py-2">{r.put6}</td><td className="px-3 py-2">{r.put10}</td><td className="px-3 py-2">{r.put2}</td><td className="px-3 py-2">{r.put5}</td><td className="px-3 py-2">{r.closeOnHand}</td><td className="px-3 py-2">{r.totalUsed}</td><td className="px-3 py-2">{fmtMoney2(r.amDpr)}</td><td className="px-3 py-2">{fmtMoney2(r.pmDpr)}</td></tr>
+            <tr key={r.date} className="border-t border-zinc-100 dark:border-zinc-800"><td className="px-3 py-2">{formatLongDate(r.date)}</td><td className="px-3 py-2">{r.put6}</td><td className="px-3 py-2">{r.put10}</td><td className="px-3 py-2">{r.put2}</td><td className="px-3 py-2">{r.put5}</td><td className="px-3 py-2">{r.closeOnHand}</td><td className="px-3 py-2">{r.totalUsed}</td><td className="px-3 py-2">{fmtMoney2(r.amDpr)}</td><td className="px-3 py-2">{fmtMoney2(r.pmDpr)}</td></tr>
           ))}
           {reportRows.roast.length === 0 ? <tr><td className="px-3 py-3 text-zinc-500" colSpan={9}>Roast Beef Log data not yet connected</td></tr> : null}
         </tbody>
@@ -1755,7 +1762,7 @@ export default function DashboardPage() {
 
               <Expandable
                 title="Inventory Detail"
-                summary={`Last count: ${selectedDate} · ${fmtMoney(snapshot.inventory.total)}`}
+                summary={`Last count: ${formatLongDate(selectedDate)} · ${fmtMoney(snapshot.inventory.total)}`}
                 open={expanded.inventory}
                 setOpen={(v) => setExpanded((s) => ({ ...s, inventory: typeof v === "function" ? v(s.inventory) : v }))}
                 empty={state.disconnected.inventory}

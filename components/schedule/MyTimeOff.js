@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import ScheduleToast from "@/components/schedule/ScheduleToast";
-import { SCHEDULE_STORE_ID } from "@/lib/schedule";
+import { formatLongDate, SCHEDULE_STORE_ID } from "@/lib/schedule";
 import { getStoreToday } from "@/lib/store-time";
 import { getSupabase } from "@/lib/supabase";
 
@@ -122,7 +122,7 @@ export default function MyTimeOff({ employee }) {
         {requests.map((req) => (
           <li key={req.id} className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm dark:border-zinc-800 dark:bg-zinc-900">
             <p className="font-semibold">
-              {req.start_date} → {req.end_date}
+              {formatLongDate(req.start_date)} → {formatLongDate(req.end_date)}
             </p>
             <p className="text-xs capitalize text-zinc-500">
               {req.status}

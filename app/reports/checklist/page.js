@@ -2,6 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { roleDisplayName, verificationMethodLabel } from "@/lib/checklist-roles";
+import { formatLongDate } from "@/lib/schedule";
 import { addDaysISO, formatStoreTime, getStoreToday } from "@/lib/store-time";
 
 function NotesSnippet({ text }) {
@@ -229,7 +230,7 @@ function ReportsContent() {
             ) : (
               data.completions.map((c) => (
                 <tr key={c.id} className="border-b border-zinc-50 dark:border-zinc-800">
-                  <td className="px-3 py-2">{c.completion_date}</td>
+                  <td className="px-3 py-2">{formatLongDate(c.completion_date)}</td>
                   <td className="px-3 py-2">{c.shift}</td>
                   <td className="px-3 py-2">{roleDisplayName(c.checklist_tasks?.role)}</td>
                   <td className="px-3 py-2">{c.checklist_tasks?.title || "—"}</td>
@@ -268,7 +269,7 @@ function ReportsContent() {
             <ul className="text-sm text-zinc-600 dark:text-zinc-400">
               {Object.entries(data.summary.perEmployee).map(([id, count]) => (
                 <li key={id}>
-                  {employeeNameById.get(id) || id}: {count}
+                  {employeeNameById.get(id) || "Unknown"}: {count}
                 </li>
               ))}
             </ul>
@@ -281,7 +282,7 @@ function ReportsContent() {
               <ul className="max-h-48 overflow-y-auto text-sm text-zinc-600 dark:text-zinc-400">
                 {data.summary.uncompleted.slice(0, 50).map((u) => (
                   <li key={`${u.completion_date}-${u.shift}-${u.task_id}`}>
-                    {u.completion_date} · {u.shift} · {u.task_title}
+                    {formatLongDate(u.completion_date)} · {u.shift} · {u.task_title}
                   </li>
                 ))}
                 {data.summary.uncompleted.length > 50 ? (

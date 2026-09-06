@@ -2,8 +2,9 @@
 
 import { useMemo, useRef, useState } from "react";
 import { fetchEmployees } from "@/lib/employees";
-import { getSupabase } from "@/lib/supabase";
 import { calculateOvertimeForWeekRows, getWeekEndSaturday, getWeekStartSunday } from "@/lib/laborOvertime";
+import { formatLongDate } from "@/lib/schedule";
+import { getSupabase } from "@/lib/supabase";
 
 const DEFAULT_HOURLY_WAGE = 10;
 const DEFAULT_STORE_ID = "payson";
@@ -1015,7 +1016,7 @@ export default function ImportPage() {
             <p>
               Date range:{" "}
               {laborState.summary.dateRange
-                ? `${laborState.summary.dateRange.start} to ${laborState.summary.dateRange.end}`
+                ? `${formatLongDate(laborState.summary.dateRange.start)} to ${formatLongDate(laborState.summary.dateRange.end)}`
                 : "No rows imported"}
             </p>
 
@@ -1087,7 +1088,7 @@ export default function ImportPage() {
             <p>
               {scheduleState.summary.daysCovered} days covered
               {scheduleState.summary.dateRange
-                ? ` (${scheduleState.summary.dateRange.start} to ${scheduleState.summary.dateRange.end})`
+                ? ` (${formatLongDate(scheduleState.summary.dateRange.start)} to ${formatLongDate(scheduleState.summary.dateRange.end)})`
                 : ""}
             </p>
             <p>{scheduleState.summary.employeesScheduled} employees scheduled</p>

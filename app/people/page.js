@@ -5,6 +5,7 @@ import RosterTable from "@/components/people/RosterTable";
 import { STORE_ID } from "@/lib/constants";
 import { fetchEmployees, getRosterCategory, normalizeEmployeeStatus } from "@/lib/employees";
 import { normalizeRole } from "@/lib/permissions";
+import { formatLongDate } from "@/lib/schedule";
 import { getSupabase } from "@/lib/supabase";
 
 const RED = "#C8102E";
@@ -1170,7 +1171,7 @@ export default function PeoplePage() {
                     <span className="font-semibold">Email:</span> {emp.email || "—"}
                   </p>
                   <p>
-                    <span className="font-semibold">Hire Date:</span> {emp.hire_date || "—"}
+                    <span className="font-semibold">Hire Date:</span> {emp.hire_date ? formatLongDate(emp.hire_date) : "—"}
                   </p>
                   <p>
                     <span className="font-semibold">Access Role:</span>{" "}
@@ -1284,7 +1285,7 @@ export default function PeoplePage() {
                       const bg = status === "certified" ? "bg-green-100" : status === "in_training" ? "bg-yellow-100" : "bg-zinc-100";
                       const tooltip =
                         status === "certified"
-                          ? `Certified: ${cert.certified_date || "unknown"}`
+                          ? `Certified: ${cert.certified_date ? formatLongDate(cert.certified_date) : "unknown"}`
                           : status === "in_training"
                             ? `Trainer: ${cert.trainer_name || "unknown"}`
                             : "Tap to start training";
@@ -1703,7 +1704,7 @@ export default function PeoplePage() {
                   .sort((a, b) => new Date(b.effective_date || b.created_at || 0) - new Date(a.effective_date || a.created_at || 0))
                   .map((w) => (
                     <tr key={w.id} className="border-t border-zinc-100 dark:border-zinc-800">
-                      <td className="px-2 py-1">{w.effective_date || "—"}</td>
+                      <td className="px-2 py-1">{w.effective_date ? formatLongDate(w.effective_date) : "—"}</td>
                       <td className="px-2 py-1">{money(w.hourly_rate)}</td>
                       <td className="px-2 py-1">{w.reason || "—"}</td>
                       <td className="px-2 py-1">{w.approved_by || "—"}</td>
@@ -1836,7 +1837,7 @@ export default function PeoplePage() {
             </div>
           ) : (
             <div>
-              <p className="text-sm text-zinc-700">Certified date: {certModal.cert.certified_date || "—"}</p>
+              <p className="text-sm text-zinc-700">Certified date: {certModal.cert.certified_date ? formatLongDate(certModal.cert.certified_date) : "—"}</p>
               <p className="mt-1 text-sm text-zinc-700">Trainer: {certModal.cert.trainer_name || "—"}</p>
               <p className="mt-1 text-sm text-zinc-700">Certified by: {certModal.cert.certified_by || "—"}</p>
               <button

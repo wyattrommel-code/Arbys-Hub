@@ -7,12 +7,17 @@ import { getSupabase } from "@/lib/supabase";
 
 const DEFAULT_COLOR = "#C8102E";
 
+function nextSortOrder(stations) {
+  const max = stations.reduce((n, station) => Math.max(n, Number(station.sort_order) || 0), 0);
+  return max + 10;
+}
+
 export default function StationsManager() {
   const supabase = useMemo(() => getSupabase(), []);
   const [stations, setStations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
-  const [form, setForm] = useState({ name: "", color: DEFAULT_COLOR, sort_order: 0 });
+  const [form, setForm] = useState({ name: "", color: DEFAULT_COLOR });
   const [editingId, setEditingId] = useState(null);
 
   const showToast = useCallback((message, type = "error") => {
@@ -52,10 +57,12 @@ export default function StationsManager() {
     const payload = {
       name,
       color: form.color || DEFAULT_COLOR,
-      sort_order: Number(form.sort_order) || 0,
       is_active: true,
       store_id: SCHEDULE_STORE_ID,
     };
+    if (!editingId) {
+      payload.sort_order = nextSortOrder(stations);
+    }
     const query = editingId
       ? supabase.from("stations").update(payload).eq("id", editingId)
       : supabase.from("stations").insert(payload);
@@ -64,7 +71,7 @@ export default function StationsManager() {
       showToast(error.message || "Could not save station.");
       return;
     }
-    setForm({ name: "", color: DEFAULT_COLOR, sort_order: (stations.length + 1) * 10 });
+    setForm({ name: "", color: DEFAULT_COLOR });
     setEditingId(null);
     showToast("Station saved.", "success");
     load();
@@ -82,6 +89,27 @@ export default function StationsManager() {
     load();
   }
 
+  async function moveStation(stationId, direction) {
+    const index = stations.findIndex((station) => station.id === stationId);
+    const nextIndex = index + direction;
+    if (index < 0 || nextIndex < 0 || nextIndex >= stations.length) return;
+    const reordered = [...stations];
+    const [moved] = reordered.splice(index, 1);
+    reordered.splice(nextIndex, 0, moved);
+    const withOrder = reordered.map((station, i) => ({ ...station, sort_order: (i + 1) * 10 }));
+    setStations(withOrder);
+    const results = await Promise.all(
+      withOrder.map((station) =>
+        supabase.from("stations").update({ sort_order: station.sort_order }).eq("id", station.id)
+      )
+    );
+    const failed = results.find((result) => result.error);
+    if (failed?.error) {
+      showToast(failed.error.message || "Could not reorder stations.");
+      load();
+    }
+  }
+
   return (
     <section className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 px-4 py-5">
       <div>
@@ -94,7 +122,7 @@ export default function StationsManager() {
         className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
       >
         <p className="text-sm font-bold text-[#C8102E]">{editingId ? "Edit station" : "Add station"}</p>
-        <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_auto_auto]">
+        <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_auto]">
           <input
             required
             value={form.name}
@@ -108,12 +136,6 @@ export default function StationsManager() {
             onChange={(e) => setForm((s) => ({ ...s, color: e.target.value }))}
             className="h-10 w-16 rounded border border-zinc-200"
           />
-          <input
-            type="number"
-            value={form.sort_order}
-            onChange={(e) => setForm((s) => ({ ...s, sort_order: e.target.value }))}
-            className="w-24 rounded-lg border border-zinc-200 px-2 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-          />
         </div>
         <div className="mt-3 flex gap-2">
           <button type="submit" className="rounded-lg bg-[#C8102E] px-3 py-2 text-sm font-semibold text-white">
@@ -124,7 +146,7 @@ export default function StationsManager() {
               type="button"
               onClick={() => {
                 setEditingId(null);
-                setForm({ name: "", color: DEFAULT_COLOR, sort_order: 0 });
+                setForm({ name: "", color: DEFAULT_COLOR });
               }}
               className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-semibold"
             >
@@ -138,21 +160,35 @@ export default function StationsManager() {
         <p className="text-sm text-zinc-500">Loading stations…</p>
       ) : (
         <ul className="space-y-2">
-          {stations.map((station) => (
+          {stations.map((station, index) => (
             <li
               key={station.id}
               className="flex items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
             >
-              <div className="flex items-center gap-2">
-                <span className="h-4 w-4 rounded" style={{ background: station.color || DEFAULT_COLOR }} />
-                <div>
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="h-4 w-4 shrink-0 rounded" style={{ background: station.color || DEFAULT_COLOR }} />
+                <div className="min-w-0">
                   <p className="font-semibold">{station.name}</p>
-                  <p className="text-xs text-zinc-500">
-                    Order {station.sort_order} · {station.is_active ? "Active" : "Inactive"}
-                  </p>
+                  <p className="text-xs text-zinc-500">{station.is_active ? "Active" : "Inactive"}</p>
                 </div>
               </div>
-              <div className="flex gap-2">
+              <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                <button
+                  type="button"
+                  disabled={index === 0}
+                  onClick={() => moveStation(station.id, -1)}
+                  className="rounded border border-zinc-300 px-2 py-1 text-xs font-semibold disabled:opacity-40"
+                >
+                  Up
+                </button>
+                <button
+                  type="button"
+                  disabled={index === stations.length - 1}
+                  onClick={() => moveStation(station.id, 1)}
+                  className="rounded border border-zinc-300 px-2 py-1 text-xs font-semibold disabled:opacity-40"
+                >
+                  Down
+                </button>
                 <button
                   type="button"
                   onClick={() => {
@@ -160,7 +196,6 @@ export default function StationsManager() {
                     setForm({
                       name: station.name,
                       color: station.color || DEFAULT_COLOR,
-                      sort_order: station.sort_order || 0,
                     });
                   }}
                   className="rounded border border-zinc-300 px-2 py-1 text-xs font-semibold"

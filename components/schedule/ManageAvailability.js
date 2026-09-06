@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import ScheduleToast from "@/components/schedule/ScheduleToast";
 import { employeeFullName, fetchEmployees } from "@/lib/employees";
-import { DAY_LABELS, formatClock, SCHEDULE_STORE_ID } from "@/lib/schedule";
+import { DAY_LABELS, formatClock, formatLongDate, SCHEDULE_STORE_ID } from "@/lib/schedule";
 import { getSupabase } from "@/lib/supabase";
 
 export default function ManageAvailability({ reviewerName }) {
@@ -98,7 +98,7 @@ export default function ManageAvailability({ reviewerName }) {
                 <div>
                   <p className="font-semibold">{req.employee_name}</p>
                   <p className="text-xs text-zinc-500">
-                    {req.start_date} → {req.end_date} · {req.reason || "No reason"} · {req.status}
+                    {formatLongDate(req.start_date)} → {formatLongDate(req.end_date)} · {req.reason || "No reason"} · {req.status}
                   </p>
                 </div>
                 {req.status === "pending" ? (
