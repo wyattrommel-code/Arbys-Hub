@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import EmployeeAvatar from "@/components/EmployeeAvatar";
 import { addDaysISO, getStoreToday, toStoreDateTimeLocal } from "@/lib/store-time";
 import { weekStartSunday } from "@/lib/schedule";
 import { buildPayrollCsv, payrollFilename } from "@/lib/timecards";
@@ -206,11 +207,14 @@ export default function TimecardsBoard() {
             className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
           >
             <div className="flex items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
-              <div>
-                <p className="font-semibold">{group.name}</p>
-                {group.openCount ? (
-                  <p className="text-xs font-medium text-amber-800">{group.openCount} open</p>
-                ) : null}
+              <div className="flex min-w-0 items-center gap-3">
+                <EmployeeAvatar name={group.name} src={group.profile_photo_url} size="sm" />
+                <div className="min-w-0">
+                  <p className="font-semibold">{group.name}</p>
+                  {group.openCount ? (
+                    <p className="text-xs font-medium text-amber-800">{group.openCount} open</p>
+                  ) : null}
+                </div>
               </div>
               <p className="text-sm font-bold">{group.totalDisplay} hrs</p>
             </div>

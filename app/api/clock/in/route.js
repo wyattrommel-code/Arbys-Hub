@@ -18,14 +18,17 @@ import { getSupabaseServer } from "@/lib/supabase-server";
 
 export async function POST(request) {
   try {
-    const { pin, managerPin, faceDetected, photo } = await readPhotoFromRequest(request);
+    const { pin, managerPin, faceDetected, photo, employeeId } = await readPhotoFromRequest(request);
+    if (!employeeId) {
+      return NextResponse.json({ ok: false, error: "Select your name first." }, { status: 400 });
+    }
     if (!parsePin(pin)) {
       return NextResponse.json({ ok: false, error: "Enter a 4-digit PIN." }, { status: 400 });
     }
 
     const supabase = getSupabaseServer();
     const employee = await fetchClockEmployeeByPin(supabase, pin);
-    if (!employee) {
+    if (!employee || employee.id !== employeeId) {
       return NextResponse.json({ ok: false, error: "Invalid PIN" }, { status: 401 });
     }
 

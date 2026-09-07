@@ -19,6 +19,10 @@ export async function POST(request) {
   try {
     const body = await request.json();
     const pin = parsePin(body.pin);
+    const employeeId = String(body.employee_id || "").trim();
+    if (!employeeId) {
+      return NextResponse.json({ ok: false, error: "Select your name first." }, { status: 400 });
+    }
     if (!pin) {
       return NextResponse.json({ ok: false, error: "Enter a 4-digit PIN." }, { status: 400 });
     }
@@ -27,7 +31,7 @@ export async function POST(request) {
     await ensureBrookelynnAssistantManager(supabase);
 
     const employee = await fetchClockEmployeeByPin(supabase, pin);
-    if (!employee) {
+    if (!employee || employee.id !== employeeId) {
       return NextResponse.json({ ok: false, error: "Invalid PIN" }, { status: 401 });
     }
 

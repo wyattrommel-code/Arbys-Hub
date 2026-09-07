@@ -53,11 +53,18 @@ export async function GET(request) {
     const employeeIds = [...new Set(rows.map((p) => p.employee_id).filter(Boolean))];
     const employeeMap = new Map();
     if (employeeIds.length) {
-      const empQuery = await supabase
+      let empQuery = await supabase
         .from("employees")
-        .select("id, primary_role")
+        .select("id, primary_role, profile_photo_url")
         .eq("store_id", STORE_ID)
         .in("id", employeeIds);
+      if (empQuery.error) {
+        empQuery = await supabase
+          .from("employees")
+          .select("id, primary_role")
+          .eq("store_id", STORE_ID)
+          .in("id", employeeIds);
+      }
       if (!empQuery.error) {
         for (const emp of empQuery.data || []) employeeMap.set(emp.id, emp);
       }
@@ -71,13 +78,17 @@ export async function GET(request) {
       )
     );
     const grouped = groupTimecards(serialized);
+    const groups = grouped.groups.map((group) => ({
+      ...group,
+      profile_photo_url: employeeMap.get(group.key)?.profile_photo_url || null,
+    }));
     return NextResponse.json({
       ok: true,
       from,
       to,
       can_edit: canEditPunches(employee.role),
       subtract_scheduled_break: Boolean(settings.subtract_scheduled_break),
-      groups: grouped.groups,
+      groups,
       grand_display: grouped.grandDisplay,
       grand_exact: grouped.grandExact,
       open_count: grouped.openCount,

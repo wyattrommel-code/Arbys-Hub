@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import EmployeeAvatar from "@/components/EmployeeAvatar";
 import RosterTable from "@/components/people/RosterTable";
 import { STORE_ID } from "@/lib/constants";
 import { fetchEmployees, getRosterCategory, normalizeEmployeeStatus } from "@/lib/employees";
@@ -151,6 +152,7 @@ function defaultEmployeeForm() {
     status: "active",
     starting_wage: "",
     notes: "",
+    profile_photo_url: "",
   };
 }
 
@@ -195,6 +197,8 @@ export default function PeoplePage() {
 
   const [showAddEmployee, setShowAddEmployee] = useState(false);
   const [addForm, setAddForm] = useState(defaultEmployeeForm);
+  const [pendingPhotoFile, setPendingPhotoFile] = useState(null);
+  const [photoBusy, setPhotoBusy] = useState(false);
 
   const [wageHistoryEmployee, setWageHistoryEmployee] = useState(null);
   const [raiseEmployee, setRaiseEmployee] = useState(null);
@@ -372,6 +376,7 @@ export default function PeoplePage() {
   function openAddEmployeeModal() {
     setEditingEmployeeId(null);
     setAddForm(defaultEmployeeForm());
+    setPendingPhotoFile(null);
     setShowAddEmployee(true);
   }
 
@@ -379,6 +384,7 @@ export default function PeoplePage() {
     setShowAddEmployee(false);
     setEditingEmployeeId(null);
     setAddForm(defaultEmployeeForm());
+    setPendingPhotoFile(null);
   }
 
   function openEmployeeEdit(emp) {
@@ -399,8 +405,68 @@ export default function PeoplePage() {
       status: cat === "terminated" ? "terminated" : cat === "inactive" ? "inactive" : "active",
       starting_wage: currentWage?.hourly_rate != null ? String(currentWage.hourly_rate) : "",
       notes: emp.notes || "",
+      profile_photo_url: emp.profile_photo_url || "",
     });
+    setPendingPhotoFile(null);
     setShowAddEmployee(true);
+  }
+
+  async function postProfilePhoto(employeeId, file) {
+    const form = new FormData();
+    form.set("employee_id", employeeId);
+    form.set("file", file);
+    const res = await fetch("/api/people/photo", { method: "POST", body: form });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || "Could not save profile photo.");
+    return data.profile_photo_url || "";
+  }
+
+  async function handleProfilePhotoSelected(file) {
+    if (!file) return;
+    if (editingEmployeeId) {
+      setPhotoBusy(true);
+      setError("");
+      try {
+        const url = await postProfilePhoto(editingEmployeeId, file);
+        setAddForm((s) => ({ ...s, profile_photo_url: url }));
+        setEmployees((rows) =>
+          rows.map((row) => (row.id === editingEmployeeId ? { ...row, profile_photo_url: url } : row))
+        );
+      } catch (err) {
+        setError(err.message || "Could not save profile photo.");
+      } finally {
+        setPhotoBusy(false);
+      }
+      return;
+    }
+    setPendingPhotoFile(file);
+    setAddForm((s) => ({ ...s, profile_photo_url: URL.createObjectURL(file) }));
+  }
+
+  async function handleRemoveProfilePhoto() {
+    if (!editingEmployeeId) {
+      if (addForm.profile_photo_url?.startsWith("blob:")) URL.revokeObjectURL(addForm.profile_photo_url);
+      setPendingPhotoFile(null);
+      setAddForm((s) => ({ ...s, profile_photo_url: "" }));
+      return;
+    }
+    setPhotoBusy(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/people/photo?employee_id=${encodeURIComponent(editingEmployeeId)}`, {
+        method: "DELETE",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.error || "Could not remove profile photo.");
+      setAddForm((s) => ({ ...s, profile_photo_url: "" }));
+      setEmployees((rows) =>
+        rows.map((row) => (row.id === editingEmployeeId ? { ...row, profile_photo_url: null } : row))
+      );
+    } catch (err) {
+      setError(err.message || "Could not remove profile photo.");
+    } finally {
+      setPhotoBusy(false);
+    }
   }
 
   function handleRosterEdit(emp) {
@@ -530,6 +596,13 @@ export default function PeoplePage() {
     });
     if (wageErr) {
       setError(wageErr.message || "Employee added but starting wage failed.");
+    }
+    if (pendingPhotoFile) {
+      try {
+        await postProfilePhoto(inserted.id, pendingPhotoFile);
+      } catch (photoErr) {
+        setError(photoErr.message || "Employee added but profile photo failed.");
+      }
     }
     closeEmployeeModal();
     reloadAll();
@@ -1533,7 +1606,45 @@ export default function PeoplePage() {
           title={editingEmployeeId ? `Edit Employee — ${addForm.first_name} ${addForm.last_name}`.trim() : "Add New Employee"}
           onClose={closeEmployeeModal}
         >
+          {error ? <p className="mb-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p> : null}
           <div className="grid gap-2 sm:grid-cols-2">
+            <div className="sm:col-span-2 flex items-center gap-4 rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+              <EmployeeAvatar
+                name={`${addForm.first_name} ${addForm.last_name}`.trim() || "Employee"}
+                src={addForm.profile_photo_url || ""}
+                size="lg"
+              />
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium text-zinc-600">Profile photo</p>
+                <p className="mt-0.5 text-[11px] text-zinc-400">Used on the time clock roster and timecards.</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <label className="inline-flex h-9 cursor-pointer items-center rounded-lg bg-[#C8102E] px-3 text-xs font-semibold text-white">
+                    {photoBusy ? "Saving…" : addForm.profile_photo_url ? "Replace photo" : "Upload photo"}
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      className="sr-only"
+                      disabled={photoBusy}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = "";
+                        if (file) handleProfilePhotoSelected(file);
+                      }}
+                    />
+                  </label>
+                  {addForm.profile_photo_url ? (
+                    <button
+                      type="button"
+                      disabled={photoBusy}
+                      onClick={handleRemoveProfilePhoto}
+                      className="h-9 rounded-lg border border-zinc-300 px-3 text-xs font-semibold disabled:opacity-50"
+                    >
+                      Remove
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            </div>
             <label className="text-xs font-medium text-zinc-600">
               First Name *
               <input
