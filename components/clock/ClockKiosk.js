@@ -496,13 +496,13 @@ export default function ClockKiosk() {
                   session.action === "clock_out" ? "Capture & clock out" : "Capture & clock in"
                 }
                 busy={loading}
-                onCaptured={(blob) =>
+                onCaptured={(blob, faceDetected = true) =>
                   submitPunch({
                     sess: session,
                     pinValue: pin,
                     managerPinValue: managerPin,
                     photoBlob: blob,
-                    faceDetected: true,
+                    faceDetected: Boolean(faceDetected),
                   })
                 }
                 onCancel={reset}

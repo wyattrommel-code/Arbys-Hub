@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { captureJpegBlob, createFaceDetector } from "@/lib/face-detect";
 
-const FACE_TIMEOUT_MS = 10000;
+const FACE_FALLBACK_MS = 4500;
 
 export default function FaceCapture({
   actionLabel = "Capture & continue",
@@ -40,7 +40,11 @@ export default function FaceCapture({
           video.srcObject = stream;
           await video.play();
         }
-        detectorRef.current = await createFaceDetector();
+        try {
+          detectorRef.current = await createFaceDetector();
+        } catch {
+          detectorRef.current = null;
+        }
         if (cancelled) return;
 
         const tick = async () => {
@@ -53,12 +57,12 @@ export default function FaceCapture({
               if (!cancelled) {
                 setFacePresent(Boolean(found));
                 if (found) setTimedOut(false);
-                else if (Date.now() - startedAt >= FACE_TIMEOUT_MS) setTimedOut(true);
+                else if (Date.now() - startedAt >= FACE_FALLBACK_MS) setTimedOut(true);
               }
             } catch {
-              if (!cancelled && Date.now() - startedAt >= FACE_TIMEOUT_MS) setTimedOut(true);
+              if (!cancelled && Date.now() - startedAt >= FACE_FALLBACK_MS) setTimedOut(true);
             }
-          } else if (!cancelled && Date.now() - startedAt >= FACE_TIMEOUT_MS) {
+          } else if (!cancelled && Date.now() - startedAt >= FACE_FALLBACK_MS) {
             setTimedOut(true);
           }
           rafRef.current = window.setTimeout(tick, 200);
@@ -82,6 +86,20 @@ export default function FaceCapture({
     };
   }, []);
 
+  async function captureAndSend(faceDetected) {
+    const video = videoRef.current;
+    if (!video || capturing || busy) return;
+    setCapturing(true);
+    try {
+      const blob = await captureJpegBlob(video);
+      onCaptured(blob, faceDetected);
+    } catch (err) {
+      setCameraError(err?.message || "Could not capture photo.");
+    } finally {
+      setCapturing(false);
+    }
+  }
+
   async function handleCapture() {
     const video = videoRef.current;
     const detector = detectorRef.current;
@@ -98,7 +116,7 @@ export default function FaceCapture({
         return;
       }
       const blob = await captureJpegBlob(video);
-      onCaptured(blob);
+      onCaptured(blob, true);
     } catch (err) {
       setCameraError(err?.message || "Could not capture photo.");
     } finally {
@@ -107,6 +125,7 @@ export default function FaceCapture({
   }
 
   const locked = busy || capturing;
+  const showAnyway = timedOut && !facePresent && !cameraError;
 
   return (
     <div className="flex flex-col items-center">
@@ -129,7 +148,7 @@ export default function FaceCapture({
             facePresent ? "bg-emerald-500 text-white" : "bg-black/70 text-white"
           }`}
         >
-          {facePresent ? "Face detected" : "Center your face"}
+          {facePresent ? "Face detected" : "Look at the camera — hats are OK"}
         </p>
       </div>
 
@@ -137,9 +156,9 @@ export default function FaceCapture({
         <p className="mt-4 text-center text-base font-medium text-red-600" role="alert">
           {cameraError}
         </p>
-      ) : timedOut && !facePresent ? (
-        <p className="mt-4 text-center text-base font-medium text-red-600" role="alert">
-          No face detected, please center your face
+      ) : showAnyway ? (
+        <p className="mt-4 text-center text-sm text-zinc-500">
+          Couldn&apos;t confirm a face (hats and lighting can do that). Take the photo anyway.
         </p>
       ) : (
         <p className="mt-4 text-center text-sm text-zinc-500">
@@ -155,6 +174,16 @@ export default function FaceCapture({
       >
         {locked ? "Working…" : actionLabel}
       </button>
+      {showAnyway ? (
+        <button
+          type="button"
+          disabled={locked}
+          onClick={() => captureAndSend(false)}
+          className="mt-3 w-full min-h-16 rounded-2xl border-2 border-[#C8102E] text-xl font-bold text-[#C8102E] disabled:opacity-40"
+        >
+          Take photo anyway
+        </button>
+      ) : null}
       <button
         type="button"
         disabled={locked}

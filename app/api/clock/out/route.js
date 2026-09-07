@@ -44,12 +44,6 @@ export async function POST(request) {
           { status: 400 }
         );
       }
-      if (!faceDetected) {
-        return NextResponse.json(
-          { ok: false, error: "No face detected, please center your face." },
-          { status: 400 }
-        );
-      }
       try {
         photoUrl = await uploadPunchPhoto(supabase, employee.id, photo);
       } catch (err) {
