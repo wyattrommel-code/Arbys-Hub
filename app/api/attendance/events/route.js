@@ -28,7 +28,7 @@ function serializeEvent(row, shift) {
 }
 
 export async function GET(request) {
-  const { error } = await requireFeature("schedule.full");
+  const { error } = await requireFeature("timeclock.full");
   if (error) return error;
   try {
     const url = new URL(request.url);
@@ -74,7 +74,7 @@ export async function GET(request) {
 }
 
 export async function POST(request) {
-  const { employee, error } = await requireFeature("schedule.full");
+  const { employee, error } = await requireFeature("timeclock.full");
   if (error) return error;
   try {
     const body = await request.json();

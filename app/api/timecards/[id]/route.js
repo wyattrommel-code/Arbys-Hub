@@ -22,7 +22,7 @@ function isMissingColumnError(error) {
 }
 
 export async function PATCH(request, context) {
-  const { employee, error } = await requireFeature("schedule.full");
+  const { employee, error } = await requireFeature("timeclock.full");
   if (error) return error;
   if (!canEditPunches(employee.role)) {
     return NextResponse.json({ ok: false, error: "Only a GM or assistant manager can edit punches." }, { status: 403 });

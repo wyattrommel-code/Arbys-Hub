@@ -4,7 +4,7 @@ import { requireFeature } from "@/lib/api-auth";
 import { getSupabaseServer } from "@/lib/supabase-server";
 
 export async function POST(request) {
-  const { error } = await requireFeature("schedule.full");
+  const { error } = await requireFeature("timeclock.full");
   if (error) return error;
   try {
     const body = await request.json().catch(() => ({}));

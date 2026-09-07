@@ -1,9 +1,5 @@
-import AttendanceBoard from "@/components/attendance/AttendanceBoard";
+import { redirect } from "next/navigation";
 
-export const metadata = {
-  title: "Attendance | Arby's Ops",
-};
-
-export default function ScheduleAttendancePage() {
-  return <AttendanceBoard />;
+export default function ScheduleAttendanceRedirect() {
+  redirect("/timeclock/attendance");
 }

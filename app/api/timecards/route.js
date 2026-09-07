@@ -14,7 +14,7 @@ import {
 import { getSupabaseServer } from "@/lib/supabase-server";
 
 export async function GET(request) {
-  const { employee, error } = await requireFeature("schedule.full");
+  const { employee, error } = await requireFeature("timeclock.full");
   if (error) return error;
   try {
     const url = new URL(request.url);

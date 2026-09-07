@@ -207,7 +207,7 @@ export default function AttendanceBoard() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <a
-            href="/schedule/timecards"
+            href="/timeclock/timecards"
             className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-semibold"
           >
             Timecards

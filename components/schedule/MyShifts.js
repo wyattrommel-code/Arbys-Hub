@@ -173,12 +173,6 @@ export default function MyShifts({ employee }) {
 
   return (
     <section className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-4 px-4 py-5">
-      <Link
-        href="/clock"
-        className="flex min-h-14 items-center justify-center rounded-xl bg-[#C8102E] text-base font-bold text-white shadow-sm"
-      >
-        Time Clock
-      </Link>
       <div className="flex items-center justify-between gap-2 rounded-xl border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
         <button
           type="button"

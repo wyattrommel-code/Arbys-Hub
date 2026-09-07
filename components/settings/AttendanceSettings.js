@@ -13,6 +13,7 @@ const DEFAULTS = {
 
 export default function AttendanceSettings() {
   const [form, setForm] = useState(DEFAULTS);
+  const [canEdit, setCanEdit] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -26,6 +27,7 @@ export default function AttendanceSettings() {
         if (cancelled) return;
         if (!data.ok) throw new Error(data.error || "Could not load settings.");
         setForm({ ...DEFAULTS, ...data.settings });
+        setCanEdit(Boolean(data.can_edit));
       })
       .catch((err) => {
         if (!cancelled) setError(err.message || "Could not load settings.");
@@ -40,6 +42,7 @@ export default function AttendanceSettings() {
 
   async function save(event) {
     event.preventDefault();
+    if (!canEdit) return;
     setSaving(true);
     setError("");
     setMessage("");
@@ -68,6 +71,7 @@ export default function AttendanceSettings() {
         max="180"
         step="1"
         value={form[field]}
+        disabled={!canEdit}
         onChange={(e) => setForm((s) => ({ ...s, [field]: Number(e.target.value) }))}
         className="mt-1 w-full rounded-lg border border-zinc-300 px-2 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
       />
@@ -81,6 +85,7 @@ export default function AttendanceSettings() {
           type="checkbox"
           className="mt-0.5"
           checked={Boolean(form[field])}
+          disabled={!canEdit}
           onChange={(e) => setForm((s) => ({ ...s, [field]: e.target.checked }))}
         />
         <span>
@@ -98,7 +103,7 @@ export default function AttendanceSettings() {
   return (
     <form onSubmit={save} className="max-w-xl space-y-5">
       <div>
-        <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Attendance</h2>
+        <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Time clock settings</h2>
         <p className="mt-1 text-sm text-zinc-500">
           Grace windows before a red flag fires. Saving does not rewrite past flags until you re-scan.
         </p>
@@ -138,13 +143,17 @@ export default function AttendanceSettings() {
         )}
       </div>
 
-      <button
-        type="submit"
-        disabled={saving}
-        className="rounded-lg bg-[#C8102E] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
-      >
-        {saving ? "Saving…" : "Save attendance settings"}
-      </button>
+      {canEdit ? (
+        <button
+          type="submit"
+          disabled={saving}
+          className="rounded-lg bg-[#C8102E] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+        >
+          {saving ? "Saving…" : "Save attendance settings"}
+        </button>
+      ) : (
+        <p className="text-xs text-zinc-500">Shift leads can view these settings. GM or assistant manager can change them.</p>
+      )}
     </form>
   );
 }

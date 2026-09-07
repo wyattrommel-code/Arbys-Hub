@@ -1,9 +1,5 @@
-import TimecardsBoard from "@/components/timecards/TimecardsBoard";
+import { redirect } from "next/navigation";
 
-export const metadata = {
-  title: "Timecards | Arby's Ops",
-};
-
-export default function TimecardsPage() {
-  return <TimecardsBoard />;
+export default function ScheduleTimecardsRedirect() {
+  redirect("/timeclock/timecards");
 }

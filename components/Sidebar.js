@@ -10,6 +10,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   ClipboardList,
+  Clock,
   Flame,
   Gauge,
   Home,
@@ -24,8 +25,8 @@ import {
 import {
   isNavActive,
   isScheduleChildActive,
-  SCHEDULE_SUBNAV_STORAGE_KEY,
   SIDEBAR_NAV,
+  subnavStorageKey,
 } from "@/lib/nav";
 import { canAccess } from "@/lib/permissions";
 
@@ -37,6 +38,7 @@ const ICONS = {
   package: Package,
   users: Users,
   calendar: Calendar,
+  clock: Clock,
   "layout-grid": LayoutGrid,
   gauge: Gauge,
   upload: Upload,
@@ -58,7 +60,7 @@ function navClass(active, collapsed) {
   }`;
 }
 
-function ScheduleGroups({ groups, role, pathname, onNavigate }) {
+function NavGroups({ groups, role, pathname, onNavigate }) {
   return (
     <div className="mb-1 ml-4 mt-1 space-y-3 border-l border-white/20 pl-2">
       {groups.map((group) => {
@@ -96,7 +98,7 @@ function ScheduleGroups({ groups, role, pathname, onNavigate }) {
   );
 }
 
-function NavLinks({ role, onNavigate, collapsed, scheduleOpen, onToggleSchedule, subnavId }) {
+function NavLinks({ role, onNavigate, collapsed, openByHref, onToggleGroup, subnavId }) {
   const pathname = usePathname();
   const visibleItems = SIDEBAR_NAV.filter((item) => canAccess(role, item.feature));
 
@@ -106,6 +108,8 @@ function NavLinks({ role, onNavigate, collapsed, scheduleOpen, onToggleSchedule,
         const active = isNavActive(pathname, item);
         const Icon = ICONS[item.icon];
         const hasGroups = Array.isArray(item.groups) && item.groups.length > 0;
+        const groupOpen = Boolean(openByHref[item.href]);
+        const groupId = `${subnavId}-${item.href.replace(/\W+/g, "-")}`;
 
         return (
           <li key={item.href}>
@@ -114,7 +118,7 @@ function NavLinks({ role, onNavigate, collapsed, scheduleOpen, onToggleSchedule,
                 href={item.href}
                 onClick={() => {
                   if (hasGroups && !collapsed) {
-                    onToggleSchedule(true);
+                    onToggleGroup(item.href, true);
                   }
                   onNavigate?.();
                 }}
@@ -129,15 +133,15 @@ function NavLinks({ role, onNavigate, collapsed, scheduleOpen, onToggleSchedule,
               {hasGroups && !collapsed ? (
                 <button
                   type="button"
-                  onClick={() => onToggleSchedule()}
+                  onClick={() => onToggleGroup(item.href)}
                   className="inline-flex min-h-9 min-w-9 shrink-0 items-center justify-center rounded-lg text-white/80 hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
-                  aria-label={scheduleOpen ? "Collapse scheduling menu" : "Expand scheduling menu"}
-                  aria-expanded={scheduleOpen}
-                  aria-controls={subnavId}
+                  aria-label={groupOpen ? `Collapse ${item.label} menu` : `Expand ${item.label} menu`}
+                  aria-expanded={groupOpen}
+                  aria-controls={groupId}
                 >
                   <ChevronDown
                     className={`h-4 w-4 transition-transform duration-200 motion-reduce:transition-none ${
-                      scheduleOpen ? "rotate-0" : "-rotate-90"
+                      groupOpen ? "rotate-0" : "-rotate-90"
                     }`}
                     aria-hidden="true"
                   />
@@ -146,15 +150,15 @@ function NavLinks({ role, onNavigate, collapsed, scheduleOpen, onToggleSchedule,
             </div>
             {hasGroups && !collapsed ? (
               <div
-                id={subnavId}
+                id={groupId}
                 className={`grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none ${
-                  scheduleOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+                  groupOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
                 }`}
-                aria-hidden={!scheduleOpen}
-                inert={!scheduleOpen ? true : undefined}
+                aria-hidden={!groupOpen}
+                inert={!groupOpen ? true : undefined}
               >
                 <div className="overflow-hidden">
-                  <ScheduleGroups
+                  <NavGroups
                     groups={item.groups}
                     role={role}
                     pathname={pathname}
@@ -179,7 +183,7 @@ export default function Sidebar({
   const pathname = usePathname();
   const subnavId = useId();
   const [role, setRole] = useState("crew");
-  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [openByHref, setOpenByHref] = useState({});
 
   useEffect(() => {
     let cancelled = false;
@@ -197,23 +201,26 @@ export default function Sidebar({
   }, []);
 
   useEffect(() => {
-    const stored = window.localStorage.getItem(SCHEDULE_SUBNAV_STORAGE_KEY);
-    if (stored === "0") {
-      setScheduleOpen(false);
-      return;
+    const next = {};
+    for (const item of SIDEBAR_NAV) {
+      if (!Array.isArray(item.groups) || !item.groups.length) continue;
+      const stored = window.localStorage.getItem(subnavStorageKey(item.href));
+      if (stored === "0") {
+        next[item.href] = false;
+      } else if (stored === "1") {
+        next[item.href] = true;
+      } else {
+        next[item.href] = pathname === item.href || pathname.startsWith(`${item.href}/`);
+      }
     }
-    if (stored === "1") {
-      setScheduleOpen(true);
-      return;
-    }
-    setScheduleOpen(pathname === "/schedule" || pathname.startsWith("/schedule/"));
+    setOpenByHref(next);
   }, [pathname]);
 
-  function toggleSchedule(nextValue) {
-    setScheduleOpen((open) => {
-      const next = typeof nextValue === "boolean" ? nextValue : !open;
-      window.localStorage.setItem(SCHEDULE_SUBNAV_STORAGE_KEY, next ? "1" : "0");
-      return next;
+  function toggleGroup(href, nextValue) {
+    setOpenByHref((current) => {
+      const nextOpen = typeof nextValue === "boolean" ? nextValue : !current[href];
+      window.localStorage.setItem(subnavStorageKey(href), nextOpen ? "1" : "0");
+      return { ...current, [href]: nextOpen };
     });
   }
 
@@ -256,8 +263,8 @@ export default function Sidebar({
           <NavLinks
             role={role}
             collapsed={collapsed}
-            scheduleOpen={scheduleOpen}
-            onToggleSchedule={toggleSchedule}
+            openByHref={openByHref}
+            onToggleGroup={toggleGroup}
             subnavId={subnavId}
           />
         </nav>
@@ -285,8 +292,8 @@ export default function Sidebar({
           <NavLinks
             role={role}
             collapsed={false}
-            scheduleOpen={scheduleOpen}
-            onToggleSchedule={toggleSchedule}
+            openByHref={openByHref}
+            onToggleGroup={toggleGroup}
             onNavigate={onClose}
             subnavId={`${subnavId}-mobile`}
           />
