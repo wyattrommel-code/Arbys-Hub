@@ -3,7 +3,7 @@
 import { useMemo, useRef, useState } from "react";
 import { fetchEmployees } from "@/lib/employees";
 import { calculateOvertimeForWeekRows, getWeekEndSaturday, getWeekStartSunday } from "@/lib/laborOvertime";
-import { formatLongDate } from "@/lib/schedule";
+import { formatLongDate, resolveEmployeeId } from "@/lib/schedule";
 import { getSupabase } from "@/lib/supabase";
 
 const DEFAULT_HOURLY_WAGE = 10;
@@ -938,6 +938,10 @@ export default function ImportPage() {
 
       if (upsertRows.length > 0) {
         const supabase = getSupabase();
+        const roster = await fetchEmployees(supabase, { select: "id, first_name, last_name" });
+        for (const row of upsertRows) {
+          row.employee_id = resolveEmployeeId(roster, { employee_name: row.employee_name });
+        }
         const { error: upsertError } = await supabase
           .from("schedule_shifts")
           .upsert(upsertRows, { onConflict: "shift_date,employee_name,scheduled_start" });

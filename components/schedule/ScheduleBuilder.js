@@ -3,26 +3,28 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ScheduleToast from "@/components/schedule/ScheduleToast";
 import ShiftModal from "@/components/schedule/ShiftModal";
-import { employeeFullName, fetchEmployees, matchesEmployeeByName } from "@/lib/employees";
+import { employeeFullName, fetchEmployees } from "@/lib/employees";
 import {
+  assigneeFields,
   compareEmployees,
   computeScheduledHours,
   contrastText,
   DAY_LABELS,
   downloadCsv,
+  findEmployeeForShift,
   formatClock,
   formatHours,
   formatShortDate,
   formatWeekRange,
-  isUnassignedName,
+  isUnassignedShift,
   nameKey,
   parseStationNames,
+  resolveEmployeeId,
   SCHEDULE_STORE_ID,
   SHIFT_SOURCE_HUB,
   shiftPayload,
   shiftWarningMessages,
   shiftsToCsv,
-  UNASSIGNED_EMPLOYEE_NAME,
   UNASSIGNED_ROW_ID,
   unassignedEmployeeRow,
   unpaidBreakMinutes,
@@ -32,21 +34,6 @@ import {
 import { addDaysISO, getStoreToday } from "@/lib/store-time";
 import { getSupabase } from "@/lib/supabase";
 
-function findEmployeeForShift(shift, employees) {
-  if (isUnassignedName(shift.employee_name)) {
-    return employees.find((emp) => emp.isUnassigned) || null;
-  }
-  if (shift.jolt_employee_id) {
-    const byJolt = employees.find(
-      (emp) =>
-        emp.jolt_employee_id &&
-        String(emp.jolt_employee_id) === String(shift.jolt_employee_id)
-    );
-    if (byJolt) return byJolt;
-  }
-  return employees.find((emp) => matchesEmployeeByName(shift.employee_name, emp)) || null;
-}
-
 function stationColor(stations, stationValue) {
   const first = parseStationNames(stationValue)[0];
   const match = stations.find((s) => s.name === first);
@@ -55,7 +42,7 @@ function stationColor(stations, stationValue) {
 
 function rowKey(emp) {
   if (emp?.isUnassigned) return emp.id;
-  return emp.isSynthetic ? `name:${nameKey(emp.fullName)}` : emp.id;
+  return emp.id;
 }
 
 function timeToMinutesSafe(value) {
@@ -73,7 +60,8 @@ async function writeShift(supabase, method, payload, id) {
       : table.update(payload).eq("id", id).select("*").single();
   let { data, error } = await query;
   if (error && /unpaid_break/.test(error.message || "")) {
-    const { unpaid_break_minutes: _ignored, ...rest } = payload;
+    const rest = { ...payload };
+    delete rest.unpaid_break_minutes;
     const retry =
       method === "insert"
         ? await supabase.from("schedule_shifts").insert(rest).select("*").single()
@@ -251,19 +239,35 @@ export default function ScheduleBuilder() {
   const rows = useMemo(() => {
     const list = [unassignedEmployeeRow(), ...employees];
     for (const shift of shifts) {
-      if (isUnassignedName(shift.employee_name)) continue;
-      const emp = findEmployeeForShift(shift, list);
-      if (emp) continue;
-      const already = list.some((row) => nameKey(row.fullName) === nameKey(shift.employee_name));
+      if (isUnassignedShift(shift)) continue;
+      if (findEmployeeForShift(list, shift)) continue;
+      if (shift.employee_id) {
+        const already = list.some((row) => String(row.id) === String(shift.employee_id));
+        if (!already) {
+          list.push({
+            id: shift.employee_id,
+            fullName: shift.employee_name || "Former employee",
+            first_name: shift.employee_name || "Former employee",
+            last_name: "",
+            role: "crew",
+            isSynthetic: true,
+            jolt_employee_id: shift.jolt_employee_id || null,
+            primary_role: shift.role || "",
+          });
+        }
+        continue;
+      }
+      const placeholderId = `name:${nameKey(shift.employee_name)}`;
+      const already = list.some((row) => row.id === placeholderId);
       if (!already && shift.employee_name) {
         list.push({
-          id: `name:${nameKey(shift.employee_name)}`,
+          id: placeholderId,
           fullName: shift.employee_name,
           first_name: shift.employee_name,
           last_name: "",
           role: "crew",
           isSynthetic: true,
-          jolt_employee_id: shift.jolt_employee_id || null,
+          jolt_employee_id: null,
           primary_role: shift.role || "",
         });
       }
@@ -274,8 +278,8 @@ export default function ScheduleBuilder() {
   const shiftsByRowDay = useMemo(() => {
     const map = new Map();
     for (const shift of shifts) {
-      const emp = findEmployeeForShift(shift, rows);
-      const key = emp ? rowKey(emp) : `name:${nameKey(shift.employee_name)}`;
+      const emp = findEmployeeForShift(rows, shift);
+      const key = emp ? rowKey(emp) : shift.employee_id || `name:${nameKey(shift.employee_name)}`;
       const cell = `${key}|${shift.shift_date}`;
       if (!map.has(cell)) map.set(cell, []);
       map.get(cell).push(shift);
@@ -291,8 +295,8 @@ export default function ScheduleBuilder() {
   const hoursByRow = useMemo(() => {
     const map = new Map();
     for (const shift of shifts) {
-      const emp = findEmployeeForShift(shift, rows);
-      const key = emp ? rowKey(emp) : `name:${nameKey(shift.employee_name)}`;
+      const emp = findEmployeeForShift(rows, shift);
+      const key = emp ? rowKey(emp) : shift.employee_id || `name:${nameKey(shift.employee_name)}`;
       map.set(key, (map.get(key) || 0) + (Number(shift.scheduled_hours) || 0));
     }
     return map;
@@ -367,7 +371,7 @@ export default function ScheduleBuilder() {
 
   function openEdit(shift) {
     if (published) return;
-    const emp = findEmployeeForShift(shift, rows);
+    const emp = findEmployeeForShift(rows, shift);
     setModal({
       mode: "edit",
       shift,
@@ -400,31 +404,29 @@ export default function ScheduleBuilder() {
       showToast(error.message || "Shift saved, but template failed.");
       return;
     }
-    const { error: shiftErr } = await supabase.from("schedule_template_shifts").insert({
+    const assigned = assigneeFields(fields.employee || unassignedEmployeeRow());
+    const templateShift = {
       template_id: template.id,
       day_of_week: dates.indexOf(date),
-      employee_name: fields.employee?.fullName || UNASSIGNED_EMPLOYEE_NAME,
-      jolt_employee_id: fields.employee?.jolt_employee_id || null,
+      employee_id: assigned.employee_id,
+      employee_name: assigned.employee_name,
+      jolt_employee_id: assigned.jolt_employee_id,
       role: fields.role || null,
       station: fields.station || null,
       scheduled_start: fields.scheduled_start,
       scheduled_end: fields.scheduled_end,
       scheduled_hours: fields.scheduled_hours,
       unpaid_break_minutes: unpaidBreakMinutes(fields.unpaid_break_minutes),
-    });
-    if (shiftErr && /unpaid_break/.test(shiftErr.message || "")) {
-      await supabase.from("schedule_template_shifts").insert({
-        template_id: template.id,
-        day_of_week: dates.indexOf(date),
-        employee_name: fields.employee?.fullName || UNASSIGNED_EMPLOYEE_NAME,
-        jolt_employee_id: fields.employee?.jolt_employee_id || null,
-        role: fields.role || null,
-        station: fields.station || null,
-        scheduled_start: fields.scheduled_start,
-        scheduled_end: fields.scheduled_end,
-        scheduled_hours: fields.scheduled_hours,
-      });
-    } else if (shiftErr) {
+    };
+    let { error: shiftErr } = await supabase.from("schedule_template_shifts").insert(templateShift);
+    if (shiftErr && /unpaid_break|employee_id/.test(shiftErr.message || "")) {
+      const rest = { ...templateShift };
+      if (/unpaid_break/.test(shiftErr.message || "")) delete rest.unpaid_break_minutes;
+      if (/employee_id/.test(shiftErr.message || "")) delete rest.employee_id;
+      const retry = await supabase.from("schedule_template_shifts").insert(rest);
+      shiftErr = retry.error;
+    }
+    if (shiftErr) {
       showToast(shiftErr.message || "Shift saved, but template shifts failed.");
       return;
     }
@@ -438,7 +440,9 @@ export default function ScheduleBuilder() {
       current.map((row) => {
         if (row.id !== tempId) return row;
         const moved =
-          row.shift_date !== local.shift_date || row.employee_name !== local.employee_name;
+          row.shift_date !== local.shift_date ||
+          String(row.employee_id || "") !== String(local.employee_id || "") ||
+          row.employee_name !== local.employee_name;
         const merged = { ...data, ...row, id: data.id };
         if (moved) {
           writeShift(supabase, "update", shiftPayload(merged, weekStart), data.id).then(({ error: followErr }) => {
@@ -455,11 +459,11 @@ export default function ScheduleBuilder() {
     const employee = fields.employee || unassignedEmployeeRow();
     const date = modal.draft.shift_date;
     const tempId = `temp-${crypto.randomUUID()}`;
+    const assigned = assigneeFields(employee);
     const local = {
       id: tempId,
       shift_date: date,
-      employee_name: employee.fullName || UNASSIGNED_EMPLOYEE_NAME,
-      jolt_employee_id: employee.jolt_employee_id || null,
+      ...assigned,
       role: fields.role,
       station: fields.station,
       scheduled_start: fields.scheduled_start,
@@ -496,8 +500,7 @@ export default function ScheduleBuilder() {
     const employee = fields.employee || unassignedEmployeeRow();
     const next = {
       ...prev,
-      employee_name: employee.fullName || UNASSIGNED_EMPLOYEE_NAME,
-      jolt_employee_id: employee.isUnassigned ? null : employee.jolt_employee_id || null,
+      ...assigneeFields(employee),
       role: fields.role,
       station: fields.station,
       scheduled_start: fields.scheduled_start,
@@ -556,8 +559,7 @@ export default function ScheduleBuilder() {
     const prev = shiftsRef.current.find((s) => s.id === shiftId);
     if (!prev) return;
     const patch = {
-      employee_name: employee.fullName || UNASSIGNED_EMPLOYEE_NAME,
-      jolt_employee_id: employee.isUnassigned ? null : employee.jolt_employee_id || prev.jolt_employee_id || null,
+      ...assigneeFields(employee),
       shift_date: date,
       week_start_date: weekStart,
     };
@@ -582,8 +584,7 @@ export default function ScheduleBuilder() {
     const local = {
       id: tempId,
       shift_date: date,
-      employee_name: employee.fullName || UNASSIGNED_EMPLOYEE_NAME,
-      jolt_employee_id: employee.isUnassigned ? null : employee.jolt_employee_id || prev.jolt_employee_id || null,
+      ...assigneeFields(employee),
       role: prev.role || null,
       station: prev.station || null,
       scheduled_start: prev.scheduled_start,
@@ -649,6 +650,7 @@ export default function ScheduleBuilder() {
       .map((shift) => ({
         template_id: template.id,
         day_of_week: dates.indexOf(shift.shift_date),
+        employee_id: shift.employee_id || resolveEmployeeId(employees, shift),
         employee_name: shift.employee_name,
         jolt_employee_id: shift.jolt_employee_id || null,
         role: shift.role || null,
@@ -661,15 +663,18 @@ export default function ScheduleBuilder() {
         unpaid_break_minutes: unpaidBreakMinutes(shift.unpaid_break_minutes),
       }));
     if (templateShifts.length) {
-      const { error: shiftErr } = await supabase.from("schedule_template_shifts").insert(templateShifts);
-      if (shiftErr && /unpaid_break/.test(shiftErr.message || "")) {
-        const stripped = templateShifts.map(({ unpaid_break_minutes: _b, ...rest }) => rest);
+      let { error: shiftErr } = await supabase.from("schedule_template_shifts").insert(templateShifts);
+      if (shiftErr && /unpaid_break|employee_id/.test(shiftErr.message || "")) {
+        const stripped = templateShifts.map((row) => {
+          const next = { ...row };
+          if (/unpaid_break/.test(shiftErr.message || "")) delete next.unpaid_break_minutes;
+          if (/employee_id/.test(shiftErr.message || "")) delete next.employee_id;
+          return next;
+        });
         const retry = await supabase.from("schedule_template_shifts").insert(stripped);
-        if (retry.error) {
-          showToast(retry.error.message || "Template saved, but shifts failed.");
-          return;
-        }
-      } else if (shiftErr) {
+        shiftErr = retry.error;
+      }
+      if (shiftErr) {
         showToast(shiftErr.message || "Template saved, but shifts failed.");
         return;
       }
@@ -708,9 +713,11 @@ export default function ScheduleBuilder() {
       .map((item) => {
         const date = dates[item.day_of_week];
         if (!date) return null;
+        const employeeId = resolveEmployeeId(employees, item);
         return shiftPayload(
           {
             shift_date: date,
+            employee_id: employeeId,
             employee_name: item.employee_name,
             jolt_employee_id: item.jolt_employee_id || null,
             role: item.role || null,

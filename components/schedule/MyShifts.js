@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import ScheduleToast from "@/components/schedule/ScheduleToast";
 import ShiftMarketplace from "@/components/schedule/ShiftMarketplace";
+import PunchFixes from "@/components/schedule/PunchFixes";
 import {
   computeScheduledHours,
   DAY_LABELS,
@@ -11,7 +12,6 @@ import {
   formatHours,
   formatLongDate,
   formatWeekRange,
-  nameKey,
   SCHEDULE_STORE_ID,
   weekDates,
   weekStartSunday,
@@ -76,15 +76,9 @@ export default function MyShifts({ employee }) {
         setShifts([]);
         return;
       }
-      const mine = (shiftRows || []).filter((row) => {
-        const target = nameKey(fullName);
-        const rowName = nameKey(row.employee_name);
-        if (!target || !rowName) return false;
-        if (rowName === target) return true;
-        const last = nameKey(employee.last_name);
-        const rowLast = rowName.split(" ").pop() || "";
-        return Boolean(last && (rowLast === last || rowLast.includes(last) || last.includes(rowLast)));
-      });
+      const mine = (shiftRows || []).filter(
+        (row) => employee.employee_id && String(row.employee_id) === String(employee.employee_id)
+      );
       mine.sort(
         (a, b) =>
           String(a.shift_date).localeCompare(String(b.shift_date)) ||
@@ -97,7 +91,7 @@ export default function MyShifts({ employee }) {
     } finally {
       setLoading(false);
     }
-  }, [employee, fullName, supabase, weekStart, weekEnd, showToast]);
+  }, [employee, supabase, weekStart, weekEnd, showToast]);
 
   useEffect(() => {
     loadWeek();
@@ -265,6 +259,7 @@ export default function MyShifts({ employee }) {
         onAction={offerAction}
         onCreate={createOffer}
       />
+      <PunchFixes />
       {market?.can_approve ? (
         <Link href="/schedule/offers" className="text-sm font-semibold text-[#C8102E]">
           Review shift offers
