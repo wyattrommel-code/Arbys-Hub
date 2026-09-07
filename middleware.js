@@ -8,7 +8,7 @@ import {
   verifySessionToken,
 } from "./lib/session";
 
-const PUBLIC_PREFIXES = ["/login", "/api/auth", "/roast-beef"];
+const PUBLIC_PREFIXES = ["/login", "/api/auth", "/api/clock", "/clock", "/roast-beef"];
 
 function isPublicPath(pathname) {
   return PUBLIC_PREFIXES.some(

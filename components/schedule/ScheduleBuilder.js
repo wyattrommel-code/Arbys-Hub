@@ -519,6 +519,23 @@ export default function ScheduleBuilder() {
     }
   }
 
+  async function markCallOut(shift) {
+    if (!shift?.id || String(shift.id).startsWith("temp-")) return;
+    try {
+      const res = await fetch("/api/attendance/call-out", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shift_id: shift.id }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || "Could not mark call-out.");
+      setModal(null);
+      showToast("Call-out recorded.", "success");
+    } catch (err) {
+      showToast(err.message || "Could not mark call-out.");
+    }
+  }
+
   async function moveShift(shiftId, employee, date) {
     if (published) return;
     const prev = shiftsRef.current.find((s) => s.id === shiftId);
@@ -1087,6 +1104,7 @@ export default function ScheduleBuilder() {
           onClose={() => setModal(null)}
           onSave={saveFromModal}
           onDelete={() => deleteShift(modal.shift)}
+          onCallOut={() => markCallOut(modal.shift)}
         />
       ) : null}
 

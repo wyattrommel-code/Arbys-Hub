@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import RosterTable from "@/components/people/RosterTable";
 import { STORE_ID } from "@/lib/constants";
 import { fetchEmployees, getRosterCategory, normalizeEmployeeStatus } from "@/lib/employees";
-import { normalizeRole } from "@/lib/permissions";
+import { HUB_ROLE_OPTIONS, normalizeRole } from "@/lib/permissions";
 import { formatLongDate } from "@/lib/schedule";
 import { getSupabase } from "@/lib/supabase";
 
@@ -14,11 +14,6 @@ const QUESTION_CATEGORIES = ["safety", "quality", "speed", "knowledge"];
 const RAISE_REASONS = ["Performance Review", "Annual Raise", "Promotion", "Correction", "Other"];
 const TABS = ["ROSTER", "CERTIFICATIONS", "TRAINING", "QUESTION BANK"];
 const ROLE_OPTIONS = ["Morning", "Breakfast", "Open", "Day Lead", "Mid Shift", "Night", "Night Lead", "Closing"];
-const HUB_ROLE_OPTIONS = [
-  { value: "crew", label: "Crew" },
-  { value: "shift_lead", label: "Shift Lead" },
-  { value: "gm", label: "GM" },
-];
 
 function isValidEmployeePin(pin) {
   return /^\d{4}$/.test(String(pin || "").trim());
@@ -482,6 +477,7 @@ export default function PeoplePage() {
         status: addForm.status,
         primary_role: addForm.primary_role || null,
         is_shift_lead: Boolean(addForm.is_shift_lead),
+        is_assistant_manager: normalizeRole(addForm.role) === "assistant_manager",
         is_trainer: Boolean(addForm.is_trainer),
         notes: addForm.notes || null,
       };
@@ -514,6 +510,7 @@ export default function PeoplePage() {
         hire_date: addForm.hire_date || null,
         primary_role: addForm.primary_role || null,
         is_shift_lead: Boolean(addForm.is_shift_lead),
+        is_assistant_manager: normalizeRole(addForm.role) === "assistant_manager",
         is_trainer: Boolean(addForm.is_trainer),
         status: addForm.status || "active",
         notes: addForm.notes || null,

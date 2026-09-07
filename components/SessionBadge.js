@@ -10,7 +10,7 @@ export default function SessionBadge() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (pathname === "/login") {
+    if (pathname === "/login" || pathname === "/clock") {
       setLoading(false);
       return;
     }
@@ -27,7 +27,7 @@ export default function SessionBadge() {
     router.refresh();
   }, [router]);
 
-  if (pathname === "/login" || loading || !employee) {
+  if (pathname === "/login" || pathname === "/clock" || loading || !employee) {
     return <div className="min-w-[80px]" aria-hidden="true" />;
   }
 

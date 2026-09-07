@@ -24,6 +24,7 @@ export default function ShiftModal({
   onClose,
   onSave,
   onDelete,
+  onCallOut,
 }) {
   const [start, setStart] = useState(timeInputValue(draft?.scheduled_start));
   const [end, setEnd] = useState(timeInputValue(draft?.scheduled_end));
@@ -218,13 +219,24 @@ export default function ShiftModal({
 
         <div className="mt-4 flex flex-wrap justify-between gap-2">
           {mode === "edit" ? (
-            <button
-              type="button"
-              onClick={() => onDelete()}
-              className="rounded-lg border border-red-200 px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-50"
-            >
-              Delete
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => onDelete()}
+                className="rounded-lg border border-red-200 px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-50"
+              >
+                Delete
+              </button>
+              {onCallOut && employeeId !== UNASSIGNED_ROW_ID ? (
+                <button
+                  type="button"
+                  onClick={() => onCallOut()}
+                  className="rounded-lg border border-amber-300 px-3 py-2 text-sm font-semibold text-amber-900 hover:bg-amber-50"
+                >
+                  Mark call-out
+                </button>
+              ) : null}
+            </div>
           ) : (
             <span />
           )}

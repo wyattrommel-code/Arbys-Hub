@@ -9,7 +9,7 @@ import { RAIL_STORAGE_KEY } from "@/lib/nav";
 
 export default function AppShell({ children }) {
   const pathname = usePathname();
-  const isLogin = pathname === "/login";
+  const isKiosk = pathname === "/login" || pathname === "/clock";
   const [mobileOpen, setMobileOpen] = useState(false);
   const [railCollapsed, setRailCollapsed] = useState(false);
 
@@ -35,14 +35,14 @@ export default function AppShell({ children }) {
   }, []);
 
   useEffect(() => {
-    if (isLogin) return;
+    if (isKiosk) return;
     document.body.style.overflow = mobileOpen ? "hidden" : "";
     return () => {
       document.body.style.overflow = "";
     };
-  }, [mobileOpen, isLogin]);
+  }, [mobileOpen, isKiosk]);
 
-  if (isLogin) {
+  if (isKiosk) {
     return <>{children}</>;
   }
 
