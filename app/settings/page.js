@@ -21,6 +21,15 @@ export default function SettingsPage() {
           Open Time Clock settings
         </Link>
       </div>
+      <div className="mt-4 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+        <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Roles</p>
+        <p className="mt-1 text-sm text-zinc-500">
+          Managed list of scheduling roles and the access each one grants. Add or deactivate roles under People.
+        </p>
+        <Link href="/people" className="mt-3 inline-block text-sm font-semibold text-[#C8102E] hover:underline">
+          Open People · Roles
+        </Link>
+      </div>
     </section>
   );
 }

@@ -14,6 +14,7 @@ import {
   serializeShift,
 } from "@/lib/clock";
 import { fetchOpenBreak, healOrphanOnBreak, isOnBreak, serializeOpenBreak } from "@/lib/break-punches";
+import { attachEffectiveAccess } from "@/lib/roles";
 import { getSupabaseServer } from "@/lib/supabase-server";
 
 export async function POST(request) {
@@ -31,7 +32,7 @@ export async function POST(request) {
     const supabase = getSupabaseServer();
     await ensureBrookelynnAssistantManager(supabase);
 
-    const employee = await fetchClockEmployeeByPin(supabase, pin);
+    const employee = await attachEffectiveAccess(supabase, await fetchClockEmployeeByPin(supabase, pin));
     if (!employee || employee.id !== employeeId) {
       return NextResponse.json({ ok: false, error: "Invalid PIN" }, { status: 401 });
     }

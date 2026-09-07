@@ -88,6 +88,7 @@ export default function ScheduleBuilder() {
   const supabase = useMemo(() => getSupabase(), []);
   const [weekStart, setWeekStart] = useState(() => weekStartSunday(getStoreToday()));
   const [employees, setEmployees] = useState([]);
+  const [catalogRoles, setCatalogRoles] = useState([]);
   const [shifts, setShifts] = useState([]);
   const [stations, setStations] = useState([]);
   const [availability, setAvailability] = useState([]);
@@ -166,7 +167,7 @@ export default function ScheduleBuilder() {
         });
       }
 
-      const [shiftsRes, stationsRes, weekRes, templatesRes, timeOffRes] = await Promise.all([
+      const [shiftsRes, stationsRes, weekRes, templatesRes, timeOffRes, rolesRes] = await Promise.all([
         supabase
           .from("schedule_shifts")
           .select("*")
@@ -195,6 +196,13 @@ export default function ScheduleBuilder() {
           .eq("store_id", SCHEDULE_STORE_ID)
           .lte("start_date", weekEnd)
           .gte("end_date", weekStart),
+        fetch("/api/roles?assignments=1")
+          .then(async (res) => {
+            const json = await res.json().catch(() => ({}));
+            if (!res.ok || !json.ok) return { roles: [], assignments: {} };
+            return json;
+          })
+          .catch(() => ({ roles: [], assignments: {} })),
       ]);
 
       if (shiftsRes.error) throw shiftsRes.error;
@@ -206,6 +214,9 @@ export default function ScheduleBuilder() {
       const mappedEmployees = (employeeRows || []).map((row) => ({
         ...row,
         fullName: employeeFullName(row),
+        assignedRoles: rolesRes.assignments?.[row.id] || [],
+        primary_role:
+          (rolesRes.assignments?.[row.id] || []).find((r) => r.is_primary)?.name || row.primary_role || "",
       }));
       const ids = mappedEmployees.map((e) => e.id).filter(Boolean);
       let availabilityRows = [];
@@ -218,6 +229,7 @@ export default function ScheduleBuilder() {
       const stationRows = stationsRes.data || [];
       const storeStations = stationRows.filter((s) => s.store_id === SCHEDULE_STORE_ID);
       setEmployees(mappedEmployees);
+      setCatalogRoles(rolesRes.roles || []);
       setShifts(shiftsRes.data || []);
       setStations(storeStations.length ? storeStations : stationRows);
       setWeekRecord(weekRes.data || null);
@@ -292,15 +304,18 @@ export default function ScheduleBuilder() {
   );
 
   const distinctRoles = useMemo(() => {
-    const set = new Set();
+    const set = new Set((catalogRoles || []).map((r) => r.name).filter(Boolean));
     for (const shift of shifts) {
       if (shift.role) set.add(shift.role);
     }
     for (const emp of employees) {
       if (emp.primary_role) set.add(emp.primary_role);
+      for (const role of emp.assignedRoles || []) {
+        if (role.name) set.add(role.name);
+      }
     }
     return [...set];
-  }, [shifts, employees]);
+  }, [shifts, employees, catalogRoles]);
 
   const availabilityIndex = useMemo(() => {
     const map = new Map();
@@ -1101,6 +1116,7 @@ export default function ScheduleBuilder() {
           hoursByRow={hoursByRow}
           stations={stations}
           roles={distinctRoles}
+          catalogRoles={catalogRoles}
           onClose={() => setModal(null)}
           onSave={saveFromModal}
           onDelete={() => deleteShift(modal.shift)}

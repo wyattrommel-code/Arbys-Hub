@@ -14,6 +14,7 @@ import {
   readPhotoFromRequest,
   uploadPunchPhoto,
 } from "@/lib/clock";
+import { attachEffectiveAccess } from "@/lib/roles";
 import { getSupabaseServer } from "@/lib/supabase-server";
 
 export async function POST(request) {
@@ -27,7 +28,7 @@ export async function POST(request) {
     }
 
     const supabase = getSupabaseServer();
-    const employee = await fetchClockEmployeeByPin(supabase, pin);
+    const employee = await attachEffectiveAccess(supabase, await fetchClockEmployeeByPin(supabase, pin));
     if (!employee || employee.id !== employeeId) {
       return NextResponse.json({ ok: false, error: "Invalid PIN" }, { status: 401 });
     }
@@ -58,7 +59,7 @@ export async function POST(request) {
           { status: 403 }
         );
       }
-      const manager = await fetchClockEmployeeByPin(supabase, managerPin);
+      const manager = await attachEffectiveAccess(supabase, await fetchClockEmployeeByPin(supabase, managerPin));
       if (!manager || !canAuthorizeUnscheduled(manager)) {
         return NextResponse.json(
           { ok: false, error: "That PIN cannot authorize unscheduled work." },

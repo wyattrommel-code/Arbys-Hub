@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
+import { hubRoleFromAccessTier } from "@/lib/access-tier";
 import { STORE_ID } from "@/lib/constants";
 import { fetchEmployeeByPin } from "@/lib/employees";
+import { getEffectiveAccess } from "@/lib/roles";
 import { getSupabaseServer } from "@/lib/supabase-server";
 import {
   SESSION_COOKIE,
@@ -24,11 +26,18 @@ export async function POST(request) {
       return NextResponse.json({ ok: false, error: "Invalid PIN" }, { status: 401 });
     }
 
+    let accessRole = employee.role;
+    try {
+      accessRole = hubRoleFromAccessTier(await getEffectiveAccess(supabase, employee.id));
+    } catch {
+      accessRole = employee.role;
+    }
+
     const sessionEmployee = {
       employee_id: employee.id,
       first_name: employee.first_name,
       last_name: employee.last_name,
-      role: employee.role,
+      role: accessRole,
     };
 
     const token = await createSessionToken(sessionEmployee);

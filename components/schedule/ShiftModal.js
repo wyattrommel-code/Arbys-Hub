@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   computeScheduledHours,
   formatHours,
@@ -8,11 +8,14 @@ import {
   fromTimeInput,
   parseStationNames,
   serializeStationNames,
-  SHIFT_ROLE_OPTIONS,
   timeInputValue,
   UNASSIGNED_ROW_ID,
   unpaidBreakMinutes,
 } from "@/lib/schedule";
+
+function uniqueNames(values) {
+  return [...new Set((values || []).map((v) => String(v || "").trim()).filter(Boolean))];
+}
 
 export default function ShiftModal({
   mode = "create",
@@ -21,6 +24,7 @@ export default function ShiftModal({
   hoursByRow,
   stations,
   roles,
+  catalogRoles,
   onClose,
   onSave,
   onDelete,
@@ -30,15 +34,40 @@ export default function ShiftModal({
   const [end, setEnd] = useState(timeInputValue(draft?.scheduled_end));
   const [employeeId, setEmployeeId] = useState(draft?.employeeId || UNASSIGNED_ROW_ID);
   const [role, setRole] = useState(draft?.role || "");
+  const [showAllRoles, setShowAllRoles] = useState(false);
   const [selectedStations, setSelectedStations] = useState(() => parseStationNames(draft?.station));
   const [breakMinutes, setBreakMinutes] = useState(unpaidBreakMinutes(draft?.unpaid_break_minutes));
   const [saveAsTemplate, setSaveAsTemplate] = useState(false);
   const [templateName, setTemplateName] = useState("");
 
+  const selectedEmployee = useMemo(
+    () => employees.find((e) => e.id === employeeId) || employees.find((e) => e.isUnassigned),
+    [employees, employeeId]
+  );
+  const unconstrained =
+    !selectedEmployee || selectedEmployee.isUnassigned || selectedEmployee.isSynthetic;
+  const assignedRoles = selectedEmployee?.assignedRoles || [];
+  const assignedNames = assignedRoles.map((r) => r.name);
+  const catalogNames = (catalogRoles || []).map((r) => r.name);
+
   const roleOptions = useMemo(() => {
-    const extra = (roles || []).filter(Boolean);
-    return [...new Set([...SHIFT_ROLE_OPTIONS, ...extra, role].filter(Boolean))];
-  }, [roles, role]);
+    if (showAllRoles || unconstrained) {
+      return uniqueNames([...catalogNames, ...(roles || []), ...assignedNames, role]);
+    }
+    return uniqueNames([...assignedNames, role]);
+  }, [showAllRoles, unconstrained, catalogNames, roles, assignedNames, role]);
+
+  const unheldRole = Boolean(role && !unconstrained && assignedNames.length && !assignedNames.includes(role));
+
+  useEffect(() => {
+    if (unconstrained || showAllRoles) return;
+    if (!assignedNames.length) return;
+    if (role && assignedNames.includes(role)) return;
+    const primary = assignedRoles.find((r) => r.is_primary) || assignedRoles[0];
+    if (primary?.name) setRole(primary.name);
+    // Snap only when the selected person doesn't hold the current role.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [employeeId, unconstrained, showAllRoles, assignedNames.join("|")]);
 
   const hours = computeScheduledHours(fromTimeInput(start), fromTimeInput(end), breakMinutes);
 
@@ -46,6 +75,16 @@ export default function ShiftModal({
     setSelectedStations((current) =>
       current.includes(name) ? current.filter((s) => s !== name) : [...current, name]
     );
+  }
+
+  function handleEmployeeChange(nextId) {
+    setEmployeeId(nextId);
+    setShowAllRoles(false);
+    const next = employees.find((e) => e.id === nextId);
+    const nextAssigned = next?.assignedRoles || [];
+    if (!next || next.isUnassigned || next.isSynthetic || !nextAssigned.length) return;
+    const primary = nextAssigned.find((r) => r.is_primary) || nextAssigned[0];
+    if (primary?.name) setRole(primary.name);
   }
 
   function handleSubmit(event) {
@@ -107,7 +146,7 @@ export default function ShiftModal({
           Employee
           <select
             value={employeeId}
-            onChange={(e) => setEmployeeId(e.target.value)}
+            onChange={(e) => handleEmployeeChange(e.target.value)}
             className="mt-1 w-full rounded-lg border border-zinc-200 px-2 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
           >
             {employees.map((emp) => {
@@ -139,13 +178,22 @@ export default function ShiftModal({
             ))}
           </select>
         </label>
-        <input
-          type="text"
-          value={role}
-          onChange={(e) => setRole(e.target.value)}
-          placeholder="Or type a custom role"
-          className="mt-2 w-full rounded-lg border border-zinc-200 px-2 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-        />
+        {!unconstrained ? (
+          <label className="mt-2 flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
+            <input
+              type="checkbox"
+              checked={showAllRoles}
+              onChange={(e) => setShowAllRoles(e.target.checked)}
+              className="accent-[#C8102E]"
+            />
+            Show all roles
+          </label>
+        ) : null}
+        {unheldRole ? (
+          <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            ⚠️ {selectedEmployee?.fullName || "This person"} doesn’t hold {role}. You can still save — this is an override.
+          </p>
+        ) : null}
 
         <fieldset className="mt-3">
           <legend className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Stations</legend>

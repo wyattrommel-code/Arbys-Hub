@@ -3,12 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { MoreVertical } from "lucide-react";
+import { accessTierLabel } from "@/lib/access-tier";
 import { normalizeRole } from "@/lib/permissions";
 import { getRosterCategory } from "@/lib/employees";
 
 const HUB_ROLE_LABELS = {
   crew: "Crew",
   shift_lead: "Shift Lead",
+  assistant_manager: "Assistant Manager",
   gm: "GM",
 };
 
@@ -19,8 +21,36 @@ function hubRoleLabel(role) {
 function hubRoleBadgeClass(role) {
   const normalized = normalizeRole(role);
   if (normalized === "gm") return "bg-purple-100 text-purple-800";
+  if (normalized === "assistant_manager") return "bg-blue-100 text-blue-800";
   if (normalized === "shift_lead") return "bg-amber-100 text-amber-900";
   return "bg-zinc-100 text-zinc-700";
+}
+
+function RoleCell({ emp }) {
+  const assigned = emp.assignedRoles || [];
+  const primary = assigned.find((r) => r.is_primary) || assigned[0];
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {primary ? (
+        <span
+          className="rounded px-2 py-0.5 text-[11px] font-semibold text-white"
+          style={{ background: primary.color || "#6b7280" }}
+        >
+          {primary.name}
+        </span>
+      ) : (
+        <span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${hubRoleBadgeClass(emp.role)}`}>
+          {hubRoleLabel(emp.role)}
+        </span>
+      )}
+      {assigned.length > 1 ? (
+        <span className="text-[10px] font-medium text-zinc-500">+{assigned.length - 1}</span>
+      ) : null}
+      <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${hubRoleBadgeClass(emp.role)}`}>
+        Access: {accessTierLabel(emp.role)}
+      </span>
+    </div>
+  );
 }
 
 function SortHeader({ label, column, sortKey, sortDir, onSort, className = "" }) {
@@ -299,9 +329,7 @@ export default function RosterTable({
                   </button>
                 </td>
                 <td className="px-3 py-2">
-                  <span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${hubRoleBadgeClass(emp.role)}`}>
-                    {hubRoleLabel(emp.role)}
-                  </span>
+                  <RoleCell emp={emp} />
                 </td>
                 <td className="max-w-[12rem] px-3 py-2">
                   <StationChips stations={emp._stations} />
@@ -351,9 +379,7 @@ export default function RosterTable({
                   ) : null}
                 </p>
                 <p className="mt-0.5">
-                  <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${hubRoleBadgeClass(emp.role)}`}>
-                    {hubRoleLabel(emp.role)}
-                  </span>
+                  <RoleCell emp={emp} />
                 </p>
               </button>
               <ActionsMenu

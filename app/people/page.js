@@ -2,10 +2,13 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import EmployeeAvatar from "@/components/EmployeeAvatar";
+import RoleAssignmentGrid from "@/components/people/RoleAssignmentGrid";
+import RolesAdmin from "@/components/people/RolesAdmin";
 import RosterTable from "@/components/people/RosterTable";
+import { accessTierLabel, defaultRoleForNewEmployee } from "@/lib/access-tier";
 import { STORE_ID } from "@/lib/constants";
 import { fetchEmployees, getRosterCategory, normalizeEmployeeStatus } from "@/lib/employees";
-import { HUB_ROLE_OPTIONS, normalizeRole } from "@/lib/permissions";
+import { isGm } from "@/lib/permissions";
 import { formatLongDate } from "@/lib/schedule";
 import { getSupabase } from "@/lib/supabase";
 
@@ -13,8 +16,7 @@ const RED = "#C8102E";
 const STATIONS = ["DT Order Taker", "DT Cashier", "Runner", "Front", "Fryer", "Slicer", "Backline", "Floater"];
 const QUESTION_CATEGORIES = ["safety", "quality", "speed", "knowledge"];
 const RAISE_REASONS = ["Performance Review", "Annual Raise", "Promotion", "Correction", "Other"];
-const TABS = ["ROSTER", "CERTIFICATIONS", "TRAINING", "QUESTION BANK"];
-const ROLE_OPTIONS = ["Morning", "Breakfast", "Open", "Day Lead", "Mid Shift", "Night", "Night Lead", "Closing"];
+const TABS = ["ROSTER", "CERTIFICATIONS", "TRAINING", "QUESTION BANK", "ROLES"];
 
 function isValidEmployeePin(pin) {
   return /^\d{4}$/.test(String(pin || "").trim());
@@ -142,12 +144,11 @@ function defaultEmployeeForm() {
     first_name: "",
     last_name: "",
     employee_code: "",
-    role: "crew",
     phone: "",
     email: "",
     hire_date: toDateStr(new Date()),
-    primary_role: ROLE_OPTIONS[0],
-    is_shift_lead: false,
+    roleIds: [],
+    primaryRoleId: "",
     is_trainer: false,
     status: "active",
     starting_wage: "",
@@ -178,6 +179,10 @@ export default function PeoplePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [employees, setEmployees] = useState([]);
+  const [catalogRoles, setCatalogRoles] = useState([]);
+  const [allRoles, setAllRoles] = useState([]);
+  const [assignmentsByEmployee, setAssignmentsByEmployee] = useState({});
+  const [sessionEmployee, setSessionEmployee] = useState(null);
   const [wages, setWages] = useState([]);
   const [certs, setCerts] = useState([]);
   const [sessions, setSessions] = useState([]);
@@ -228,6 +233,15 @@ export default function PeoplePage() {
   const scrollYRef = useRef(0);
   const [certModalError, setCertModalError] = useState("");
 
+  async function reloadRoles() {
+    const res = await fetch("/api/roles?inactive=1&assignments=1");
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || "Could not load roles.");
+    setAllRoles(data.roles || []);
+    setCatalogRoles((data.roles || []).filter((r) => r.is_active !== false));
+    setAssignmentsByEmployee(data.assignments || {});
+  }
+
   async function reloadAll() {
     setLoading(true);
     setError("");
@@ -248,6 +262,7 @@ export default function PeoplePage() {
       setSessions(sessionRes.data || []);
       setQuestions(questionRes.data || []);
       setAttempts(attemptRes.data || []);
+      await reloadRoles();
     } catch (err) {
       setError(err?.message || "Failed to load people data.");
     } finally {
@@ -257,6 +272,12 @@ export default function PeoplePage() {
 
   useEffect(() => {
     reloadAll();
+    fetch("/api/auth/me")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json) => {
+        if (json?.employee) setSessionEmployee(json.employee);
+      })
+      .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -301,10 +322,12 @@ export default function PeoplePage() {
       if (statusFilter !== "all" && cat !== statusFilter) return false;
       if (!q) return true;
       const stations = (stationsByEmployee.get(e.id) || []).join(" ").toLowerCase();
+      const roles = (assignmentsByEmployee[e.id] || []).map((r) => r.name).join(" ").toLowerCase();
       return (
         fullName(e).toLowerCase().includes(q) ||
         String(e.employee_code || "").includes(q) ||
-        stations.includes(q)
+        stations.includes(q) ||
+        roles.includes(q)
       );
     });
 
@@ -328,12 +351,13 @@ export default function PeoplePage() {
 
     return rows.map((e) => ({
       ...e,
+      assignedRoles: assignmentsByEmployee[e.id] || [],
       _displayName: fullName(e),
       _rosterCategory: rosterCategory(e),
       _stations: stationsByEmployee.get(e.id) || [],
       _modifiedLabel: formatRelativeTime(employeeModifiedAt(e)),
     }));
-  }, [employees, search, statusFilter, sortKey, sortDir, stationsByEmployee]);
+  }, [employees, search, statusFilter, sortKey, sortDir, stationsByEmployee, assignmentsByEmployee]);
 
   const activeEmployees = useMemo(() => employees.filter((e) => rosterCategory(e) === "active").sort(byLastName), [employees]);
 
@@ -345,6 +369,23 @@ export default function PeoplePage() {
     () => validateEmployeePin(addForm.employee_code, employees, editingEmployeeId),
     [addForm.employee_code, employees, editingEmployeeId]
   );
+  const actorIsGm = isGm(sessionEmployee?.role);
+  const editorRoles = useMemo(() => {
+    const byId = new Map(catalogRoles.map((r) => [r.id, r]));
+    const held = editingEmployeeId ? assignmentsByEmployee[editingEmployeeId] || [] : [];
+    for (const row of held) {
+      if (!byId.has(row.role_id)) {
+        byId.set(row.role_id, {
+          id: row.role_id,
+          name: row.is_active === false ? `${row.name} (inactive)` : row.name,
+          color: row.color,
+          access_tier: row.access_tier,
+          is_active: row.is_active,
+        });
+      }
+    }
+    return [...byId.values()];
+  }, [catalogRoles, assignmentsByEmployee, editingEmployeeId]);
 
   useEffect(() => {
     if (showAddEmployee && addFirstNameRef.current) {
@@ -374,8 +415,13 @@ export default function PeoplePage() {
   }
 
   function openAddEmployeeModal() {
+    const fallback = defaultRoleForNewEmployee(catalogRoles);
     setEditingEmployeeId(null);
-    setAddForm(defaultEmployeeForm());
+    setAddForm({
+      ...defaultEmployeeForm(),
+      roleIds: fallback ? [fallback.id] : [],
+      primaryRoleId: fallback?.id || "",
+    });
     setPendingPhotoFile(null);
     setShowAddEmployee(true);
   }
@@ -395,12 +441,11 @@ export default function PeoplePage() {
       first_name: emp.first_name || "",
       last_name: emp.last_name || "",
       employee_code: emp.employee_code || "",
-      role: normalizeRole(emp.role),
       phone: emp.phone || "",
       email: emp.email || "",
       hire_date: emp.hire_date || "",
-      primary_role: emp.primary_role || ROLE_OPTIONS[0],
-      is_shift_lead: Boolean(emp.is_shift_lead),
+      roleIds: (assignmentsByEmployee[emp.id] || []).map((r) => r.role_id),
+      primaryRoleId: (assignmentsByEmployee[emp.id] || []).find((r) => r.is_primary)?.role_id || (assignmentsByEmployee[emp.id] || [])[0]?.role_id || "",
       is_trainer: Boolean(emp.is_trainer),
       status: cat === "terminated" ? "terminated" : cat === "inactive" ? "inactive" : "active",
       starting_wage: currentWage?.hourly_rate != null ? String(currentWage.hourly_rate) : "",
@@ -517,6 +562,22 @@ export default function PeoplePage() {
         ? "All"
         : "";
 
+  async function saveEmployeeRoles(employeeId) {
+    if (!addForm.roleIds?.length) {
+      throw new Error("Everyone needs at least one role.");
+    }
+    const res = await fetch(`/api/employees/${employeeId}/roles`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        role_ids: addForm.roleIds,
+        primary_role_id: addForm.primaryRoleId || addForm.roleIds[0],
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || "Could not save roles.");
+  }
+
   async function saveEmployeeFromModal() {
     if (!addForm.first_name.trim() || !addForm.last_name.trim()) {
       setError("First and last name are required.");
@@ -527,6 +588,10 @@ export default function PeoplePage() {
       setError(pinErr);
       return;
     }
+    if (!addForm.roleIds?.length) {
+      setError("Everyone needs at least one role.");
+      return;
+    }
 
     if (editingEmployeeId) {
       setError("");
@@ -534,22 +599,24 @@ export default function PeoplePage() {
         first_name: addForm.first_name.trim(),
         last_name: addForm.last_name.trim(),
         employee_code: String(addForm.employee_code).trim(),
-        role: normalizeRole(addForm.role),
         store_id: STORE_ID,
         is_active: normalizeStatus(addForm.status) === "active",
         phone: addForm.phone || null,
         email: addForm.email || null,
         hire_date: addForm.hire_date || null,
         status: addForm.status,
-        primary_role: addForm.primary_role || null,
-        is_shift_lead: Boolean(addForm.is_shift_lead),
-        is_assistant_manager: normalizeRole(addForm.role) === "assistant_manager",
         is_trainer: Boolean(addForm.is_trainer),
         notes: addForm.notes || null,
       };
       const { error: upErr } = await supabase.from("employees").update(payload).eq("id", editingEmployeeId);
       if (upErr) {
         setError(upErr.message || "Failed to update employee.");
+        return;
+      }
+      try {
+        await saveEmployeeRoles(editingEmployeeId);
+      } catch (roleErr) {
+        setError(roleErr.message || "Employee saved but roles failed.");
         return;
       }
       closeEmployeeModal();
@@ -569,14 +636,11 @@ export default function PeoplePage() {
         first_name: addForm.first_name.trim(),
         last_name: addForm.last_name.trim(),
         employee_code: String(addForm.employee_code).trim(),
-        role: normalizeRole(addForm.role),
+        role: "crew",
         is_active: normalizeStatus(addForm.status) === "active",
         phone: addForm.phone || null,
         email: addForm.email || null,
         hire_date: addForm.hire_date || null,
-        primary_role: addForm.primary_role || null,
-        is_shift_lead: Boolean(addForm.is_shift_lead),
-        is_assistant_manager: normalizeRole(addForm.role) === "assistant_manager",
         is_trainer: Boolean(addForm.is_trainer),
         status: addForm.status || "active",
         notes: addForm.notes || null,
@@ -603,6 +667,11 @@ export default function PeoplePage() {
       } catch (photoErr) {
         setError(photoErr.message || "Employee added but profile photo failed.");
       }
+    }
+    try {
+      await saveEmployeeRoles(inserted.id);
+    } catch (roleErr) {
+      setError(roleErr.message || "Employee added but roles failed.");
     }
     closeEmployeeModal();
     reloadAll();
@@ -1120,7 +1189,7 @@ export default function PeoplePage() {
         <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">GM-only people management. 🔒</p>
       </header>
 
-      <div className="grid grid-cols-2 gap-2 rounded-xl border border-zinc-200 bg-white p-1 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 rounded-xl border border-zinc-200 bg-white p-1 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:grid-cols-3 lg:grid-cols-5">
         {TABS.map((name) => (
           <button
             key={name}
@@ -1220,17 +1289,30 @@ export default function PeoplePage() {
             return (
               <div className="text-sm">
                 <div className="mb-3 flex flex-wrap items-center gap-2">
-                  <span className="rounded px-2 py-0.5 text-xs text-white" style={{ background: roleColor(emp.primary_role) }}>
-                    {emp.primary_role || "Unassigned role"}
+                  {(assignmentsByEmployee[emp.id] || []).length
+                    ? (assignmentsByEmployee[emp.id] || []).map((role) => (
+                        <span
+                          key={role.role_id}
+                          className="rounded px-2 py-0.5 text-xs text-white"
+                          style={{ background: role.color || roleColor(role.name) }}
+                        >
+                          {role.name}
+                          {role.is_primary ? " ★" : ""}
+                        </span>
+                      ))
+                    : (
+                        <span className="rounded px-2 py-0.5 text-xs text-white" style={{ background: roleColor(emp.primary_role) }}>
+                          {emp.primary_role || "Unassigned role"}
+                        </span>
+                      )}
+                  <span className="rounded bg-zinc-100 px-2 py-0.5 text-xs font-semibold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
+                    Access: {accessTierLabel(emp.role)}
                   </span>
                   <span className={`rounded px-2 py-0.5 text-xs font-semibold ${statusBadgeClass(category === "terminated" ? "terminated" : category === "inactive" ? "inactive" : "active")}`}>
                     {category === "terminated" ? "Terminated" : category === "inactive" ? "Inactive" : "Active"}
                   </span>
                   {emp.is_trainer ? (
                     <span className="rounded bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">🎓 TRAINER</span>
-                  ) : null}
-                  {emp.is_shift_lead ? (
-                    <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900">⭐ Shift Lead</span>
                   ) : null}
                 </div>
                 <div className="grid gap-2 sm:grid-cols-2">
@@ -1244,8 +1326,7 @@ export default function PeoplePage() {
                     <span className="font-semibold">Hire Date:</span> {emp.hire_date ? formatLongDate(emp.hire_date) : "—"}
                   </p>
                   <p>
-                    <span className="font-semibold">Access Role:</span>{" "}
-                    {HUB_ROLE_OPTIONS.find((o) => o.value === normalizeRole(emp.role))?.label || "Crew"}
+                    <span className="font-semibold">Access:</span> {accessTierLabel(emp.role)}
                   </p>
                   <p>
                     <span className="font-semibold">PIN:</span>{" "}
@@ -1601,6 +1682,10 @@ export default function PeoplePage() {
         </article>
       ) : null}
 
+      {!loading && tab === "ROLES" ? (
+        <RolesAdmin roles={allRoles} actorIsGm={actorIsGm} onChanged={reloadRoles} />
+      ) : null}
+
       {showAddEmployee ? (
         <Modal
           title={editingEmployeeId ? `Edit Employee — ${addForm.first_name} ${addForm.last_name}`.trim() : "Add New Employee"}
@@ -1683,20 +1768,15 @@ export default function PeoplePage() {
               />
               {addPinError ? <span className="mt-1 block text-xs text-red-600">{addPinError}</span> : null}
             </label>
-            <label className="text-xs font-medium text-zinc-600">
-              Access Role
-              <select
-                value={addForm.role}
-                onChange={(e) => setAddForm((s) => ({ ...s, role: e.target.value }))}
-                className="mt-1 h-10 w-full rounded-lg border border-zinc-300 px-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-              >
-                {HUB_ROLE_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <RoleAssignmentGrid
+              roles={editorRoles}
+              selectedIds={addForm.roleIds || []}
+              primaryRoleId={addForm.primaryRoleId || ""}
+              actorIsGm={actorIsGm}
+              onChange={({ selectedIds, primaryRoleId }) =>
+                setAddForm((s) => ({ ...s, roleIds: selectedIds, primaryRoleId }))
+              }
+            />
             <label className="text-xs font-medium text-zinc-600">
               Hire Date
               <input
@@ -1705,20 +1785,6 @@ export default function PeoplePage() {
                 onChange={(e) => setAddForm((s) => ({ ...s, hire_date: e.target.value }))}
                 className="mt-1 h-10 w-full rounded-lg border border-zinc-300 px-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
               />
-            </label>
-            <label className="text-xs font-medium text-zinc-600">
-              Primary Role
-              <select
-                value={addForm.primary_role}
-                onChange={(e) => setAddForm((s) => ({ ...s, primary_role: e.target.value }))}
-                className="mt-1 h-10 w-full rounded-lg border border-zinc-300 px-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-              >
-                {ROLE_OPTIONS.map((role) => (
-                  <option key={role} value={role}>
-                    {role}
-                  </option>
-                ))}
-              </select>
             </label>
             <label className="text-xs font-medium text-zinc-600">
               {editingEmployeeId ? "Current Wage 🔒" : "Starting Wage *"}
@@ -1753,15 +1819,6 @@ export default function PeoplePage() {
             <label className="inline-flex items-center gap-2 text-xs font-medium text-zinc-600 sm:col-span-2">
               <input
                 type="checkbox"
-                checked={Boolean(addForm.is_shift_lead)}
-                onChange={(e) => setAddForm((s) => ({ ...s, is_shift_lead: e.target.checked }))}
-                className="h-4 w-4 accent-[#C8102E]"
-              />
-              Is shift lead
-            </label>
-            <label className="inline-flex items-center gap-2 text-xs font-medium text-zinc-600 sm:col-span-2">
-              <input
-                type="checkbox"
                 checked={Boolean(addForm.is_trainer)}
                 onChange={(e) => setAddForm((s) => ({ ...s, is_trainer: e.target.checked }))}
                 className="h-4 w-4 accent-[#C8102E]"
@@ -1785,6 +1842,7 @@ export default function PeoplePage() {
               Boolean(addPinError) ||
               !addForm.first_name.trim() ||
               !addForm.last_name.trim() ||
+              !(addForm.roleIds || []).length ||
               (!editingEmployeeId && (!addForm.starting_wage || Number(addForm.starting_wage) <= 0))
             }
             className="mt-3 h-11 rounded-lg bg-[#C8102E] px-4 text-sm font-semibold text-white disabled:opacity-50"
