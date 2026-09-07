@@ -175,8 +175,11 @@ export default function ClockKiosk() {
         const data = await res.json();
         if (!res.ok || !data.ok) {
           setError(data.error || "Could not save punch.");
-          if (needsPhotoFor(active)) setStep("photo");
-          else if (active.needsAuthorization && !active.canSelfAuthorize) setStep("unscheduled");
+          if (/end break/i.test(data.error || "")) setStep("end_break");
+          else if (needsPhotoFor(active)) setStep("photo");
+          else if (active.action === "clock_out" && active.settings?.use_break_punches) {
+            setStep(active.on_break ? "end_break" : "in_actions");
+          } else if (active.needsAuthorization && !active.canSelfAuthorize) setStep("unscheduled");
           else setStep("pin");
           return;
         }
@@ -191,7 +194,9 @@ export default function ClockKiosk() {
       } catch {
         setError("Could not save punch. Try again.");
         if (needsPhotoFor(active)) setStep("photo");
-        else setStep("pin");
+        else if (active.action === "clock_out" && active.settings?.use_break_punches) {
+          setStep(active.on_break ? "end_break" : "in_actions");
+        } else setStep("pin");
       } finally {
         setLoading(false);
       }
@@ -223,6 +228,10 @@ export default function ClockKiosk() {
         setSession(data);
         if (data.action === "clock_in" && data.needsAuthorization && !data.canSelfAuthorize) {
           setStep("unscheduled");
+          return;
+        }
+        if (data.action === "clock_out" && data.settings?.use_break_punches) {
+          setStep(data.on_break ? "end_break" : "in_actions");
           return;
         }
         if (needsPhotoFor(data)) {
@@ -266,6 +275,51 @@ export default function ClockKiosk() {
     });
   }
 
+  function beginClockOut() {
+    setError("");
+    if (needsPhotoFor(session)) {
+      setStep("photo");
+      return;
+    }
+    submitPunch({
+      sess: session,
+      pinValue: pin,
+      photoBlob: null,
+      faceDetected: false,
+    });
+  }
+
+  async function submitBreak(kind) {
+    if (!selected) return;
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch(kind === "end" ? "/api/clock/break/end" : "/api/clock/break/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin, employee_id: selected.id }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        setError(data.error || "Could not save break.");
+        return;
+      }
+      setResult({
+        action: kind === "end" ? "break_end" : "break_start",
+        name: data.employee?.name || selected.name,
+        breakStart: data.break?.break_start,
+        breakEnd: data.break?.break_end,
+        breakMinutes: data.break?.break_minutes,
+      });
+      setStep("done");
+      await loadRoster({ silent: true });
+    } catch {
+      setError("Could not save break. Try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function jumpTo(letter) {
     const el = sectionRefs.current[letter];
     if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -283,6 +337,7 @@ export default function ClockKiosk() {
 
   const sheetOpen = step !== "list";
   const clockedIn = Boolean(selected?.clocked_in || session?.action === "clock_out");
+  const onBreak = Boolean(selected?.on_break || session?.on_break);
 
   return (
     <section className="relative flex h-dvh min-h-0 w-full flex-col overflow-hidden">
@@ -346,7 +401,7 @@ export default function ClockKiosk() {
                         <span className="min-w-0 flex-1 text-xl font-semibold text-zinc-900 dark:text-zinc-50">
                           {emp.name}
                         </span>
-                        <StatusPill clockedIn={emp.clocked_in} />
+                        <StatusPill clockedIn={emp.clocked_in} onBreak={emp.on_break} />
                       </button>
                     </li>
                   ))}
@@ -388,7 +443,7 @@ export default function ClockKiosk() {
         <div className="absolute inset-0 z-20 flex flex-col overflow-y-auto bg-zinc-50 px-4 py-6 dark:bg-zinc-950">
           {step === "pin" && selected ? (
             <>
-              <PunchHeader employee={selected} clockedIn={clockedIn} />
+              <PunchHeader employee={selected} clockedIn={clockedIn} onBreak={onBreak} />
               <PinPad
                 pin={pin}
                 onChange={(next) => {
@@ -483,6 +538,72 @@ export default function ClockKiosk() {
             </>
           ) : null}
 
+          {step === "in_actions" && session ? (
+            <>
+              <PunchHeader employee={selected} clockedIn onBreak={false} />
+              {error ? (
+                <p className="mt-3 text-center text-base font-medium text-red-600" role="alert">
+                  {error}
+                </p>
+              ) : null}
+              <p className="mt-4 text-center text-base text-zinc-600 dark:text-zinc-400">
+                Breaks are unpaid and subtracted from paid time.
+              </p>
+              <button
+                type="button"
+                disabled={loading}
+                onClick={() => submitBreak("start")}
+                className="mt-6 min-h-16 w-full rounded-2xl bg-amber-500 text-xl font-bold text-white disabled:opacity-40"
+              >
+                Start Break
+              </button>
+              <button
+                type="button"
+                disabled={loading}
+                onClick={beginClockOut}
+                className="mt-3 min-h-16 w-full rounded-2xl bg-[#C8102E] text-xl font-bold text-white disabled:opacity-40"
+              >
+                Clock Out
+              </button>
+              <button
+                type="button"
+                className="mt-3 min-h-12 w-full rounded-2xl border border-zinc-300 text-base font-semibold dark:border-zinc-700"
+                onClick={reset}
+              >
+                Cancel
+              </button>
+            </>
+          ) : null}
+
+          {step === "end_break" && session ? (
+            <>
+              <PunchHeader employee={selected} clockedIn onBreak />
+              {error ? (
+                <p className="mt-3 text-center text-base font-medium text-red-600" role="alert">
+                  {error}
+                </p>
+              ) : null}
+              <p className="mt-4 text-center text-base font-medium text-zinc-700 dark:text-zinc-300">
+                End your break before clocking out.
+              </p>
+              <button
+                type="button"
+                disabled={loading}
+                onClick={() => submitBreak("end")}
+                className="mt-6 min-h-16 w-full rounded-2xl bg-amber-500 text-xl font-bold text-white disabled:opacity-40"
+              >
+                End Break
+              </button>
+              <button
+                type="button"
+                className="mt-3 min-h-12 w-full rounded-2xl border border-zinc-300 text-base font-semibold dark:border-zinc-700"
+                onClick={reset}
+              >
+                Cancel
+              </button>
+            </>
+          ) : null}
+
           {step === "photo" && session ? (
             <>
               <PunchHeader employee={selected || session.employee} clockedIn={clockedIn} />
@@ -505,7 +626,14 @@ export default function ClockKiosk() {
                     faceDetected: Boolean(faceDetected),
                   })
                 }
-                onCancel={reset}
+                onCancel={() => {
+                  if (session.action === "clock_out" && session.settings?.use_break_punches) {
+                    setError("");
+                    setStep("in_actions");
+                    return;
+                  }
+                  reset();
+                }}
               />
             </>
           ) : null}
@@ -513,12 +641,22 @@ export default function ClockKiosk() {
           {step === "done" && result ? (
             <div className="flex flex-1 flex-col items-center justify-center text-center">
               <p className="text-sm font-semibold uppercase tracking-wide text-emerald-700">
-                {result.action === "clock_out" ? "Clocked out" : "Clocked in"}
+                {result.action === "clock_out"
+                  ? "Clocked out"
+                  : result.action === "break_start"
+                    ? "Break started"
+                    : result.action === "break_end"
+                      ? "Break ended"
+                      : "Clocked in"}
               </p>
               <p className="mt-3 text-3xl font-bold text-zinc-900 dark:text-zinc-50">
                 {result.action === "clock_out"
                   ? `Clocked out — ${formatWorkedHoursLabel(result.workedMinutes)}`
-                  : `Clocked in at ${formatStoreTime(result.clockIn)}`}
+                  : result.action === "break_start"
+                    ? `Break started at ${formatStoreTime(result.breakStart)}`
+                    : result.action === "break_end"
+                      ? `Break ended — ${Number(result.breakMinutes) || 0} min unpaid`
+                      : `Clocked in at ${formatStoreTime(result.clockIn)}`}
               </p>
               {result.name ? <p className="mt-2 text-base text-zinc-500">{result.name}</p> : null}
               <button
@@ -536,7 +674,14 @@ export default function ClockKiosk() {
   );
 }
 
-function StatusPill({ clockedIn }) {
+function StatusPill({ clockedIn, onBreak }) {
+  if (onBreak) {
+    return (
+      <span className="inline-flex shrink-0 min-w-[3.5rem] items-center justify-center rounded-full bg-amber-100 px-3 py-1 text-sm font-bold text-amber-900">
+        BREAK
+      </span>
+    );
+  }
   return (
     <span
       className={`inline-flex shrink-0 min-w-[3.5rem] items-center justify-center rounded-full px-3 py-1 text-sm font-bold ${
@@ -550,14 +695,14 @@ function StatusPill({ clockedIn }) {
   );
 }
 
-function PunchHeader({ employee, clockedIn }) {
+function PunchHeader({ employee, clockedIn, onBreak }) {
   if (!employee) return null;
   return (
     <div className="mb-4 flex flex-col items-center text-center">
       <EmployeeAvatar name={employee.name} src={employee.profile_photo_url} size="xl" />
       <p className="mt-3 text-2xl font-bold text-zinc-900 dark:text-zinc-50">{employee.name}</p>
       <div className="mt-2">
-        <StatusPill clockedIn={clockedIn} />
+        <StatusPill clockedIn={clockedIn} onBreak={onBreak} />
       </div>
     </div>
   );

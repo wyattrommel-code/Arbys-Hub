@@ -94,28 +94,32 @@ export async function POST(request) {
     }
 
     const now = new Date().toISOString();
-    const { data: punch, error } = await supabase
-      .from("time_punches")
-      .insert({
-        employee_id: employee.id,
-        employee_name: clockEmployeeName(employee),
-        jolt_employee_id: employee.jolt_employee_id || null,
-        shift_id: shift?.id || null,
-        clock_in: now,
-        clock_out: null,
-        clock_in_photo_url: photoUrl,
-        clock_out_photo_url: null,
-        face_detected_in: Boolean(faceDetected && photoUrl),
-        face_detected_out: false,
-        worked_minutes: null,
-        unscheduled,
-        authorized_by: authorizedBy,
-        authorized_by_id: authorizedById,
-        status: "open",
-        store_id: CLOCK_STORE_ID,
-      })
-      .select("id, clock_in, status")
-      .single();
+    const punchRow = {
+      employee_id: employee.id,
+      employee_name: clockEmployeeName(employee),
+      jolt_employee_id: employee.jolt_employee_id || null,
+      shift_id: shift?.id || null,
+      clock_in: now,
+      clock_out: null,
+      clock_in_photo_url: photoUrl,
+      clock_out_photo_url: null,
+      face_detected_in: Boolean(faceDetected && photoUrl),
+      face_detected_out: false,
+      worked_minutes: null,
+      unscheduled,
+      authorized_by: authorizedBy,
+      authorized_by_id: authorizedById,
+      status: "open",
+      store_id: CLOCK_STORE_ID,
+      on_break: false,
+      total_break_minutes: 0,
+    };
+    let punchRes = await supabase.from("time_punches").insert(punchRow).select("id, clock_in, status").single();
+    if (punchRes.error && /on_break|total_break_minutes|column|schema cache/i.test(punchRes.error.message || "")) {
+      const { on_break: _ob, total_break_minutes: _t, ...legacy } = punchRow;
+      punchRes = await supabase.from("time_punches").insert(legacy).select("id, clock_in, status").single();
+    }
+    const { data: punch, error } = punchRes;
 
     if (error) throw error;
 

@@ -3,7 +3,8 @@ import { evaluatePunchAndSweep, getAttendanceSettings } from "@/lib/attendance";
 import { actorName, requireFeature } from "@/lib/api-auth";
 import { canEditPunches } from "@/lib/permissions";
 import { fromStoreDateTimeLocal } from "@/lib/store-time";
-import { TIMECARD_STORE_ID, computeWorkedMinutes, toStoredMinutes } from "@/lib/timecards";
+import { TIMECARD_STORE_ID, computePaidWorkedMinutes } from "@/lib/timecards";
+import { totalBreakMinutes } from "@/lib/break-punches";
 import { getSupabaseServer } from "@/lib/supabase-server";
 
 function parsePunchTime(value) {
@@ -50,25 +51,20 @@ export async function PATCH(request, context) {
     if (!punch) return NextResponse.json({ ok: false, error: "Punch not found." }, { status: 404 });
 
     const settings = await getAttendanceSettings(supabase);
-    let breakMinutes = 0;
-    if (settings.subtract_scheduled_break && punch.shift_id) {
+    let unpaidMinutes = 0;
+    if (settings.use_break_punches) {
+      unpaidMinutes = totalBreakMinutes(punch);
+    } else if (settings.subtract_scheduled_break && punch.shift_id) {
       const { data: shift } = await supabase
         .from("schedule_shifts")
         .select("unpaid_break_minutes")
         .eq("id", punch.shift_id)
         .maybeSingle();
-      breakMinutes = Number(shift?.unpaid_break_minutes) || 0;
+      unpaidMinutes = Number(shift?.unpaid_break_minutes) || 0;
     }
 
     const workedMinutes = clockOut
-      ? toStoredMinutes(
-          computeWorkedMinutes(
-            clockIn,
-            clockOut,
-            breakMinutes,
-            Boolean(settings.subtract_scheduled_break && punch.shift_id)
-          )
-        )
+      ? computePaidWorkedMinutes(clockIn, clockOut, unpaidMinutes)
       : null;
 
     const patch = {

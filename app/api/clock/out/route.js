@@ -2,8 +2,7 @@ import { after, NextResponse } from "next/server";
 import { evaluatePunchAndSweep } from "@/lib/attendance";
 import {
   CLOCK_STORE_ID,
-  computeWorkedMinutes,
-  toStoredMinutes,
+  computePaidWorkedMinutes,
   fetchClockEmployeeByPin,
   fetchOpenPunch,
   getAttendanceSettings,
@@ -11,6 +10,7 @@ import {
   readPhotoFromRequest,
   uploadPunchPhoto,
 } from "@/lib/clock";
+import { isOnBreak, totalBreakMinutes } from "@/lib/break-punches";
 import { getSupabaseServer } from "@/lib/supabase-server";
 
 export async function POST(request) {
@@ -33,6 +33,12 @@ export async function POST(request) {
     if (!openPunch) {
       return NextResponse.json({ ok: false, error: "No open punch to clock out." }, { status: 409 });
     }
+    if (isOnBreak(openPunch)) {
+      return NextResponse.json(
+        { ok: false, error: "End break first before clocking out." },
+        { status: 409 }
+      );
+    }
 
     const settings = await getAttendanceSettings(supabase);
 
@@ -45,7 +51,7 @@ export async function POST(request) {
         );
       }
       try {
-        photoUrl = await uploadPunchPhoto(supabase, employee.id, photo);
+        photoUrl = await uploadPunchPhoto(supabase, employee.id, photo, "out");
       } catch (err) {
         return NextResponse.json(
           { ok: false, error: err.message || "Could not save photo. Try again." },
@@ -54,46 +60,54 @@ export async function POST(request) {
       }
     } else if (photo) {
       try {
-        photoUrl = await uploadPunchPhoto(supabase, employee.id, photo);
+        photoUrl = await uploadPunchPhoto(supabase, employee.id, photo, "out");
       } catch {
         photoUrl = null;
       }
     }
 
-    let breakMinutes = 0;
-    if (settings.subtract_scheduled_break && openPunch.shift_id) {
+    let unpaidMinutes = 0;
+    if (settings.use_break_punches) {
+      unpaidMinutes = totalBreakMinutes(openPunch);
+    } else if (settings.subtract_scheduled_break && openPunch.shift_id) {
       const { data: shift } = await supabase
         .from("schedule_shifts")
         .select("unpaid_break_minutes")
         .eq("id", openPunch.shift_id)
         .eq("store_id", CLOCK_STORE_ID)
         .maybeSingle();
-      breakMinutes = Number(shift?.unpaid_break_minutes) || 0;
+      unpaidMinutes = Number(shift?.unpaid_break_minutes) || 0;
     }
 
     const clockOut = new Date().toISOString();
-    const workedMinutes = toStoredMinutes(
-      computeWorkedMinutes(
-        openPunch.clock_in,
-        clockOut,
-        breakMinutes,
-        Boolean(settings.subtract_scheduled_break && openPunch.shift_id)
-      )
-    );
+    const workedMinutes = computePaidWorkedMinutes(openPunch.clock_in, clockOut, unpaidMinutes);
 
-    const { data: punch, error } = await supabase
+    const closePatch = {
+      clock_out: clockOut,
+      clock_out_photo_url: photoUrl,
+      face_detected_out: Boolean(faceDetected && photoUrl),
+      worked_minutes: workedMinutes,
+      status: "closed",
+      on_break: false,
+    };
+    let closeRes = await supabase
       .from("time_punches")
-      .update({
-        clock_out: clockOut,
-        clock_out_photo_url: photoUrl,
-        face_detected_out: Boolean(faceDetected && photoUrl),
-        worked_minutes: workedMinutes,
-        status: "closed",
-      })
+      .update(closePatch)
       .eq("id", openPunch.id)
       .eq("status", "open")
       .select("id, clock_in, clock_out, worked_minutes, status")
       .maybeSingle();
+    if (closeRes.error && /face_detected_out|clock_out_photo_url|on_break|column|schema cache/i.test(closeRes.error.message || "")) {
+      const { face_detected_out: _f, on_break: _ob, ...legacy } = closePatch;
+      closeRes = await supabase
+        .from("time_punches")
+        .update(legacy)
+        .eq("id", openPunch.id)
+        .eq("status", "open")
+        .select("id, clock_in, clock_out, worked_minutes, status")
+        .maybeSingle();
+    }
+    const { data: punch, error } = closeRes;
 
     if (error) throw error;
     if (!punch) {

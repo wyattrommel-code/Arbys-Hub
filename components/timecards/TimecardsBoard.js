@@ -6,6 +6,45 @@ import { addDaysISO, getStoreToday, toStoreDateTimeLocal } from "@/lib/store-tim
 import { weekStartSunday } from "@/lib/schedule";
 import { buildPayrollCsv, payrollFilename } from "@/lib/timecards";
 
+function PunchPhotoThumb({ url, label, noFace, onOpen }) {
+  if (!url) {
+    return <span className="text-[10px] text-zinc-400">{label}: none</span>;
+  }
+  return (
+    <button type="button" onClick={onOpen} className="relative block" title={label}>
+      <img src={url} alt={label} className="h-11 w-11 rounded-md object-cover" />
+      <span className="mt-0.5 block text-[9px] font-semibold uppercase text-zinc-500">{label}</span>
+      {noFace ? (
+        <span className="absolute -right-1 -top-1 rounded bg-red-600 px-1 text-[9px] font-bold text-white">
+          No face
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
+function BreakSegments({ punch }) {
+  const rows = punch.breaks || [];
+  if (!rows.length && !punch.break_minutes) {
+    return <span className="text-xs text-zinc-400">—</span>;
+  }
+  return (
+    <div className="space-y-1 text-xs text-zinc-600 dark:text-zinc-400">
+      {rows.map((row) => (
+        <p key={row.id || `${row.start}-${row.end}`}>
+          {row.start_label} – {row.end_label}
+          {row.open ? " (open)" : row.minutes != null ? ` · ${row.minutes} min` : ""}
+        </p>
+      ))}
+      {punch.break_minutes ? (
+        <p className="font-medium text-zinc-800 dark:text-zinc-200">
+          {punch.break_minutes} min unpaid
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function downloadCsv(filename, text) {
   const blob = new Blob([text], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
@@ -119,9 +158,11 @@ export default function TimecardsBoard() {
           <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Timecards</h2>
           <p className="text-sm text-zinc-500">
             Exact punch times for payroll. Hours on screen are 2 decimals; the CSV is unrounded
-            {payload?.subtract_scheduled_break
-              ? " and subtracts each shift's unpaid break."
-              : "."}
+            {payload?.use_break_punches
+              ? " and subtracts actual unpaid break punches."
+              : payload?.subtract_scheduled_break
+                ? " and subtracts each shift's unpaid break."
+                : "."}
           </p>
         </div>
         <button
@@ -219,14 +260,15 @@ export default function TimecardsBoard() {
               <p className="text-sm font-bold">{group.totalDisplay} hrs</p>
             </div>
             <div className="overflow-x-auto">
-              <table className="min-w-[980px] w-full text-left text-sm">
+              <table className="min-w-[1100px] w-full text-left text-sm">
                 <thead className="bg-zinc-50 text-xs uppercase text-zinc-500 dark:bg-zinc-800">
                   <tr>
-                    <th className="px-3 py-2">Photo</th>
+                    <th className="px-3 py-2">Photos</th>
                     <th className="px-3 py-2">Date</th>
                     <th className="px-3 py-2">In</th>
                     <th className="px-3 py-2">Out</th>
-                    <th className="px-3 py-2">Worked</th>
+                    <th className="px-3 py-2">Breaks</th>
+                    <th className="px-3 py-2">Paid</th>
                     <th className="px-3 py-2">Scheduled</th>
                     <th className="px-3 py-2">Status</th>
                     {canEdit ? <th className="px-3 py-2"> </th> : null}
@@ -239,23 +281,21 @@ export default function TimecardsBoard() {
                       className={`border-t border-zinc-100 dark:border-zinc-800 ${punch.open ? "bg-amber-50/80" : ""}`}
                     >
                       <td className="px-3 py-2">
-                        {punch.clock_in_photo_url ? (
-                          <button
-                            type="button"
-                            onClick={() => setLightbox(punch)}
-                            className="relative block"
-                          >
-                            <img
-                              src={punch.clock_in_photo_url}
-                              alt={`Clock-in photo for ${punch.employee_name}`}
-                              className="h-12 w-12 rounded-md object-cover"
+                        {punch.clock_in_photo_url || punch.clock_out_photo_url ? (
+                          <div className="flex items-start gap-2">
+                            <PunchPhotoThumb
+                              url={punch.clock_in_photo_url}
+                              label="In"
+                              noFace={punch.clock_in_photo_url && !punch.face_detected_in}
+                              onOpen={() => setLightbox(punch)}
                             />
-                            {!punch.face_detected_in ? (
-                              <span className="absolute -right-1 -top-1 rounded bg-red-600 px-1 text-[9px] font-bold text-white">
-                                No face
-                              </span>
-                            ) : null}
-                          </button>
+                            <PunchPhotoThumb
+                              url={punch.clock_out_photo_url}
+                              label="Out"
+                              noFace={punch.clock_out_photo_url && !punch.face_detected_out}
+                              onOpen={() => setLightbox(punch)}
+                            />
+                          </div>
                         ) : (
                           <span className="text-xs text-zinc-400">No photo</span>
                         )}
@@ -264,6 +304,9 @@ export default function TimecardsBoard() {
                       <td className="px-3 py-2 whitespace-nowrap">{punch.clock_in_time}</td>
                       <td className="px-3 py-2 whitespace-nowrap">
                         {punch.open ? <span className="font-semibold text-amber-800">Open</span> : punch.clock_out_time}
+                      </td>
+                      <td className="px-3 py-2">
+                        <BreakSegments punch={punch} />
                       </td>
                       <td className="px-3 py-2 whitespace-nowrap font-medium">
                         {punch.open ? (
@@ -275,7 +318,7 @@ export default function TimecardsBoard() {
                                 ? ""
                                 : `${punch.worked_minutes} min ÷ 60${
                                     punch.break_minutes
-                                      ? ` (minus ${punch.break_minutes} min scheduled break)`
+                                      ? ` (minus ${punch.break_minutes} min unpaid break)`
                                       : ""
                                   }`
                             }
@@ -287,6 +330,11 @@ export default function TimecardsBoard() {
                       <td className="px-3 py-2 text-zinc-600">{punch.scheduled_label}</td>
                       <td className="px-3 py-2">
                         <div className="flex flex-wrap gap-1">
+                          {punch.on_break ? (
+                            <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900">
+                              On break
+                            </span>
+                          ) : null}
                           {punch.open ? (
                             <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900">
                               Open
@@ -346,14 +394,34 @@ export default function TimecardsBoard() {
 
       {lightbox ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setLightbox(null)}>
-          <div className="max-h-[90vh] max-w-lg overflow-auto rounded-xl bg-white p-3" onClick={(e) => e.stopPropagation()}>
+          <div className="max-h-[90vh] max-w-2xl overflow-auto rounded-xl bg-white p-3" onClick={(e) => e.stopPropagation()}>
             <p className="mb-2 text-sm font-semibold">
               {lightbox.employee_name} · {lightbox.clock_in_label}
             </p>
-            <img src={lightbox.clock_in_photo_url} alt="Clock-in photo" className="max-h-[70vh] w-full rounded-lg object-contain" />
-            {!lightbox.face_detected_in ? (
-              <p className="mt-2 text-sm font-medium text-red-700">Face was not detected at capture.</p>
-            ) : null}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <p className="mb-1 text-xs font-semibold uppercase text-zinc-500">Clock in</p>
+                {lightbox.clock_in_photo_url ? (
+                  <img src={lightbox.clock_in_photo_url} alt="Clock-in photo" className="max-h-[60vh] w-full rounded-lg object-contain" />
+                ) : (
+                  <p className="text-sm text-zinc-500">No clock-in photo</p>
+                )}
+                {lightbox.clock_in_photo_url && !lightbox.face_detected_in ? (
+                  <p className="mt-2 text-sm font-medium text-red-700">Face was not detected at clock-in.</p>
+                ) : null}
+              </div>
+              <div>
+                <p className="mb-1 text-xs font-semibold uppercase text-zinc-500">Clock out</p>
+                {lightbox.clock_out_photo_url ? (
+                  <img src={lightbox.clock_out_photo_url} alt="Clock-out photo" className="max-h-[60vh] w-full rounded-lg object-contain" />
+                ) : (
+                  <p className="text-sm text-zinc-500">No clock-out photo</p>
+                )}
+                {lightbox.clock_out_photo_url && !lightbox.face_detected_out ? (
+                  <p className="mt-2 text-sm font-medium text-red-700">Face was not detected at clock-out.</p>
+                ) : null}
+              </div>
+            </div>
             <button
               type="button"
               onClick={() => setLightbox(null)}

@@ -13,6 +13,7 @@ import {
   serializeEmployee,
   serializeShift,
 } from "@/lib/clock";
+import { fetchOpenBreak, healOrphanOnBreak, isOnBreak, serializeOpenBreak } from "@/lib/break-punches";
 import { getSupabaseServer } from "@/lib/supabase-server";
 
 export async function POST(request) {
@@ -43,11 +44,19 @@ export async function POST(request) {
     ]);
 
     if (openPunch) {
+      const punch = await healOrphanOnBreak(supabase, openPunch);
+      const openBreak = await fetchOpenBreak(supabase, punch.id);
       return NextResponse.json({
         ok: true,
         action: "clock_out",
         employee: serializeEmployee(employee),
-        openPunch: { id: openPunch.id, clock_in: openPunch.clock_in },
+        openPunch: {
+          id: punch.id,
+          clock_in: punch.clock_in,
+          on_break: isOnBreak(punch),
+        },
+        openBreak: serializeOpenBreak(openBreak),
+        on_break: isOnBreak(punch),
         scheduled: !openPunch.unscheduled,
         shift: null,
         needsAuthorization: false,

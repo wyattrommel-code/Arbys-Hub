@@ -7,8 +7,10 @@ const DEFAULTS = {
   grace_minutes_early_in: 10,
   grace_minutes_early_out: 10,
   require_face_on_clock_in: true,
-  require_photo_on_clock_out: false,
+  require_photo_on_clock_out: true,
   subtract_scheduled_break: true,
+  use_break_punches: true,
+  breaks_are_paid: false,
 };
 
 export default function AttendanceSettings() {
@@ -78,14 +80,14 @@ export default function AttendanceSettings() {
     );
   }
 
-  function toggle(field, label, hint) {
+  function toggle(field, label, hint, locked = false) {
     return (
       <label className="flex items-start gap-3 rounded-lg border border-zinc-200 px-3 py-3 text-sm dark:border-zinc-700">
         <input
           type="checkbox"
           className="mt-0.5"
           checked={Boolean(form[field])}
-          disabled={!canEdit}
+          disabled={!canEdit || locked}
           onChange={(e) => setForm((s) => ({ ...s, [field]: e.target.checked }))}
         />
         <span>
@@ -135,12 +137,27 @@ export default function AttendanceSettings() {
 
       <div className="space-y-2">
         {toggle("require_face_on_clock_in", "Require face on clock-in", "Time clock waits for a detected face before capturing.")}
-        {toggle("require_photo_on_clock_out", "Require photo on clock-out", "Off by default. Same face-present capture when enabled.")}
+        {toggle(
+          "require_photo_on_clock_out",
+          "Require photo on clock-out",
+          "Same camera and face-present capture as clock-in."
+        )}
+        {toggle(
+          "use_break_punches",
+          "Use start / end break punches",
+          "Paid time uses actual break minutes, not the scheduled unpaid break."
+        )}
         {toggle(
           "subtract_scheduled_break",
           "Subtract scheduled break from worked time",
-          "Payroll uses exact punch times minus the shift’s unpaid break."
+          form.use_break_punches
+            ? "Ignored while break punches are on, so scheduled minutes are not subtracted twice."
+            : "Payroll uses exact punch times minus the shift’s unpaid break.",
+          Boolean(form.use_break_punches)
         )}
+        <p className="rounded-lg border border-zinc-200 px-3 py-3 text-sm text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
+          Breaks are unpaid. Start/end break does not take a photo.
+        </p>
       </div>
 
       {canEdit ? (

@@ -11,6 +11,7 @@ import {
   punchRangeBounds,
   serializeTimecardPunch,
 } from "@/lib/timecards";
+import { fetchBreaksForPunches } from "@/lib/break-punches";
 import { getSupabaseServer } from "@/lib/supabase-server";
 
 export async function GET(request) {
@@ -25,18 +26,37 @@ export async function GET(request) {
     const settings = await getAttendanceSettings(supabase);
     const { from: fromUtc, toExclusive } = punchRangeBounds(from, to);
 
-    const { data: punches, error: punchErr } = await supabase
+    let punchQuery = await supabase
       .from("time_punches")
       .select(
-        "id, employee_id, employee_name, shift_id, clock_in, clock_out, clock_in_photo_url, clock_out_photo_url, face_detected_in, worked_minutes, unscheduled, authorized_by, status"
+        "id, employee_id, employee_name, shift_id, clock_in, clock_out, clock_in_photo_url, clock_out_photo_url, face_detected_in, face_detected_out, worked_minutes, total_break_minutes, on_break, unscheduled, authorized_by, status"
       )
       .eq("store_id", TIMECARD_STORE_ID)
       .gte("clock_in", fromUtc.toISOString())
       .lt("clock_in", toExclusive.toISOString())
       .order("clock_in", { ascending: true });
-    if (punchErr) throw punchErr;
+    if (punchQuery.error) {
+      punchQuery = await supabase
+        .from("time_punches")
+        .select(
+          "id, employee_id, employee_name, shift_id, clock_in, clock_out, clock_in_photo_url, clock_out_photo_url, face_detected_in, worked_minutes, unscheduled, authorized_by, status"
+        )
+        .eq("store_id", TIMECARD_STORE_ID)
+        .gte("clock_in", fromUtc.toISOString())
+        .lt("clock_in", toExclusive.toISOString())
+        .order("clock_in", { ascending: true });
+    }
+    if (punchQuery.error) throw punchQuery.error;
+    const punches = punchQuery.data;
 
     const rows = punches || [];
+    const punchIds = rows.map((p) => p.id).filter(Boolean);
+    const breakRows = await fetchBreaksForPunches(supabase, punchIds);
+    const breaksByPunch = new Map();
+    for (const row of breakRows) {
+      if (!breaksByPunch.has(row.time_punch_id)) breaksByPunch.set(row.time_punch_id, []);
+      breaksByPunch.get(row.time_punch_id).push(row);
+    }
     const shiftIds = [...new Set(rows.map((p) => p.shift_id).filter(Boolean))];
     let shifts = [];
     if (shiftIds.length) {
@@ -73,7 +93,11 @@ export async function GET(request) {
       serializeTimecardPunch(
         punch,
         shiftMap.get(punch.shift_id),
-        settings.subtract_scheduled_break,
+        {
+          subtractScheduledBreak: settings.subtract_scheduled_break,
+          useBreakPunches: settings.use_break_punches,
+          breaks: breaksByPunch.get(punch.id) || [],
+        },
         employeeMap.get(punch.employee_id)
       )
     );
@@ -88,6 +112,7 @@ export async function GET(request) {
       to,
       can_edit: canEditPunches(employee.role),
       subtract_scheduled_break: Boolean(settings.subtract_scheduled_break),
+      use_break_punches: Boolean(settings.use_break_punches),
       groups,
       grand_display: grouped.grandDisplay,
       grand_exact: grouped.grandExact,
