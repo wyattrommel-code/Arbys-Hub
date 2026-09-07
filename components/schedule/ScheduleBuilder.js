@@ -102,9 +102,12 @@ export default function ScheduleBuilder() {
   const [toast, setToast] = useState(null);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [weekTemplateName, setWeekTemplateName] = useState("");
+  const [copyDragId, setCopyDragId] = useState(null);
 
   const shiftsRef = useRef(shifts);
   const dragRef = useRef(null);
+  const duplicateModifierRef = useRef(false);
+  const skipCardClickRef = useRef(false);
   const toastTimer = useRef(null);
   const templatesRef = useRef(null);
 
@@ -535,6 +538,40 @@ export default function ScheduleBuilder() {
     }
   }
 
+  async function duplicateShift(shiftId, employee, date) {
+    if (published) {
+      showToast("Week is locked. Unlock to edit.");
+      return;
+    }
+    const prev = shiftsRef.current.find((s) => s.id === shiftId);
+    if (!prev) return;
+    const tempId = `temp-${crypto.randomUUID()}`;
+    const breakMin = unpaidBreakMinutes(prev.unpaid_break_minutes);
+    const local = {
+      id: tempId,
+      shift_date: date,
+      employee_name: employee.fullName || UNASSIGNED_EMPLOYEE_NAME,
+      jolt_employee_id: employee.isUnassigned ? null : employee.jolt_employee_id || prev.jolt_employee_id || null,
+      role: prev.role || null,
+      station: prev.station || null,
+      scheduled_start: prev.scheduled_start,
+      scheduled_end: prev.scheduled_end,
+      unpaid_break_minutes: breakMin,
+      scheduled_hours: computeScheduledHours(prev.scheduled_start, prev.scheduled_end, breakMin),
+      week_start_date: weekStart,
+      store_id: SCHEDULE_STORE_ID,
+      notes: prev.notes || null,
+      source: SHIFT_SOURCE_HUB,
+    };
+    setShifts((current) => [...current, local]);
+    try {
+      await persistInsert(local, tempId);
+    } catch (err) {
+      setShifts((current) => current.filter((row) => row.id !== tempId));
+      showToast(err?.message || "Could not duplicate shift.");
+    }
+  }
+
   async function setPublished(nextPublished) {
     const payload = {
       week_start_date: weekStart,
@@ -689,14 +726,33 @@ export default function ScheduleBuilder() {
       event.preventDefault();
       return;
     }
-    dragRef.current = { kind: "shift", id: shift.id };
+    const duplicate = event.ctrlKey || event.metaKey || duplicateModifierRef.current;
+    skipCardClickRef.current = true;
+    dragRef.current = { kind: duplicate ? "copy" : "shift", id: shift.id };
     event.dataTransfer.setData("text/plain", String(shift.id));
-    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.effectAllowed = duplicate ? "copy" : "move";
+    if (duplicate) {
+      setCopyDragId(shift.id);
+      const ghost = document.createElement("div");
+      ghost.style.cssText =
+        "display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:8px;background:#C8102E;color:#fff;font:600 12px/1.2 system-ui,sans-serif;box-shadow:0 4px 12px rgba(0,0,0,.25);";
+      const plus = document.createElement("span");
+      plus.textContent = "+";
+      plus.style.cssText =
+        "display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:999px;background:#fff;color:#C8102E;font-weight:800;";
+      const label = document.createElement("span");
+      label.textContent = `${formatClock(shift.scheduled_start)}–${formatClock(shift.scheduled_end)}`;
+      ghost.append(plus, label);
+      document.body.appendChild(ghost);
+      event.dataTransfer.setDragImage(ghost, 16, 12);
+      window.setTimeout(() => ghost.remove(), 0);
+    }
   }
 
   function onDragOverCell(emp, date, event) {
     if (published || !dragRef.current) return;
     event.preventDefault();
+    event.dataTransfer.dropEffect = dragRef.current.kind === "copy" ? "copy" : "move";
     setDropTarget(`${rowKey(emp)}|${date}`);
   }
 
@@ -706,6 +762,10 @@ export default function ScheduleBuilder() {
     const payload = dragRef.current;
     dragRef.current = null;
     if (!payload || published) return;
+    if (payload.kind === "copy") {
+      duplicateShift(payload.id, emp, date);
+      return;
+    }
     if (payload.kind === "shift") moveShift(payload.id, emp, date);
   }
 
@@ -859,7 +919,9 @@ export default function ScheduleBuilder() {
         >
           Publish week
         </button>
-        <p className="text-xs text-zinc-500">Click a cell to add a shift. Drag a card to move it.</p>
+        <p className="text-xs text-zinc-500">
+          Click a cell to add a shift. Drag a card to move it. Ctrl-click a shift to duplicate it.
+        </p>
       </div>
 
       {loadError ? (
@@ -937,16 +999,28 @@ export default function ScheduleBuilder() {
                                     type="button"
                                     data-shift-card="true"
                                     draggable={!published}
+                                    onMouseDown={(e) => {
+                                      duplicateModifierRef.current = e.ctrlKey || e.metaKey;
+                                    }}
                                     onDragStart={(e) => onDragStartShift(shift, e)}
                                     onDragEnd={() => {
+                                      skipCardClickRef.current = true;
                                       dragRef.current = null;
+                                      duplicateModifierRef.current = false;
+                                      setCopyDragId(null);
                                       setDropTarget(null);
                                     }}
                                     onClick={(e) => {
                                       e.stopPropagation();
+                                      if (skipCardClickRef.current) {
+                                        skipCardClickRef.current = false;
+                                        return;
+                                      }
                                       openEdit(shift);
                                     }}
-                                    className="rounded px-1.5 py-1 text-left shadow-sm"
+                                    className={`relative rounded px-1.5 py-1 text-left shadow-sm ${
+                                      copyDragId === shift.id ? "cursor-copy ring-2 ring-white ring-offset-1 ring-offset-[#C8102E]" : ""
+                                    }`}
                                     style={{ background: color, color: contrastText(color) }}
                                     title={
                                       warns.join(" · ") ||
@@ -962,6 +1036,11 @@ export default function ScheduleBuilder() {
                                     <span className="block truncate text-[10px] opacity-90">
                                       {shift.station || shift.role || "Shift"}
                                     </span>
+                                    {copyDragId === shift.id ? (
+                                      <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-white text-[10px] font-bold text-[#C8102E]">
+                                        +
+                                      </span>
+                                    ) : null}
                                   </button>
                                 );
                               })}
