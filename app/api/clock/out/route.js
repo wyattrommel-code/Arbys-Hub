@@ -3,6 +3,7 @@ import { evaluatePunchAndSweep } from "@/lib/attendance";
 import {
   CLOCK_STORE_ID,
   computeWorkedMinutes,
+  toStoredMinutes,
   fetchClockEmployeeByPin,
   fetchOpenPunch,
   getAttendanceSettings,
@@ -77,11 +78,13 @@ export async function POST(request) {
     }
 
     const clockOut = new Date().toISOString();
-    const workedMinutes = computeWorkedMinutes(
-      openPunch.clock_in,
-      clockOut,
-      breakMinutes,
-      Boolean(settings.subtract_scheduled_break && openPunch.shift_id)
+    const workedMinutes = toStoredMinutes(
+      computeWorkedMinutes(
+        openPunch.clock_in,
+        clockOut,
+        breakMinutes,
+        Boolean(settings.subtract_scheduled_break && openPunch.shift_id)
+      )
     );
 
     const { data: punch, error } = await supabase

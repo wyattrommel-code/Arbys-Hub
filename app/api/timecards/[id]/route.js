@@ -3,7 +3,7 @@ import { evaluatePunchAndSweep, getAttendanceSettings } from "@/lib/attendance";
 import { actorName, requireFeature } from "@/lib/api-auth";
 import { canEditPunches } from "@/lib/permissions";
 import { fromStoreDateTimeLocal } from "@/lib/store-time";
-import { TIMECARD_STORE_ID, computeWorkedMinutes } from "@/lib/timecards";
+import { TIMECARD_STORE_ID, computeWorkedMinutes, toStoredMinutes } from "@/lib/timecards";
 import { getSupabaseServer } from "@/lib/supabase-server";
 
 function parsePunchTime(value) {
@@ -61,11 +61,13 @@ export async function PATCH(request, context) {
     }
 
     const workedMinutes = clockOut
-      ? computeWorkedMinutes(
-          clockIn,
-          clockOut,
-          breakMinutes,
-          Boolean(settings.subtract_scheduled_break && punch.shift_id)
+      ? toStoredMinutes(
+          computeWorkedMinutes(
+            clockIn,
+            clockOut,
+            breakMinutes,
+            Boolean(settings.subtract_scheduled_break && punch.shift_id)
+          )
         )
       : null;
 
