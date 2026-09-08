@@ -257,8 +257,6 @@ export default function RosterTable({
   sortKey,
   sortDir,
   onSort,
-  revealedPinId,
-  onRevealPin,
   menuOpenId,
   setMenuOpenId,
   statusFilter,
@@ -320,13 +318,7 @@ export default function RosterTable({
                   </button>
                 </td>
                 <td className="px-3 py-2">
-                  <button
-                    type="button"
-                    onClick={() => onRevealPin(emp.id)}
-                    className="font-mono text-xs text-zinc-700 hover:text-zinc-900 dark:text-zinc-300"
-                  >
-                    {revealedPinId === emp.id ? emp.employee_code || "—" : "****"}
-                  </button>
+                  <span className="text-xs text-zinc-500">Protected</span>
                 </td>
                 <td className="px-3 py-2">
                   <RoleCell emp={emp} />

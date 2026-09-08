@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { secureJson } from "@/lib/security/http";
 import { requireFeature, requireSession } from "@/lib/api-auth";
 import { fetchEmployeeRoleAssignments, rolesHttpError, setEmployeeRoles } from "@/lib/roles";
 import { getSupabaseServer } from "@/lib/supabase-server";
@@ -9,10 +9,10 @@ export async function GET(_request, context) {
   try {
     const { id } = await context.params;
     const assignments = await fetchEmployeeRoleAssignments(getSupabaseServer(), id);
-    return NextResponse.json({ ok: true, assignments });
+    return secureJson({ ok: true, assignments });
   } catch (err) {
     const { status, message } = rolesHttpError(err);
-    return NextResponse.json({ ok: false, error: message }, { status });
+    return secureJson({ ok: false, error: message }, { status });
   }
 }
 
@@ -30,9 +30,9 @@ export async function PUT(request, context) {
       employee
     );
     const assignments = await fetchEmployeeRoleAssignments(getSupabaseServer(), id);
-    return NextResponse.json({ ok: true, assignments, ...result });
+    return secureJson({ ok: true, assignments, ...result });
   } catch (err) {
     const { status, message } = rolesHttpError(err);
-    return NextResponse.json({ ok: false, error: message }, { status });
+    return secureJson({ ok: false, error: message }, { status });
   }
 }

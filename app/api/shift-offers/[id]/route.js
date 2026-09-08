@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { secureJson } from "@/lib/security/http";
 import { requireSession } from "@/lib/api-auth";
 import { cancelOffer, claimDropOffer, httpError, reviewOffer } from "@/lib/shift-offers";
 import { getSupabaseServer } from "@/lib/supabase-server";
@@ -19,11 +19,11 @@ export async function POST(request, context) {
     } else if (action === "approve" || action === "approve_open" || action === "deny") {
       offer = await reviewOffer(supabase, employee, id, action, body.note);
     } else {
-      return NextResponse.json({ ok: false, error: "Unknown action." }, { status: 400 });
+      return secureJson({ ok: false, error: "Unknown action." }, { status: 400 });
     }
-    return NextResponse.json({ ok: true, offer });
+    return secureJson({ ok: true, offer });
   } catch (err) {
     const { status, message } = httpError(err);
-    return NextResponse.json({ ok: false, error: message }, { status });
+    return secureJson({ ok: false, error: message }, { status });
   }
 }

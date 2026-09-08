@@ -1,29 +1,23 @@
-import { NextResponse } from "next/server";
+import { requireKiosk } from "@/lib/security/kiosk";
+import { secureJson } from "@/lib/security/http";
 import {
-  ensureBrookelynnAssistantManager,
-  ensureProfilePhotosBucket,
-  ensurePunchPhotosBucket,
   fetchClockRoster,
 } from "@/lib/clock";
 import { getSupabaseServer } from "@/lib/supabase-server";
 
 export async function GET() {
+  const kioskError = await requireKiosk();
+  if (kioskError) return kioskError;
   try {
     const supabase = getSupabaseServer();
-    await ensureBrookelynnAssistantManager(supabase);
-    try {
-      await Promise.all([ensurePunchPhotosBucket(supabase), ensureProfilePhotosBucket(supabase)]);
-    } catch (bucketErr) {
-      console.error("clock photo buckets", bucketErr);
-    }
     const employees = await fetchClockRoster(supabase);
-    return NextResponse.json({
+    return secureJson({
       ok: true,
       synced_at: new Date().toISOString(),
       employees,
     });
   } catch (err) {
-    return NextResponse.json(
+    return secureJson(
       { ok: false, error: err.message || "Could not load roster." },
       { status: 500 }
     );

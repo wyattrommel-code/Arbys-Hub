@@ -2,13 +2,10 @@ import { NextResponse } from "next/server";
 import { canAccess, featureForPathname } from "./lib/permissions";
 import {
   SESSION_COOKIE,
-  createSessionToken,
-  sessionCookieOptions,
-  sessionNeedsRefresh,
   verifySessionToken,
 } from "./lib/session";
 
-const PUBLIC_PREFIXES = ["/login", "/api/auth", "/api/clock", "/clock", "/roast-beef"];
+const PUBLIC_PREFIXES = ["/login", "/api/auth", "/api/clock", "/clock"];
 
 function isPublicPath(pathname) {
   return PUBLIC_PREFIXES.some(
@@ -18,6 +15,14 @@ function isPublicPath(pathname) {
 
 export async function middleware(request) {
   const { pathname } = request.nextUrl;
+  if (pathname.startsWith("/api/") && !["GET", "HEAD", "OPTIONS"].includes(request.method)) {
+    if (request.headers.get("origin") !== request.nextUrl.origin) {
+      return NextResponse.json({ error: "Invalid origin" }, { status: 403 });
+    }
+  }
+  // Every API endpoint authenticates using a live employee lookup. Image access
+  // also accepts a separately scoped kiosk cookie for profile photos only.
+  if (pathname.startsWith("/api/")) return NextResponse.next();
 
   if (isPublicPath(pathname)) {
     return NextResponse.next();
@@ -43,17 +48,11 @@ export async function middleware(request) {
   }
 
   const response = NextResponse.next();
-  const dest = request.headers.get("sec-fetch-dest");
-  const isDocumentNav = dest === "document" || dest === null;
-  if (isDocumentNav && sessionNeedsRefresh(session)) {
-    const refreshed = await createSessionToken(session);
-    response.cookies.set(SESSION_COOKIE, refreshed, sessionCookieOptions());
-  }
   return response;
 }
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico).*)",
   ],
 };

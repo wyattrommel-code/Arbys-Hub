@@ -1,4 +1,7 @@
-import { after, NextResponse } from "next/server";
+import { guardPinAttempt } from "@/lib/security/pin-guard";
+import { requireKiosk } from "@/lib/security/kiosk";
+import { secureJson } from "@/lib/security/http";
+import { after } from "next/server";
 import { evaluatePunchAndSweep } from "@/lib/attendance";
 import {
   CLOCK_STORE_ID,
@@ -18,24 +21,28 @@ import { attachEffectiveAccess } from "@/lib/roles";
 import { getSupabaseServer } from "@/lib/supabase-server";
 
 export async function POST(request) {
+  const pinError = await guardPinAttempt(request);
+  if (pinError) return pinError;
+  const kioskError = await requireKiosk();
+  if (kioskError) return kioskError;
   try {
     const { pin, managerPin, faceDetected, photo, employeeId } = await readPhotoFromRequest(request);
     if (!employeeId) {
-      return NextResponse.json({ ok: false, error: "Select your name first." }, { status: 400 });
+      return secureJson({ ok: false, error: "Select your name first." }, { status: 400 });
     }
     if (!parsePin(pin)) {
-      return NextResponse.json({ ok: false, error: "Enter a 4-digit PIN." }, { status: 400 });
+      return secureJson({ ok: false, error: "Enter a 4-digit PIN." }, { status: 400 });
     }
 
     const supabase = getSupabaseServer();
     const employee = await attachEffectiveAccess(supabase, await fetchClockEmployeeByPin(supabase, pin));
     if (!employee || employee.id !== employeeId) {
-      return NextResponse.json({ ok: false, error: "Invalid PIN" }, { status: 401 });
+      return secureJson({ ok: false, error: "Invalid PIN" }, { status: 401 });
     }
 
     const openPunch = await fetchOpenPunch(supabase, employee.id);
     if (openPunch) {
-      return NextResponse.json(
+      return secureJson(
         { ok: false, error: "Already clocked in. Clock out first." },
         { status: 409 }
       );
@@ -54,14 +61,14 @@ export async function POST(request) {
 
     if (unscheduled) {
       if (!parsePin(managerPin)) {
-        return NextResponse.json(
+        return secureJson(
           { ok: false, error: "You're not scheduled today. A manager must authorize." },
           { status: 403 }
         );
       }
       const manager = await attachEffectiveAccess(supabase, await fetchClockEmployeeByPin(supabase, managerPin));
       if (!manager || !canAuthorizeUnscheduled(manager)) {
-        return NextResponse.json(
+        return secureJson(
           { ok: false, error: "That PIN cannot authorize unscheduled work." },
           { status: 403 }
         );
@@ -73,7 +80,7 @@ export async function POST(request) {
     let photoUrl = null;
     if (settings.require_face_on_clock_in) {
       if (!photo) {
-        return NextResponse.json(
+        return secureJson(
           { ok: false, error: "Photo is required to clock in." },
           { status: 400 }
         );
@@ -81,7 +88,7 @@ export async function POST(request) {
       try {
         photoUrl = await uploadPunchPhoto(supabase, employee.id, photo);
       } catch (err) {
-        return NextResponse.json(
+        return secureJson(
           { ok: false, error: err.message || "Could not save photo. Try again." },
           { status: 500 }
         );
@@ -140,13 +147,13 @@ export async function POST(request) {
       }
     });
 
-    return NextResponse.json({
+    return secureJson({
       ok: true,
       punch,
       employee: { name: clockEmployeeName(employee) },
     });
   } catch (err) {
-    return NextResponse.json(
+    return secureJson(
       { ok: false, error: err.message || "Clock in failed." },
       { status: 500 }
     );

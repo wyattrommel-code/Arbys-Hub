@@ -195,9 +195,7 @@ export default function PeoplePage() {
   const [editingEmployeeId, setEditingEmployeeId] = useState(null);
   const [sortKey, setSortKey] = useState("name");
   const [sortDir, setSortDir] = useState("asc");
-  const [revealedPinId, setRevealedPinId] = useState(null);
   const [menuOpenId, setMenuOpenId] = useState(null);
-  const pinRevealTimeoutRef = useRef(null);
   const addFirstNameRef = useRef(null);
 
   const [showAddEmployee, setShowAddEmployee] = useState(false);
@@ -366,7 +364,7 @@ export default function PeoplePage() {
   const activeTrainers = useMemo(() => activeEmployees.filter((e) => Boolean(e.is_trainer)), [activeEmployees]);
 
   const addPinError = useMemo(
-    () => validateEmployeePin(addForm.employee_code, employees, editingEmployeeId),
+    () => (editingEmployeeId && !addForm.employee_code ? "" : validateEmployeePin(addForm.employee_code, employees, editingEmployeeId)),
     [addForm.employee_code, employees, editingEmployeeId]
   );
   const actorIsGm = isGm(sessionEmployee?.role);
@@ -393,11 +391,6 @@ export default function PeoplePage() {
     }
   }, [showAddEmployee]);
 
-  useEffect(() => {
-    return () => {
-      if (pinRevealTimeoutRef.current) clearTimeout(pinRevealTimeoutRef.current);
-    };
-  }, []);
 
   function handleSort(column) {
     if (sortKey === column) {
@@ -408,11 +401,6 @@ export default function PeoplePage() {
     }
   }
 
-  function revealPin(employeeId) {
-    setRevealedPinId(employeeId);
-    if (pinRevealTimeoutRef.current) clearTimeout(pinRevealTimeoutRef.current);
-    pinRevealTimeoutRef.current = setTimeout(() => setRevealedPinId(null), 5000);
-  }
 
   function openAddEmployeeModal() {
     const fallback = defaultRoleForNewEmployee(catalogRoles);
@@ -440,7 +428,7 @@ export default function PeoplePage() {
     setAddForm({
       first_name: emp.first_name || "",
       last_name: emp.last_name || "",
-      employee_code: emp.employee_code || "",
+      employee_code: "",
       phone: emp.phone || "",
       email: emp.email || "",
       hire_date: emp.hire_date || "",
@@ -583,7 +571,7 @@ export default function PeoplePage() {
       setError("First and last name are required.");
       return;
     }
-    const pinErr = validateEmployeePin(addForm.employee_code, employees, editingEmployeeId);
+    const pinErr = (editingEmployeeId && !addForm.employee_code ? "" : validateEmployeePin(addForm.employee_code, employees, editingEmployeeId));
     if (pinErr) {
       setError(pinErr);
       return;
@@ -598,7 +586,7 @@ export default function PeoplePage() {
       const payload = {
         first_name: addForm.first_name.trim(),
         last_name: addForm.last_name.trim(),
-        employee_code: String(addForm.employee_code).trim(),
+        ...(addForm.employee_code ? { employee_code: String(addForm.employee_code).trim() } : {}),
         store_id: STORE_ID,
         is_active: normalizeStatus(addForm.status) === "active",
         phone: addForm.phone || null,
@@ -635,7 +623,7 @@ export default function PeoplePage() {
         store_id: STORE_ID,
         first_name: addForm.first_name.trim(),
         last_name: addForm.last_name.trim(),
-        employee_code: String(addForm.employee_code).trim(),
+        ...(addForm.employee_code ? { employee_code: String(addForm.employee_code).trim() } : {}),
         role: "crew",
         is_active: normalizeStatus(addForm.status) === "active",
         phone: addForm.phone || null,
@@ -1258,8 +1246,6 @@ export default function PeoplePage() {
               sortKey={sortKey}
               sortDir={sortDir}
               onSort={handleSort}
-              revealedPinId={revealedPinId}
-              onRevealPin={revealPin}
               menuOpenId={menuOpenId}
               setMenuOpenId={setMenuOpenId}
               statusFilter={statusFilter}
@@ -1330,9 +1316,9 @@ export default function PeoplePage() {
                   </p>
                   <p>
                     <span className="font-semibold">PIN:</span>{" "}
-                    <button type="button" onClick={() => revealPin(emp.id)} className="font-mono text-xs hover:underline">
-                      {revealedPinId === emp.id ? emp.employee_code || "—" : "****"}
-                    </button>
+                    <span className="text-xs">
+                      Not retrievable; edit employee to reset
+                    </span>
                   </p>
                   <p>
                     <span className="font-semibold">Last Modified:</span> {formatRelativeTime(employeeModifiedAt(emp))}
@@ -1756,7 +1742,7 @@ export default function PeoplePage() {
               </label>
             ))}
             <label className="text-xs font-medium text-zinc-600">
-              Employee PIN (4 digits) *
+              {editingEmployeeId ? "New PIN (leave blank to keep current PIN)" : "Employee PIN (4 digits) *"}
               <input
                 type="text"
                 inputMode="numeric"

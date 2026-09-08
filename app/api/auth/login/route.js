@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { guardPinAttempt } from "@/lib/security/pin-guard";
+import { secureJson } from "@/lib/security/http";
 import { hubRoleFromAccessTier } from "@/lib/access-tier";
 import { STORE_ID } from "@/lib/constants";
 import { fetchEmployeeByPin } from "@/lib/employees";
@@ -11,27 +12,26 @@ import {
 } from "@/lib/session";
 
 export async function POST(request) {
+  const pinError = await guardPinAttempt(request);
+  if (pinError) return pinError;
   try {
     const body = await request.json();
     const pin = String(body.pin || "").trim();
 
     if (!/^\d{4}$/.test(pin)) {
-      return NextResponse.json({ ok: false, error: "Invalid PIN format" }, { status: 400 });
+      return secureJson({ ok: false, error: "Invalid PIN format" }, { status: 400 });
     }
 
     const supabase = getSupabaseServer();
     const employee = await fetchEmployeeByPin(supabase, pin, STORE_ID);
 
     if (!employee) {
-      return NextResponse.json({ ok: false, error: "Invalid PIN" }, { status: 401 });
+      return secureJson({ ok: false, error: "Invalid PIN" }, { status: 401 });
     }
 
-    let accessRole = employee.role;
-    try {
-      accessRole = hubRoleFromAccessTier(await getEffectiveAccess(supabase, employee.id));
-    } catch {
-      accessRole = employee.role;
-    }
+    const tier = await getEffectiveAccess(supabase, employee.id);
+    if (tier === "none") return secureJson({ ok: false, error: "Invalid PIN" }, { status: 401 });
+    const accessRole = hubRoleFromAccessTier(tier);
 
     const sessionEmployee = {
       employee_id: employee.id,
@@ -41,12 +41,12 @@ export async function POST(request) {
     };
 
     const token = await createSessionToken(sessionEmployee);
-    const response = NextResponse.json({ ok: true, employee: sessionEmployee });
+    const response = secureJson({ ok: true, employee: sessionEmployee });
     response.cookies.set(SESSION_COOKIE, token, sessionCookieOptions());
     return response;
   } catch (err) {
-    return NextResponse.json(
-      { ok: false, error: err.message || "Login failed" },
+    return secureJson(
+      { ok: false, error: "Login temporarily unavailable" },
       { status: 500 }
     );
   }

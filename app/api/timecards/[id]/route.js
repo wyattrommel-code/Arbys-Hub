@@ -1,4 +1,5 @@
-import { after, NextResponse } from "next/server";
+import { secureJson } from "@/lib/security/http";
+import { after } from "next/server";
 import { evaluatePunchAndSweep, getAttendanceSettings } from "@/lib/attendance";
 import { actorName, requireFeature } from "@/lib/api-auth";
 import { canEditPunches } from "@/lib/permissions";
@@ -26,7 +27,7 @@ export async function PATCH(request, context) {
   const { employee, error } = await requireFeature("timeclock.full");
   if (error) return error;
   if (!canEditPunches(employee.role)) {
-    return NextResponse.json({ ok: false, error: "Only a GM or assistant manager can edit punches." }, { status: 403 });
+    return secureJson({ ok: false, error: "Only a GM or assistant manager can edit punches." }, { status: 403 });
   }
   try {
     const { id } = await context.params;
@@ -34,10 +35,10 @@ export async function PATCH(request, context) {
     const clockIn = parsePunchTime(body.clock_in);
     const clockOut = parsePunchTime(body.clock_out);
     if (!clockIn) {
-      return NextResponse.json({ ok: false, error: "Clock-in time is required." }, { status: 400 });
+      return secureJson({ ok: false, error: "Clock-in time is required." }, { status: 400 });
     }
     if (clockOut && new Date(clockOut).getTime() <= new Date(clockIn).getTime()) {
-      return NextResponse.json({ ok: false, error: "Clock-out must be after clock-in." }, { status: 400 });
+      return secureJson({ ok: false, error: "Clock-out must be after clock-in." }, { status: 400 });
     }
 
     const supabase = getSupabaseServer();
@@ -48,7 +49,7 @@ export async function PATCH(request, context) {
       .eq("store_id", TIMECARD_STORE_ID)
       .maybeSingle();
     if (fetchErr) throw fetchErr;
-    if (!punch) return NextResponse.json({ ok: false, error: "Punch not found." }, { status: 404 });
+    if (!punch) return secureJson({ ok: false, error: "Punch not found." }, { status: 404 });
 
     const settings = await getAttendanceSettings(supabase);
     let unpaidMinutes = 0;
@@ -116,7 +117,7 @@ export async function PATCH(request, context) {
     }
 
     if (!updated) {
-      return NextResponse.json({ ok: false, error: "Punch not found." }, { status: 404 });
+      return secureJson({ ok: false, error: "Punch not found." }, { status: 404 });
     }
 
     after(async () => {
@@ -127,8 +128,8 @@ export async function PATCH(request, context) {
       }
     });
 
-    return NextResponse.json({ ok: true, punch: updated });
+    return secureJson({ ok: true, punch: updated });
   } catch (err) {
-    return NextResponse.json({ ok: false, error: err.message || "Could not save punch." }, { status: 500 });
+    return secureJson({ ok: false, error: err.message || "Could not save punch." }, { status: 500 });
   }
 }

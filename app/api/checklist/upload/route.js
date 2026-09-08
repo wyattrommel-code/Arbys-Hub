@@ -1,14 +1,15 @@
-import { NextResponse } from "next/server";
+import { secureJson } from "@/lib/security/http";
 import { getCurrentEmployee } from "@/lib/auth";
 import { CHECKLIST_PHOTOS_BUCKET, STORE_ID } from "@/lib/constants";
 import { resolveCompletionShift } from "@/lib/checklist";
 import { getCurrentShift, getStoreToday } from "@/lib/store-time";
 import { getSupabaseServer } from "@/lib/supabase-server";
+import { canChangeCompletion, completionInputError } from "@/lib/security/checklist-policy";
 
 export async function POST(request) {
   const employee = await getCurrentEmployee();
   if (!employee) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return secureJson({ error: "Unauthorized" }, { status: 401 });
   }
 
   try {
@@ -22,7 +23,10 @@ export async function POST(request) {
       typeof notesRaw === "string" && notesRaw.trim() ? notesRaw.trim() : null;
 
     if (!file || typeof file === "string" || !taskId) {
-      return NextResponse.json({ error: "file and task_id required" }, { status: 400 });
+      return secureJson({ error: "file and task_id required" }, { status: 400 });
+    }
+    if (file.size > 6 * 1024 * 1024 || !["image/jpeg", "image/jpg", "image/png", "image/webp"].includes(file.type)) {
+      return secureJson({ error: "Use a JPEG, PNG, or WebP image under 6 MB" }, { status: 400 });
     }
 
     const supabase = getSupabaseServer();
@@ -35,10 +39,12 @@ export async function POST(request) {
 
     if (taskErr) throw taskErr;
     if (!task) {
-      return NextResponse.json({ error: "Task not found" }, { status: 404 });
+      return secureJson({ error: "Task not found" }, { status: 404 });
     }
 
     const shift = shiftParam || resolveCompletionShift(task, getCurrentShift());
+    const validation = completionInputError(employee, task, String(completionDate), String(shift), getStoreToday(), true);
+    if (validation) return secureJson({ error: validation }, { status: 403 });
     const timestamp = Date.now();
     const path = `${STORE_ID}/${completionDate}/${taskId}-${timestamp}.jpg`;
 
@@ -85,7 +91,7 @@ export async function POST(request) {
           .eq("shift", shift)
           .eq("store_id", STORE_ID)
           .maybeSingle();
-        if (existing?.id && noteText) {
+        if (existing?.id && noteText && canChangeCompletion(employee, existing)) {
           await supabase
             .from("checklist_completions")
             .update({ notes: noteText })
@@ -96,19 +102,19 @@ export async function POST(request) {
             .select("*")
             .eq("id", existing.id)
             .single();
-          return NextResponse.json({
+          return secureJson({
             completion: merged || existing,
             photo_url: photoUrl,
             noop: true,
           });
         }
-        return NextResponse.json({ completion: existing, photo_url: photoUrl, noop: true });
+        return secureJson({ completion: existing, photo_url: photoUrl, noop: true });
       }
       throw insertErr;
     }
 
-    return NextResponse.json({ completion, photo_url: photoUrl });
+    return secureJson({ completion, photo_url: photoUrl });
   } catch (err) {
-    return NextResponse.json({ error: err.message || "Upload failed" }, { status: 500 });
+    return secureJson({ error: err.message || "Upload failed" }, { status: 500 });
   }
 }

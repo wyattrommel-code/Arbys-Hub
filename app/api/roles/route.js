@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { secureJson } from "@/lib/security/http";
 import { requireFeature, requireSession } from "@/lib/api-auth";
 import { createManagedRole, fetchAllRoleAssignments, fetchRoles, rolesHttpError } from "@/lib/roles";
 import { getSupabaseServer } from "@/lib/supabase-server";
@@ -17,13 +17,13 @@ export async function GET(request) {
     const supabase = getSupabaseServer();
     const roles = await fetchRoles(supabase, { includeInactive });
     if (!includeAssignments) {
-      return NextResponse.json({ ok: true, roles });
+      return secureJson({ ok: true, roles });
     }
     const assignments = await fetchAllRoleAssignments(supabase);
-    return NextResponse.json({ ok: true, roles, assignments });
+    return secureJson({ ok: true, roles, assignments });
   } catch (err) {
     const { status, message } = rolesHttpError(err);
-    return NextResponse.json({ ok: false, error: message }, { status });
+    return secureJson({ ok: false, error: message }, { status });
   }
 }
 
@@ -33,9 +33,9 @@ export async function POST(request) {
   try {
     const body = await request.json();
     const role = await createManagedRole(getSupabaseServer(), body, employee);
-    return NextResponse.json({ ok: true, role });
+    return secureJson({ ok: true, role });
   } catch (err) {
     const { status, message } = rolesHttpError(err);
-    return NextResponse.json({ ok: false, error: message }, { status });
+    return secureJson({ ok: false, error: message }, { status });
   }
 }
