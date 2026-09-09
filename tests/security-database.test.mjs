@@ -78,3 +78,25 @@ test("security cutover preserves records and enforces database access", async (t
   await assert.rejects(db.exec("select * from public.future_table"), /permission denied/);
   await db.exec("reset role");
 });
+
+test("timecard approval audit is private and append-only", async (t) => {
+  const db = new PGlite(); t.after(() => db.close());
+  await db.exec(`create role anon; create role authenticated; create role service_role bypassrls;
+    grant usage on schema public to anon, authenticated, service_role;
+    create table employees(id uuid primary key); create table time_punches(id uuid primary key);
+    insert into employees values ('11111111-1111-4111-8111-111111111111');
+    insert into time_punches values ('22222222-2222-4222-8222-222222222222');`);
+  await db.exec(await readFile(new URL('../supabase/migrations/20260909161106_timecard_manager_approvals.sql', import.meta.url), 'utf8'));
+  for (const role of ['anon', 'authenticated']) {
+    await db.exec(`set role ${role}`);
+    await assert.rejects(db.exec('select * from timecard_approvals'), /permission denied/);
+    await assert.rejects(db.exec('delete from timecard_approvals'), /permission denied/);
+    await db.exec('reset role');
+  }
+  await db.exec(`set role service_role;
+    insert into timecard_approvals(punch_id,snapshot_hash,approved_by,approved_by_name,note,review_flags,reviewed_snapshot)
+    values ('22222222-2222-4222-8222-222222222222',repeat('a',64),'11111111-1111-4111-8111-111111111111','Synthetic Manager','Reviewed','[]','{}');`);
+  assert.equal((await db.query('select count(*)::int as n from timecard_approvals')).rows[0].n, 1);
+  await assert.rejects(db.exec("update timecard_approvals set note='rewritten'"), /permission denied/);
+  await assert.rejects(db.exec('delete from timecard_approvals'), /permission denied/);
+});
