@@ -7,11 +7,12 @@ changed the live database. Do not apply the migration independently of the match
 application release: the old browser-direct client and plaintext PIN lookup will
 stop working after the migration.
 
-The reviewed base (`e8ce9ba`) cannot build because
-`components/schedule/MyShifts.js` imports a nonexistent `PunchFixes` component.
-Its existing lint failures also remain. Those unrelated repairs are outside this
-security-only change. A successful production build and a staging acceptance pass
-are prerequisites for the live cutover.
+The reviewed base (`e8ce9ba`) imported a nonexistent `PunchFixes` component.
+This change removes that import and render reference to unblock the security
+release; it does not implement a new punch-correction feature. The production
+build now passes with non-secret placeholder Supabase configuration. Existing
+lint failures remain. A staging acceptance pass and coordinated application
+deployment are still prerequisites for the live cutover.
 
 ## Access model
 
@@ -112,8 +113,10 @@ below remain necessary.
 
 Both run in a separate GitHub security job, independent of the pre-existing lint
 job. Local targeted lint passed for the new security modules and API changes.
-The full application still reports its baseline lint errors and missing-component
-build failure; neither is represented as passing.
+The production build passes locally with placeholder configuration and is included
+in the security CI job. This proves compilation and prerendering, not connectivity
+to the production backend. The full application still reports its baseline lint
+errors; full lint is not represented as passing.
 
 The live advisor baseline reported the existing mutable search path on
 `set_updated_at`; the migration sets it explicitly. The existing checklist tables'
@@ -123,8 +126,8 @@ and [no-policy guidance](https://supabase.com/docs/guides/database/database-lint
 
 ## Coordinated release
 
-1. Repair the existing build blocker separately and obtain a passing production
-   build. Confirm the production branch and deployment target; GitHub's default
+1. Confirm the build check passes for the release commit. Confirm the production
+   branch and deployment target; GitHub's default
    `master` differs from the active `main` branch.
 2. Confirm a recoverable database backup and the matching release artifact. The
    migration preserves records but intentionally makes PIN hashing irreversible.
