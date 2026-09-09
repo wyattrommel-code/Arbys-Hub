@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { getCurrentEmployee } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +24,7 @@ function buildHtml() {
 }
 
 export async function GET() {
+  if (!(await getCurrentEmployee())) return new Response("Unauthorized", { status: 401, headers: { "Cache-Control": "no-store" } });
   const html = buildHtml();
   if (!html) {
     return new Response(

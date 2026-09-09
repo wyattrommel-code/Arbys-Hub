@@ -1,31 +1,37 @@
-import { NextResponse } from "next/server";
+import { guardPinAttempt } from "@/lib/security/pin-guard";
+import { requireKiosk } from "@/lib/security/kiosk";
+import { secureJson } from "@/lib/security/http";
 import { clockEmployeeName, fetchClockEmployeeByPin, fetchOpenPunch, getAttendanceSettings, parsePin } from "@/lib/clock";
 import { endBreakPunch } from "@/lib/break-punches";
 import { getSupabaseServer } from "@/lib/supabase-server";
 
 export async function POST(request) {
+  const pinError = await guardPinAttempt(request);
+  if (pinError) return pinError;
+  const kioskError = await requireKiosk();
+  if (kioskError) return kioskError;
   try {
     const body = await request.json();
     const pin = parsePin(body.pin);
     const employeeId = String(body.employee_id || "").trim();
     if (!employeeId || !pin) {
-      return NextResponse.json({ ok: false, error: "Enter your PIN." }, { status: 400 });
+      return secureJson({ ok: false, error: "Enter your PIN." }, { status: 400 });
     }
     const supabase = getSupabaseServer();
     const settings = await getAttendanceSettings(supabase);
     if (!settings.use_break_punches) {
-      return NextResponse.json({ ok: false, error: "Break punches are turned off." }, { status: 409 });
+      return secureJson({ ok: false, error: "Break punches are turned off." }, { status: 409 });
     }
     const employee = await fetchClockEmployeeByPin(supabase, pin);
     if (!employee || employee.id !== employeeId) {
-      return NextResponse.json({ ok: false, error: "Invalid PIN" }, { status: 401 });
+      return secureJson({ ok: false, error: "Invalid PIN" }, { status: 401 });
     }
     const punch = await fetchOpenPunch(supabase, employee.id);
     if (!punch) {
-      return NextResponse.json({ ok: false, error: "No open punch." }, { status: 409 });
+      return secureJson({ ok: false, error: "No open punch." }, { status: 409 });
     }
     const row = await endBreakPunch(supabase, { punch });
-    return NextResponse.json({
+    return secureJson({
       ok: true,
       action: "break_end",
       break: row,
@@ -33,6 +39,6 @@ export async function POST(request) {
     });
   } catch (err) {
     const status = err.status || 500;
-    return NextResponse.json({ ok: false, error: err.message || "Could not end break." }, { status });
+    return secureJson({ ok: false, error: err.message || "Could not end break." }, { status });
   }
 }

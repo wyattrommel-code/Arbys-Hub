@@ -1,5 +1,6 @@
-import { NextResponse } from "next/server";
+import { secureJson } from "@/lib/security/http";
 import { getCurrentEmployee } from "@/lib/auth";
+import { canAccess } from "@/lib/permissions";
 import { STORE_ID } from "@/lib/constants";
 import { fetchCompletionsForDay, fetchTasksForDay } from "@/lib/checklist";
 import { normalizeTaskRole, roleDisplayName } from "@/lib/checklist-roles";
@@ -28,8 +29,9 @@ function datesInRange(start, end) {
 export async function GET(request) {
   const employee = await getCurrentEmployee();
   if (!employee) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return secureJson({ error: "Unauthorized" }, { status: 401 });
   }
+  if (!canAccess(employee.role, "reports")) return secureJson({ error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(request.url);
   const { start, end } = parseDateRange(searchParams);
@@ -107,7 +109,7 @@ export async function GET(request) {
       perEmployee[id] = (perEmployee[id] || 0) + 1;
     }
 
-    return NextResponse.json({
+    return secureJson({
       start,
       end,
       completions: completions || [],
@@ -124,6 +126,6 @@ export async function GET(request) {
       },
     });
   } catch (err) {
-    return NextResponse.json({ error: err.message || "Failed to load report" }, { status: 500 });
+    return secureJson({ error: err.message || "Failed to load report" }, { status: 500 });
   }
 }

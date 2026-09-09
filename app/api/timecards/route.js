@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { secureJson } from "@/lib/security/http";
 import { getAttendanceSettings } from "@/lib/attendance";
 import { requireFeature } from "@/lib/api-auth";
 import { STORE_ID } from "@/lib/constants";
@@ -106,7 +106,7 @@ export async function GET(request) {
       ...group,
       profile_photo_url: employeeMap.get(group.key)?.profile_photo_url || null,
     }));
-    return NextResponse.json({
+    return secureJson({
       ok: true,
       from,
       to,
@@ -119,7 +119,7 @@ export async function GET(request) {
       open_count: grouped.openCount,
     });
   } catch (err) {
-    return NextResponse.json(
+    return secureJson(
       { ok: false, error: err.message || "Could not load timecards." },
       { status: 500 }
     );

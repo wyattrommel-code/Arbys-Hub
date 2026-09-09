@@ -1,4 +1,7 @@
-import { after, NextResponse } from "next/server";
+import { guardPinAttempt } from "@/lib/security/pin-guard";
+import { requireKiosk } from "@/lib/security/kiosk";
+import { secureJson } from "@/lib/security/http";
+import { after } from "next/server";
 import { evaluatePunchAndSweep } from "@/lib/attendance";
 import {
   CLOCK_STORE_ID,
@@ -14,27 +17,31 @@ import { isOnBreak, totalBreakMinutes } from "@/lib/break-punches";
 import { getSupabaseServer } from "@/lib/supabase-server";
 
 export async function POST(request) {
+  const pinError = await guardPinAttempt(request);
+  if (pinError) return pinError;
+  const kioskError = await requireKiosk();
+  if (kioskError) return kioskError;
   try {
     const { pin, faceDetected, photo, employeeId } = await readPhotoFromRequest(request);
     if (!employeeId) {
-      return NextResponse.json({ ok: false, error: "Select your name first." }, { status: 400 });
+      return secureJson({ ok: false, error: "Select your name first." }, { status: 400 });
     }
     if (!parsePin(pin)) {
-      return NextResponse.json({ ok: false, error: "Enter a 4-digit PIN." }, { status: 400 });
+      return secureJson({ ok: false, error: "Enter a 4-digit PIN." }, { status: 400 });
     }
 
     const supabase = getSupabaseServer();
     const employee = await fetchClockEmployeeByPin(supabase, pin);
     if (!employee || employee.id !== employeeId) {
-      return NextResponse.json({ ok: false, error: "Invalid PIN" }, { status: 401 });
+      return secureJson({ ok: false, error: "Invalid PIN" }, { status: 401 });
     }
 
     const openPunch = await fetchOpenPunch(supabase, employee.id);
     if (!openPunch) {
-      return NextResponse.json({ ok: false, error: "No open punch to clock out." }, { status: 409 });
+      return secureJson({ ok: false, error: "No open punch to clock out." }, { status: 409 });
     }
     if (isOnBreak(openPunch)) {
-      return NextResponse.json(
+      return secureJson(
         { ok: false, error: "End break first before clocking out." },
         { status: 409 }
       );
@@ -45,7 +52,7 @@ export async function POST(request) {
     let photoUrl = null;
     if (settings.require_photo_on_clock_out) {
       if (!photo) {
-        return NextResponse.json(
+        return secureJson(
           { ok: false, error: "Photo is required to clock out." },
           { status: 400 }
         );
@@ -53,7 +60,7 @@ export async function POST(request) {
       try {
         photoUrl = await uploadPunchPhoto(supabase, employee.id, photo, "out");
       } catch (err) {
-        return NextResponse.json(
+        return secureJson(
           { ok: false, error: err.message || "Could not save photo. Try again." },
           { status: 500 }
         );
@@ -111,7 +118,7 @@ export async function POST(request) {
 
     if (error) throw error;
     if (!punch) {
-      return NextResponse.json({ ok: false, error: "Punch was already closed." }, { status: 409 });
+      return secureJson({ ok: false, error: "Punch was already closed." }, { status: 409 });
     }
 
     after(async () => {
@@ -127,9 +134,9 @@ export async function POST(request) {
       }
     });
 
-    return NextResponse.json({ ok: true, punch });
+    return secureJson({ ok: true, punch });
   } catch (err) {
-    return NextResponse.json(
+    return secureJson(
       { ok: false, error: err.message || "Clock out failed." },
       { status: 500 }
     );

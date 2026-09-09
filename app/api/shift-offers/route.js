@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { secureJson } from "@/lib/security/http";
 import { requireFeature, requireSession } from "@/lib/api-auth";
 import { createOffer, httpError, loadApprovalQueue, loadMarketplace } from "@/lib/shift-offers";
 import { getSupabaseServer } from "@/lib/supabase-server";
@@ -11,10 +11,10 @@ export async function GET(request) {
     if (error) return error;
     try {
       const payload = await loadApprovalQueue(getSupabaseServer(), employee);
-      return NextResponse.json({ ok: true, ...payload });
+      return secureJson({ ok: true, ...payload });
     } catch (err) {
       const { status, message } = httpError(err);
-      return NextResponse.json({ ok: false, error: message }, { status });
+      return secureJson({ ok: false, error: message }, { status });
     }
   }
 
@@ -22,10 +22,10 @@ export async function GET(request) {
   if (error) return error;
   try {
     const payload = await loadMarketplace(getSupabaseServer(), employee);
-    return NextResponse.json({ ok: true, ...payload });
+    return secureJson({ ok: true, ...payload });
   } catch (err) {
     const { status, message } = httpError(err);
-    return NextResponse.json({ ok: false, error: message }, { status });
+    return secureJson({ ok: false, error: message }, { status });
   }
 }
 
@@ -35,9 +35,9 @@ export async function POST(request) {
   try {
     const body = await request.json();
     const offer = await createOffer(getSupabaseServer(), employee, body);
-    return NextResponse.json({ ok: true, offer });
+    return secureJson({ ok: true, offer });
   } catch (err) {
     const { status, message } = httpError(err);
-    return NextResponse.json({ ok: false, error: message }, { status });
+    return secureJson({ ok: false, error: message }, { status });
   }
 }

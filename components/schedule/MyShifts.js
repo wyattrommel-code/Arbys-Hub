@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import ScheduleToast from "@/components/schedule/ScheduleToast";
 import ShiftMarketplace from "@/components/schedule/ShiftMarketplace";
-import PunchFixes from "@/components/schedule/PunchFixes";
 import {
   computeScheduledHours,
   DAY_LABELS,
@@ -259,7 +258,6 @@ export default function MyShifts({ employee }) {
         onAction={offerAction}
         onCreate={createOffer}
       />
-      <PunchFixes />
       {market?.can_approve ? (
         <Link href="/schedule/offers" className="text-sm font-semibold text-[#C8102E]">
           Review shift offers

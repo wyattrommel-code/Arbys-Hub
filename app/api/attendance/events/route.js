@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { secureJson } from "@/lib/security/http";
 import {
   ATTENDANCE_STORE_ID,
   createManualEvent,
@@ -64,12 +64,12 @@ export async function GET(request) {
       shifts = shiftRows || [];
     }
     const shiftMap = new Map(shifts.map((s) => [s.id, s]));
-    return NextResponse.json({
+    return secureJson({
       ok: true,
       events: rows.map((row) => serializeEvent(row, shiftMap.get(row.shift_id))),
     });
   } catch (err) {
-    return NextResponse.json({ ok: false, error: err.message || "Could not load events." }, { status: 500 });
+    return secureJson({ ok: false, error: err.message || "Could not load events." }, { status: 500 });
   }
 }
 
@@ -79,8 +79,8 @@ export async function POST(request) {
   try {
     const body = await request.json();
     const id = await createManualEvent(getSupabaseServer(), body || {}, actorName(employee));
-    return NextResponse.json({ ok: true, id });
+    return secureJson({ ok: true, id });
   } catch (err) {
-    return NextResponse.json({ ok: false, error: err.message || "Could not add event." }, { status: 500 });
+    return secureJson({ ok: false, error: err.message || "Could not add event." }, { status: 500 });
   }
 }

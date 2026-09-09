@@ -7,6 +7,21 @@ on:
     branches: [main, master]
 
 jobs:
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+      - run: npm ci --ignore-scripts
+      - run: npm run test:security
+      - run: npm run test:security:http
+      - run: npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://build-placeholder.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: build-placeholder-not-a-secret
   lint:
     runs-on: ubuntu-latest
     steps:

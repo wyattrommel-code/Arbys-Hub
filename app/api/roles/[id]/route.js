@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { secureJson } from "@/lib/security/http";
 import { requireFeature } from "@/lib/api-auth";
 import { rolesHttpError, updateManagedRole } from "@/lib/roles";
 import { getSupabaseServer } from "@/lib/supabase-server";
@@ -10,9 +10,9 @@ export async function PATCH(request, context) {
     const { id } = await context.params;
     const body = await request.json();
     const role = await updateManagedRole(getSupabaseServer(), id, body, employee);
-    return NextResponse.json({ ok: true, role });
+    return secureJson({ ok: true, role });
   } catch (err) {
     const { status, message } = rolesHttpError(err);
-    return NextResponse.json({ ok: false, error: message }, { status });
+    return secureJson({ ok: false, error: message }, { status });
   }
 }

@@ -565,7 +565,17 @@ function createHub() {
   const g = globalThis;
   const lib = g.supabase;
   if (!lib || typeof lib.createClient !== 'function') return null;
-  return lib.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  return lib.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    global: { fetch: async (input, init = {}) => {
+      const url = new URL(typeof input === 'string' ? input : input.url || String(input));
+      const match = url.pathname.match(/^\/rest\/v1\/([a-z_]+)$/);
+      if (!match) throw new Error('Unsupported request');
+      const headers = new Headers(init.headers);
+      headers.delete('authorization'); headers.delete('apikey');
+      return fetch('/api/data/' + match[1] + url.search, { ...init, headers, credentials: 'same-origin', cache: 'no-store' });
+    } }
+  });
 }
 
 function setSyncStatus(mode) {

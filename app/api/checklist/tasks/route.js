@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { secureJson } from "@/lib/security/http";
 import { getCurrentEmployee } from "@/lib/auth";
 import { canAccess } from "@/lib/permissions";
 import { STORE_ID } from "@/lib/constants";
@@ -10,7 +10,7 @@ import { getSupabaseServer } from "@/lib/supabase-server";
 export async function GET(request) {
   const employee = await getCurrentEmployee();
   if (!employee) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return secureJson({ error: "Unauthorized" }, { status: 401 });
   }
 
   const { searchParams } = new URL(request.url);
@@ -26,7 +26,7 @@ export async function GET(request) {
 
     if (mode === "manage") {
       if (!canAccess(employee.role, "checklists.manage")) {
-        return NextResponse.json({ error: "Access denied" }, { status: 403 });
+        return secureJson({ error: "Access denied" }, { status: 403 });
       }
       const { data, error } = await supabase
         .from("checklist_tasks")
@@ -34,7 +34,7 @@ export async function GET(request) {
         .eq("store_id", STORE_ID)
         .order("display_order", { ascending: true });
       if (error) throw error;
-      return NextResponse.json({ tasks: data || [] });
+      return secureJson({ tasks: data || [] });
     }
 
     {
@@ -51,7 +51,7 @@ export async function GET(request) {
         fullDay,
       });
       const allRows = sections.flatMap((s) => s.rows);
-      return NextResponse.json({
+      return secureJson({
         date,
         shift,
         sections,
@@ -61,17 +61,17 @@ export async function GET(request) {
     }
 
   } catch (err) {
-    return NextResponse.json({ error: err.message || "Failed to load checklist" }, { status: 500 });
+    return secureJson({ error: err.message || "Failed to load checklist" }, { status: 500 });
   }
 }
 
 export async function POST(request) {
   const employee = await getCurrentEmployee();
   if (!employee) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return secureJson({ error: "Unauthorized" }, { status: 401 });
   }
   if (!canAccess(employee.role, "checklists.manage")) {
-    return NextResponse.json({ error: "Access denied" }, { status: 403 });
+    return secureJson({ error: "Access denied" }, { status: 403 });
   }
 
   try {
@@ -99,26 +99,26 @@ export async function POST(request) {
       .single();
 
     if (error) throw error;
-    return NextResponse.json({ task: data });
+    return secureJson({ task: data });
   } catch (err) {
-    return NextResponse.json({ error: err.message || "Failed to create task" }, { status: 500 });
+    return secureJson({ error: err.message || "Failed to create task" }, { status: 500 });
   }
 }
 
 export async function PATCH(request) {
   const employee = await getCurrentEmployee();
   if (!employee) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return secureJson({ error: "Unauthorized" }, { status: 401 });
   }
   if (!canAccess(employee.role, "checklists.manage")) {
-    return NextResponse.json({ error: "Access denied" }, { status: 403 });
+    return secureJson({ error: "Access denied" }, { status: 403 });
   }
 
   try {
     const body = await request.json();
     const { id, ...updates } = body;
     if (!id) {
-      return NextResponse.json({ error: "Task id required" }, { status: 400 });
+      return secureJson({ error: "Task id required" }, { status: 400 });
     }
 
     const payload = {};
@@ -146,8 +146,8 @@ export async function PATCH(request) {
       .single();
 
     if (error) throw error;
-    return NextResponse.json({ task: data });
+    return secureJson({ task: data });
   } catch (err) {
-    return NextResponse.json({ error: err.message || "Failed to update task" }, { status: 500 });
+    return secureJson({ error: err.message || "Failed to update task" }, { status: 500 });
   }
 }

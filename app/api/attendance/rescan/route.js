@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { secureJson } from "@/lib/security/http";
 import { rescanAttendance } from "@/lib/attendance";
 import { requireFeature } from "@/lib/api-auth";
 import { getSupabaseServer } from "@/lib/supabase-server";
@@ -9,8 +9,8 @@ export async function POST(request) {
   try {
     const body = await request.json().catch(() => ({}));
     const result = await rescanAttendance(getSupabaseServer(), body.from, body.to);
-    return NextResponse.json({ ok: true, ...result });
+    return secureJson({ ok: true, ...result });
   } catch (err) {
-    return NextResponse.json({ ok: false, error: err.message || "Re-scan failed." }, { status: 500 });
+    return secureJson({ ok: false, error: err.message || "Re-scan failed." }, { status: 500 });
   }
 }

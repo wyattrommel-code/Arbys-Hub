@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { secureJson } from "@/lib/security/http";
 import { ATTENDANCE_STORE_ID } from "@/lib/attendance";
 import { requireFeature } from "@/lib/api-auth";
 import { getSupabaseServer } from "@/lib/supabase-server";
@@ -19,9 +19,9 @@ export async function PATCH(request, context) {
       .select("id, note")
       .maybeSingle();
     if (upErr) throw upErr;
-    if (!data) return NextResponse.json({ ok: false, error: "Event not found." }, { status: 404 });
-    return NextResponse.json({ ok: true, event: data });
+    if (!data) return secureJson({ ok: false, error: "Event not found." }, { status: 404 });
+    return secureJson({ ok: true, event: data });
   } catch (err) {
-    return NextResponse.json({ ok: false, error: err.message || "Could not update note." }, { status: 500 });
+    return secureJson({ ok: false, error: err.message || "Could not update note." }, { status: 500 });
   }
 }
