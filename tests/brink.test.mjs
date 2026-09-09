@@ -36,6 +36,12 @@ test("open orders, refunds and empty collections have correct totals", () => {
   assert.deepEqual(parseOrders(soap(""), "2026-09-09"), []);
   assert.equal(summarizeOrders([]).hourly.length, 24);
 });
+test("WCF DateTimeOffset wrappers preserve UTC rather than shifting by OffsetMinutes", () => {
+  const xml = soap(order()).replace("<OpenedTime>2026-09-09T18:28:26.0352606Z0</OpenedTime>", '<OpenedTime><a:DateTime xmlns:a="http://schemas.datacontract.org/2004/07/System">2026-09-09T18:28:26.0352606Z</a:DateTime><OffsetMinutes>-360</OffsetMinutes></OpenedTime>');
+  const orders = parseOrders(xml, "2026-09-09");
+  assert.equal(orders[0].opened_at, "2026-09-09T18:28:26.035Z");
+  assert.equal(summarizeOrders(orders).hourly[12].net_sales, 5.49);
+});
 test("failed and malformed PAR responses cannot masquerade as zero sales", () => {
   for (const xml of [soap(order(), 4), soap(order() + order()), soap(order()).replace("5.49", "NaN"), soap(order()).replace("2026-09-09T00:00:00", "2026-09-08T00:00:00"), '<!DOCTYPE x [<!ENTITY x "bad">]>' + soap(""), "<broken>", soap("").replace("<Orders></Orders>", "")]) assert.throws(() => parseOrders(xml, "2026-09-09"));
   assert.equal(validBusinessDate("2026-02-30"), false); assert.equal(validBusinessDate("2026-09-09"), true);
