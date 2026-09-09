@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { brinkConfig, fetchOrders, parseOrders, summarizeOrders, validBusinessDate, validCronSecret } from "../lib/brink.js";
+import { responseEvidence, ordersRequest } from "../lib/brink-evidence.js";
 
 const env = { BRINK_ACCESS_TOKEN: "synthetic-access", BRINK_LOCATION_TOKEN: "synthetic-location" };
 const order = (extra = "", id = "9007199254740999") => `<Order><Id>${id}</Id><Number>100</Number><BusinessDate>2026-09-09T00:00:00</BusinessDate><IsClosed>true</IsClosed><IsRefund>false</IsRefund><OpenedTime>2026-09-09T18:28:26.0352606Z0</OpenedTime><ClosedTime>2026-09-09T18:28:41Z</ClosedTime><EmployeeId>42</EmployeeId><TerminalId>1</TerminalId><Subtotal>5.49</Subtotal><NetSales>5.49</NetSales><Tax>0.46</Tax><Total>5.95</Total><Entries><OrderEntry><Id>1</Id><ItemId>5</ItemId><Description>BnC Classic &amp; cheese</Description><Price>5.49</Price><NetSales>5.49</NetSales></OrderEntry></Entries>${extra}</Order>`;
@@ -63,9 +64,11 @@ test("database blocks public access, duplicate syncs, stale writes and sandbox p
   const db = new PGlite(); t.after(() => db.close());
   await db.exec("create role anon; create role authenticated; create role service_role bypassrls; grant usage on schema public to anon,authenticated,service_role; create table public.hourly_sales(sale_date date,hour_of_day int,net_sales numeric,updated_at timestamptz,primary key(sale_date,hour_of_day)); grant all on public.hourly_sales to service_role;");
   await db.exec(await readFile(new URL("../supabase/migrations/20260909211242_brink_sales_sync.sql", import.meta.url), "utf8"));
+  await db.exec(await readFile(new URL("../supabase/migrations/20260909215645_brink_api_call_log.sql", import.meta.url), "utf8"));
   for (const role of ["anon", "authenticated"]) {
     await db.exec(`set role ${role}`);
     await assert.rejects(db.exec("select * from public.brink_sales_days"), /permission denied/);
+    await assert.rejects(db.exec("select * from public.brink_api_calls"), /permission denied/);
     await assert.rejects(db.exec("select public.brink_claim_sync('test','11111111-1111-4111-8111-111111111111')"), /permission denied/);
     await db.exec("reset role");
   }
@@ -86,4 +89,27 @@ test("database blocks public access, duplicate syncs, stale writes and sandbox p
   assert.equal(await finish("production", true), true);
   assert.equal(await value("select count(*)::int as value from public.hourly_sales"), 24);
   assert.equal(Number(await value("select sum(net_sales) as value from public.hourly_sales")), 5.49);
+});
+test("call evidence preserves useful XML but excludes credentials and customer/payment data", () => {
+  const xml = soap(order('<Payments><CardToken>card-secret</CardToken></Payments><CustomerId>customer-secret</CustomerId><Name>person-secret</Name><Note>private-note</Note>')).replace('BnC Classic', 'synthetic-access');
+  const evidence = responseEvidence(xml, ['synthetic-access']);
+  assert.equal(evidence.result_code, '0');
+  assert.equal(evidence.response_sha256.length, 64);
+  assert.equal(evidence.response_bytes, Buffer.byteLength(xml));
+  for (const secret of ['card-secret','customer-secret','person-secret','private-note','synthetic-access']) assert.ok(!evidence.response_xml.includes(secret));
+  assert.ok(evidence.response_xml.includes('5.95'));
+  assert.ok(ordersRequest('2026-09-09').includes('<v2:BusinessDate>2026-09-09</v2:BusinessDate>'));
+  assert.equal(responseEvidence('<bad>').response_xml, null);
+  assert.equal(responseEvidence('<!DOCTYPE x>' + xml).response_xml, null);
+  const large = responseEvidence(soap(order().replace('BnC Classic', 'x'.repeat(70000))));
+  assert.equal(large.response_truncated, true);
+  assert.ok(large.response_xml.length < 200);
+});
+test("PAR errors retain HTTP and result evidence even when parsing fails", async () => {
+  const evidence = {};
+  await assert.rejects(fetchOrders(brinkConfig(env),'2026-09-09',async () => new Response(soap('',4)),evidence));
+  assert.equal(evidence.http_status,200); assert.equal(evidence.result_code,'4');
+  const httpError = {};
+  await assert.rejects(fetchOrders(brinkConfig(env),'2026-09-09',async () => new Response('secret upstream message',{status:500}),httpError));
+  assert.equal(httpError.http_status,500); assert.equal(httpError.response_xml,undefined);
 });

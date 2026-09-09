@@ -74,6 +74,12 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
   assert.equal((await request("/api/integrations/brink", crew)).status, 403);
   assert.equal((await request("/api/integrations/brink", crew, "POST", { date: "2026-09-09" })).status, 403);
   assert.equal((await request("/api/cron/brink-sales", gm)).status, 401);
+  for (const path of ["/api/integrations/brink/logs?date=2026-09-09", "/api/integrations/brink/logs?date=2026-09-09&export=1"]) {
+    assert.equal((await request(path)).status, 401);
+    assert.equal((await request(path, crew)).status, 403);
+  }
+  assert.equal((await request("/api/integrations/brink/automation", crew, "POST", {enabled:true})).status, 403);
+  assert.equal((await request("/api/integrations/brink/logs?date=bad", gm)).status, 400);
   const range = "?from=2026-09-06&to=2026-09-12";
   const approvePath = `/api/timecards/${punch.id}/approve`;
   assert.equal((await request(approvePath, crew, "POST", { note: "Forged approval" })).status, 403);
