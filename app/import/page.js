@@ -5,6 +5,7 @@ import { fetchEmployees } from "@/lib/employees";
 import { calculateOvertimeForWeekRows, getWeekEndSaturday, getWeekStartSunday } from "@/lib/laborOvertime";
 import { formatLongDate, resolveEmployeeId } from "@/lib/schedule";
 import { getSupabase } from "@/lib/supabase";
+import BrinkSalesImport from "@/components/BrinkSalesImport";
 
 const DEFAULT_HOURLY_WAGE = 10;
 const DEFAULT_STORE_ID = "payson";
@@ -1054,7 +1055,8 @@ export default function ImportPage() {
       </article>
 
       <article className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-        <h3 className="text-base font-bold text-[#C8102E]">Sales Import</h3>
+        <BrinkSalesImport />
+        <h3 className="mt-6 text-base font-bold text-[#C8102E]">Sales Import · CSV</h3>
         <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
           Brink hourly sales CSV — export from Brink POS under Reports → Hourly Sales
         </p>

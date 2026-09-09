@@ -70,6 +70,10 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
   const request = (path, cookieValue, method = "GET", body, requestOrigin = origin) => fetch(origin + path, { method, headers: { ...(cookieValue ? { Cookie: cookieValue } : {}), Origin: requestOrigin, "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined, redirect: "manual" });
   const crew = await cookie(ids.crew); // Deliberately stale GM claim must become crew.
   const gm = await cookie(ids.gm);
+  assert.equal((await request("/api/integrations/brink")).status, 401);
+  assert.equal((await request("/api/integrations/brink", crew)).status, 403);
+  assert.equal((await request("/api/integrations/brink", crew, "POST", { date: "2026-09-09" })).status, 403);
+  assert.equal((await request("/api/cron/brink-sales", gm)).status, 401);
   const range = "?from=2026-09-06&to=2026-09-12";
   const approvePath = `/api/timecards/${punch.id}/approve`;
   assert.equal((await request(approvePath, crew, "POST", { note: "Forged approval" })).status, 403);
