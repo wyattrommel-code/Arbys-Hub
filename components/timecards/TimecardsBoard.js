@@ -263,7 +263,7 @@ export default function TimecardsBoard() {
         </label>
         <label className="text-xs font-semibold">Review
           <select value={reviewFilter} onChange={(event) => setReviewFilter(event.target.value)} className="mt-1 block rounded-lg border border-zinc-300 bg-white p-2 text-sm dark:bg-zinc-950">
-            <option value="all">All punches</option><option value="open">Open punches</option><option value="unscheduled">Unscheduled</option><option value="edited">Edited punches</option><option value="photo">Face not detected</option>
+            <option value="all">All punches</option><option value="open">Open punches</option><option value="unscheduled">Unscheduled</option><option value="edited">Edited punches</option><option value="long">Over 16 hours</option><option value="photo">Face not detected</option>
           </select>
         </label>
         <div className="flex gap-1" aria-label="Timecard view">
@@ -351,6 +351,7 @@ export default function TimecardsBoard() {
                       <td className="px-3 py-2 whitespace-nowrap">{punch.clock_in_time}</td>
                       <td className="px-3 py-2 whitespace-nowrap">
                         {punch.open ? <span className="font-semibold text-amber-800">Open</span> : punch.clock_out_time}
+                        {punch.clock_out && getStoreToday(new Date(punch.clock_out)) !== getStoreToday(new Date(punch.clock_in)) && <span className="block text-xs font-semibold text-amber-800">{getStoreToday(new Date(punch.clock_out))}</span>}
                       </td>
                       <td className="px-3 py-2">
                         <BreakSegments punch={punch} />
@@ -377,6 +378,7 @@ export default function TimecardsBoard() {
                       <td className="px-3 py-2 text-zinc-600">{punch.scheduled_label}</td>
                       <td className="px-3 py-2">
                         <div className="flex flex-wrap gap-1">
+                          {punch.clock_out && Date.parse(punch.clock_out) - Date.parse(punch.clock_in) > 16 * 3600000 && <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-800">Over 16 hours · review</span>}
                           {punch.on_break ? (
                             <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900">
                               On break
