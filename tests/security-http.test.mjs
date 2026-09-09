@@ -14,6 +14,11 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
     const url = new URL(req.url, "http://localhost");
     calls.push({ path: url.pathname, query: url.searchParams, authorization: req.headers.authorization });
     res.setHeader("Content-Type", "application/json");
+    if (url.pathname === "/rest/v1/roast_entries" && req.method === "POST") {
+      res.statusCode = 201;
+      res.end();
+      return;
+    }
     const id = url.searchParams.get("id")?.replace("eq.", "");
     let data = [];
     if (url.pathname === "/rest/v1/employees" && id) data = { id, first_name: "Synthetic", last_name: "User", is_active: id !== ids.inactive, status: "active", store_id: "07462", role: id === ids.gm ? "gm" : "crew" };
@@ -26,10 +31,10 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
   await new Promise((resolve) => portFinder.listen(0, "127.0.0.1", resolve));
   const port = portFinder.address().port;
   await new Promise((resolve) => portFinder.close(resolve));
-  const origin = `http://127.0.0.1:${port}`;
+  const origin = `http://localhost:${port}`;
   const secret = "http-test-only-secret-not-production";
   process.env.SESSION_SECRET = secret;
-  const app = spawn(process.execPath, ["node_modules/next/dist/bin/next", "dev", "--hostname", "127.0.0.1", "--port", String(port)], {
+  const app = spawn(process.execPath, ["node_modules/next/dist/bin/next", "dev", "--hostname", "localhost", "--port", String(port)], {
     cwd: process.cwd(), windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, NEXT_TELEMETRY_DISABLED: "1", NEXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${backend.address().port}`, NEXT_PUBLIC_SUPABASE_ANON_KEY: "fake-public-key", SUPABASE_SERVICE_ROLE_KEY: "fake-service-key", SESSION_SECRET: secret, VERCEL: "" },
   });
@@ -54,6 +59,11 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
   const request = (path, cookieValue, method = "GET", body, requestOrigin = origin) => fetch(origin + path, { method, headers: { ...(cookieValue ? { Cookie: cookieValue } : {}), Origin: requestOrigin, "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined, redirect: "manual" });
   const crew = await cookie(ids.crew); // Deliberately stale GM claim must become crew.
   const gm = await cookie(ids.gm);
+  const savedRoast = await request("/api/data/roast_entries?on_conflict=sheet_date,daypart", crew, "POST", { sheet_date: "2026-09-08", daypart: "6am", on_hand: 4 });
+  const savedRoastBody = await savedRoast.text();
+  assert.equal(savedRoast.status, 201, savedRoastBody);
+  assert.equal(savedRoastBody, "");
+  assert.equal(savedRoast.headers.get("cache-control"), "private, no-store");
   assert.equal((await request("/api/data/employees")).status, 401);
   assert.equal((await request("/api/data/employee_wages", crew)).status, 403);
   assert.equal((await request("/api/data/employees?select=employee_code", gm)).status, 403);

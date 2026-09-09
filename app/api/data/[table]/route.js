@@ -33,7 +33,10 @@ async function handle(request, context) {
     const responseHeaders = { "Cache-Control": "private, no-store" };
     if (result.headers.has("content-range")) responseHeaders["Content-Range"] = result.headers.get("content-range");
     if (request.method === "HEAD" || result.status === 204) return new Response(null, { status: result.status, headers: responseHeaders });
-    const data = await result.json();
+    const responseText = await result.text();
+    // PostgREST inserts/upserts can return 201 with no body (return=minimal).
+    if (result.ok && !responseText.trim()) return new Response(null, { status: result.status, headers: responseHeaders });
+    const data = responseText ? JSON.parse(responseText) : {};
     return secureJson(result.ok ? data : { message: "Database request failed", code: data.code }, { status: result.status, headers: responseHeaders });
   } catch (err) {
     return secureJson({ message: err.status === 403 ? err.message : "Data request failed" }, { status: err.status || 500 });
