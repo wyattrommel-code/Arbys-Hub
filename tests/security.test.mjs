@@ -12,6 +12,18 @@ const lead = { ...crew, role: "shift_lead" };
 const plan = (overrides = {}) => authorizeDataRequest({ actor: crew, table: "employees", method: "GET", search: "", ...overrides });
 const denied = (overrides) => assert.throws(() => plan(overrides), { status: 403 });
 
+test("bulk sales imports accept SDK column metadata without weakening write checks", () => {
+  const request = { actor: gm, table: "hourly_sales", method: "POST", search: 'columns="sale_date","hour_of_day","net_sales"&on_conflict=sale_date,hour_of_day', body: [{ sale_date: "2026-09-08", hour_of_day: 8, net_sales: 38.31 }] };
+  const result = plan(request);
+  assert.equal(result.params.has("columns"), false);
+  assert.deepEqual(result.body, request.body);
+  denied({ ...request, actor: crew });
+  denied({ ...request, search: 'columns="unknown"' });
+  denied({ ...request, search: 'columns="sale_date"&columns="net_sales"' });
+  denied({ ...request, body: [{ ...request.body[0], unknown: 1 }] });
+  denied({ search: 'columns="id"' });
+});
+
 test("unauthenticated and unknown-role/table requests fail closed", () => {
   for (const actor of [null, {}, { ...crew, role: "owner" }]) denied({ actor });
   for (const table of ["pg_authid", "rpc", "checklist_completions", "attendance_settings", "__proto__"]) denied({ table });
