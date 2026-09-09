@@ -5,6 +5,7 @@ import EmployeeAvatar from "@/components/EmployeeAvatar";
 import { addDaysISO, getStoreToday, toStoreDateTimeLocal } from "@/lib/store-time";
 import { weekStartSunday } from "@/lib/schedule";
 import { buildPayrollCsv, payrollFilename } from "@/lib/timecards";
+import { payPeriodFor, filterTimecardGroups } from "@/lib/timecard-review";
 
 function PunchPhotoThumb({ url, label, noFace, onOpen }) {
   if (!url) {
@@ -57,9 +58,12 @@ function downloadCsv(filename, text) {
 
 export default function TimecardsBoard() {
   const today = getStoreToday();
-  const weekStart = weekStartSunday(today);
-  const [from, setFrom] = useState(weekStart);
-  const [to, setTo] = useState(addDaysISO(weekStart, 6));
+  const currentPeriod = payPeriodFor(today);
+  const [from, setFrom] = useState(currentPeriod.from);
+  const [to, setTo] = useState(currentPeriod.to);
+  const [search, setSearch] = useState("");
+  const [reviewFilter, setReviewFilter] = useState("all");
+  const [view, setView] = useState("punches");
   const [payload, setPayload] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -98,6 +102,12 @@ export default function TimecardsBoard() {
       openCount: payload?.open_count || 0,
     };
   }, [payload]);
+  const visibleGroups = useMemo(() => filterTimecardGroups(grouped.groups, search, reviewFilter), [grouped.groups, search, reviewFilter]);
+  const periodOptions = Array.from({ length: 12 }, (_, index) => {
+    const start = addDaysISO(currentPeriod.from, -index * 14);
+    return { from: start, to: addDaysISO(start, 13) };
+  });
+  const selectedPeriod = periodOptions.find((period) => period.from === from && period.to === to);
 
   function setThisWeek() {
     const start = weekStartSunday(getStoreToday());
@@ -171,7 +181,7 @@ export default function TimecardsBoard() {
           disabled={!payload || loading}
           className="rounded-lg bg-[#C8102E] px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
         >
-          Export payroll CSV
+          Export full period CSV
         </button>
       </div>
 
@@ -188,6 +198,18 @@ export default function TimecardsBoard() {
       ) : null}
 
       <section className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="mb-4 flex flex-wrap items-end gap-3">
+          <label className="flex-1 text-sm font-semibold">Pay period
+            <select aria-label="Pay period" value={selectedPeriod?.from || "custom"} onChange={(event) => {
+              const period = periodOptions.find((item) => item.from === event.target.value);
+              if (period) { setFrom(period.from); setTo(period.to); }
+            }} className="mt-1 block w-full rounded-lg border border-zinc-300 bg-white p-2 dark:bg-zinc-950">
+              {!selectedPeriod && <option value="custom">Custom date range</option>}
+              {periodOptions.map((period) => <option key={period.from} value={period.from}>{period.from} — {period.to}</option>)}
+            </select>
+          </label>
+          <button type="button" disabled={loading} onClick={load} className="rounded-lg border border-[#C8102E] px-4 py-2 text-sm font-semibold text-[#C8102E] disabled:opacity-50">Refresh punches</button>
+        </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={setThisWeek} className="rounded-full border border-zinc-300 px-3 py-1 text-xs font-semibold">
             This week
@@ -235,14 +257,39 @@ export default function TimecardsBoard() {
         </div>
       </section>
 
+      <section className="flex flex-wrap items-end gap-3 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+        <label className="min-w-48 flex-1 text-xs font-semibold">Find an employee
+          <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search employee names" className="mt-1 block w-full rounded-lg border border-zinc-300 bg-transparent p-2 text-sm" />
+        </label>
+        <label className="text-xs font-semibold">Review
+          <select value={reviewFilter} onChange={(event) => setReviewFilter(event.target.value)} className="mt-1 block rounded-lg border border-zinc-300 bg-white p-2 text-sm dark:bg-zinc-950">
+            <option value="all">All punches</option><option value="open">Open punches</option><option value="unscheduled">Unscheduled</option><option value="edited">Edited punches</option><option value="photo">Face not detected</option>
+          </select>
+        </label>
+        <div className="flex gap-1" aria-label="Timecard view">
+          {[['punches', 'Punch details'], ['totals', 'Employee totals']].map(([value, label]) => <button key={value} type="button" aria-pressed={view === value} onClick={() => setView(value)} className={`rounded-lg px-3 py-2 text-sm font-semibold ${view === value ? 'bg-[#C8102E] text-white' : 'border border-zinc-300'}`}>{label}</button>)}
+        </div>
+        <p className="w-full text-xs text-zinc-500">Showing {visibleGroups.reduce((sum, group) => sum + group.punches.length, 0)} punches for {visibleGroups.length} employees. Period totals and CSV include all punches in the selected date range.</p>
+      </section>
+
       {loading ? (
         <p className="rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-500">Loading timecards…</p>
-      ) : !payload?.groups?.length ? (
+      ) : !visibleGroups.length ? (
         <p className="rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-500">
-          No punches in this pay period.
+          No punches match this date range and these filters.
         </p>
       ) : (
-        payload.groups.map((group) => (
+        view === "totals" ? (
+          <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white dark:bg-zinc-900">
+            <table className="w-full text-left text-sm"><caption className="p-4 text-left font-semibold">Full-period employee totals · select a name to review punches</caption>
+              <thead className="bg-red-50 text-zinc-700"><tr><th className="p-3">Employee</th><th className="p-3">Punches</th><th className="p-3">Open</th><th className="p-3">Paid hours</th></tr></thead>
+              <tbody>{visibleGroups.map((group) => {
+                const full = grouped.groups.find((item) => item.key === group.key);
+                return <tr key={group.key} className="border-t border-zinc-100"><td className="p-3"><button className="font-semibold text-[#C8102E] underline" onClick={() => { setSearch(group.name); setReviewFilter('all'); setView('punches'); }}>{group.name}</button></td><td className="p-3">{full.punches.length}</td><td className="p-3">{full.openCount || 0}</td><td className="p-3 font-semibold">{full.totalDisplay}</td></tr>;
+              })}</tbody>
+            </table>
+          </div>
+        ) : visibleGroups.map((group) => (
           <section
             key={group.key}
             className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
@@ -257,7 +304,7 @@ export default function TimecardsBoard() {
                   ) : null}
                 </div>
               </div>
-              <p className="text-sm font-bold">{group.totalDisplay} hrs</p>
+              <p className="text-sm font-bold">{group.totalDisplay} hrs <span className="text-xs font-normal text-zinc-500">full period</span></p>
             </div>
             <div className="overflow-x-auto">
               <table className="min-w-[1100px] w-full text-left text-sm">
@@ -441,6 +488,7 @@ export default function TimecardsBoard() {
           >
             <h3 className="text-lg font-semibold text-[#C8102E]">Edit punch</h3>
             <p className="mt-1 text-sm text-zinc-500">{editing.name}</p>
+            {error && <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-800">{error}</p>}
             <label className="mt-4 block text-xs font-medium text-zinc-600">
               Clock in
               <input

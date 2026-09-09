@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "test:timecards": "node --import ./tests/resolve-local.mjs --test tests/timecard-review.test.mjs",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",

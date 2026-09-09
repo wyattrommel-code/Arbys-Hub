@@ -17,6 +17,7 @@ jobs:
           cache: "npm"
       - run: npm ci --ignore-scripts
       - run: npm run test:security
+      - run: npm run test:timecards
       - run: npm run test:security:http
       - run: npm run build
         env:
