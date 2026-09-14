@@ -65,6 +65,7 @@ test("database blocks public access, duplicate syncs, stale writes and sandbox p
   await db.exec("create role anon; create role authenticated; create role service_role bypassrls; grant usage on schema public to anon,authenticated,service_role; create table public.hourly_sales(sale_date date,hour_of_day int,net_sales numeric,updated_at timestamptz,primary key(sale_date,hour_of_day)); grant all on public.hourly_sales to service_role;");
   await db.exec(await readFile(new URL("../supabase/migrations/20260909211242_brink_sales_sync.sql", import.meta.url), "utf8"));
   await db.exec(await readFile(new URL("../supabase/migrations/20260909215645_brink_api_call_log.sql", import.meta.url), "utf8"));
+  await db.exec(await readFile(new URL("../supabase/migrations/20260914172749_brink_sync_diagnostics.sql", import.meta.url), "utf8"));
   for (const role of ["anon", "authenticated"]) {
     await db.exec(`set role ${role}`);
     await assert.rejects(db.exec("select * from public.brink_sales_days"), /permission denied/);

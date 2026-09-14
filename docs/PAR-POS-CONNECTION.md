@@ -37,7 +37,7 @@ Transport: HTTPS POST, SOAP 1.1. Configured sandbox endpoint: `https://api-apiin
 
 GetOrders SOAPAction: `http://www.brinksoftware.com/webservices/sales/v2/ISalesWebService2/GetOrders`.
 
-AccessToken and LocationToken are sent only as server-to-server HTTP headers. They are excluded from this package and from the call log. Credentials and the assigned host are configurable in Vercel environment settings. Requests reject redirects; hosts are limited to supported PAR domains and checked against sandbox/production mode. Request timeout is 45 seconds; maximum response body is 20 MiB. There are no immediate retry loops.
+AccessToken and LocationToken are sent only as server-to-server HTTP headers. They are excluded from this package and from the call log. Credentials and the assigned host are configurable in Vercel environment settings. Requests reject redirects; hosts are limited to supported PAR domains and checked against sandbox/production mode. The scheduled PAR request has a maximum 30-second timeout, reduced if earlier database work consumes its budget; maximum response body is 20 MiB. PAR requests are never retried within the same run.
 
 ## Automatic scheduling
 
@@ -64,6 +64,16 @@ Response evidence is parsed, allowlisted, and regenerated as namespace-normalize
 If execution ends unexpectedly after sending a request, its pre-existing “started” record remains visible as incomplete; daily maintenance marks requests older than five minutes as incomplete errors. Logging failures before the request stop the outbound call. A failure to finish logging after sales persistence can leave an error/incomplete log even when the snapshot was saved; compare the snapshot timestamp and call ID when investigating.
 
 Only current GMs may view/export logs or change automatic-sync settings. Public/employee database access is revoked and RLS enabled. The general Hub data endpoint does not expose these tables. The scheduler has a bearer-secret gate; cookies alone cannot invoke it. State-changing UI endpoints enforce same-origin requests.
+
+### Database recovery (integration version 2026-09-14.1)
+
+Transient database transport/time-out errors are retried at most twice, with 250/500 ms backoff. Each database request has at most six seconds, and normal automatic work shares a 45-second deadline. PAR receives at most 30 seconds while reserving 15 seconds for persistence. Failure finalization gets a separate seven-second budget, keeping intended server work below the 55-second scheduler and 60-second host limits. The SDK's independent retry loop is disabled for these operations.
+
+Each retry reuses the same attempt ID. Lost claim responses are accepted only after verifying ownership of that ID; another run's cooldown remains enforced. Intent insertion and snapshot replacement are idempotent. Automatic success returns the saved summary directly, avoiding additional full-day reads after successful persistence.
+
+Call details and JSON exports include integration version and database diagnostics (known step, safe error code, HTTP status, error category, attempt). Arbitrary database error text is excluded because it can contain sensitive values. A recovered run is successful with its retry evidence retained. Persistent failures remain errors. Historical records are not rewritten. Scheduler failures before a PAR intent record remain available in scheduler HTTP results and deployment runtime logs; they must also be checked during validation.
+
+Local regression tests simulate lost responses after committed writes, persistent failures, denied logging, another attempt's claim, and nonzero PAR result codes. A clean live observation window is still required; passing tests or a short clean period cannot guarantee that external services will never fail.
 
 ## Operations, limits, and approval questions
 

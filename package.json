@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "test:brink": "node --import ./tests/resolve-local.mjs --test tests/brink.test.mjs",
+    "test:brink": "node --import ./tests/resolve-local.mjs --test tests/brink.test.mjs tests/brink-storage.test.mjs tests/brink-sync.test.mjs",
     "test:timecards": "node --import ./tests/resolve-local.mjs --test tests/timecard-review.test.mjs",
     "dev": "next dev",
     "build": "next build",
