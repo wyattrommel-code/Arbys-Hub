@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getSupabase } from "@/lib/supabase";
+import { linkItemCosts } from "@/lib/cogs";
 
 const DAILY_CATEGORY_ORDER = [
   "Protein",
@@ -160,7 +161,7 @@ export default function InventoryPage() {
           return;
         }
 
-        const rows = data ?? [];
+        let rows = data ?? [];
         if (rows.length === 0) {
           setLoadState({
             status: "empty",
@@ -170,6 +171,21 @@ export default function InventoryPage() {
           return;
         }
 
+        if (rows.length) {
+          try {
+            const params = new URLSearchParams();
+            params.set("kind", "inventory");
+            rows.forEach((item) => params.append("item", String(item.id)));
+            const response = await fetch(`/api/cogs/costs?${params}`, { cache: "no-store" });
+            if (response.ok) {
+              const body = await response.json();
+              rows = linkItemCosts(rows, body.costs || [], "inventory", body.mappings || []);
+            }
+          } catch {
+            // Cost-master availability must never erase configured manual costs.
+          }
+        }
+        if (cancelled) return;
         setItems(rows);
         setLoadState({ status: "ready", message: "" });
       } catch (e) {
@@ -506,6 +522,7 @@ export default function InventoryPage() {
                           <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
                             {item.bag_description || " "}
                           </p>
+                          {item.cost_source ? <p className="mt-1 text-[11px] text-emerald-700 dark:text-emerald-400">Cost: {item.cost_source} · SKU {item.cost_sku} · per {item.cost_purchase_uom}{item.cost_as_of ? ` · observed ${String(item.cost_as_of).slice(0, 10)}` : ""}</p> : null}
                           <div className="mt-3 flex items-end gap-2">
                             <label className="min-w-0 flex-1 text-xs text-zinc-500 dark:text-zinc-400">
                               Cases
@@ -559,6 +576,7 @@ export default function InventoryPage() {
                         <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
                           {name}
                         </p>
+                        {item.cost_source ? <p className="mt-1 text-[11px] text-emerald-700 dark:text-emerald-400">Cost: {item.cost_source} · SKU {item.cost_sku} · per {item.cost_purchase_uom}{item.cost_as_of ? ` · observed ${String(item.cost_as_of).slice(0, 10)}` : ""}</p> : null}
                         <div className="mt-3 flex items-end gap-2">
                           <label className="min-w-0 flex-1 text-xs text-zinc-500 dark:text-zinc-400">
                             Full Cases

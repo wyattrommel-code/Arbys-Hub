@@ -9,6 +9,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "cogs:import": "node scripts/import-mclane-cogs.mjs",
+    "cogs:report": "node scripts/import-mclane-cogs.mjs --dry-run",
+    "test:cogs": "node --import ./tests/resolve-local.mjs --test tests/cogs.test.mjs tests/cogs-dashboard.test.mjs tests/cogs-database.test.mjs tests/cogs-cli.test.mjs",
     "test:security": "node --import ./tests/resolve-local.mjs --test tests/security.test.mjs tests/security-database.test.mjs",
     "test:security:http": "node --import ./tests/resolve-local.mjs --test tests/security-http.test.mjs"
   },

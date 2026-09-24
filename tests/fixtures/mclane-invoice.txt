@@ -1,0 +1,20 @@
+ S  292855 (0007462) Page 1 INVOICE NUMBER 12345678 RI INVOICE DATE 09/01/26
+ H ARBYS #0007462 ORDER NUMBER 1 DUE DATE 09/08/26
+ CUSTOMER 292855 ROUTE/STOP 1
+ DELIVERY DATE 09/01/26
+ Quantity INV SORT
+ Ord Shp UM I Item # Item Description
+   2   2 CA   111111   TEST FOOD CASE                    1/10 CT      10.00      20.00
+                                                        71011 FOOD
+   1   1 CA   232409   TEST CATCH WEIGHT                 1/10 LB      3.0000     30.00
+                                                        71011 FOOD
+                 10.00
+   1   1 CA   222222   TEST PAPER                        100 CT       5.00        5.00
+                                                        72021 PAPER
+       1 EA   089036   Prompt Pay Terms                               2.00-       2.00-
+                                                        73031 MISC. EXPENSES
+ ****** Customer Account Summary ****** *** Tax *** *** Total ***
+ 71011 FOOD                                               50.00                   50.00
+ 72021 PAPER                                               5.00                    5.00
+ 73031 MISC. EXPENSES                                      2.00-                   2.00-
+ Account Totals                                           53.00       .00         53.00

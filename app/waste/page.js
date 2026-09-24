@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import MultiRowVariantCard from "@/components/waste/MultiRowVariantCard";
 import { getSupabase } from "@/lib/supabase";
+import { linkItemCosts } from "@/lib/cogs";
 import {
   createSandwichRow,
   isMultiRowSandwichItem,
@@ -129,7 +130,7 @@ export default function WastePage() {
           return;
         }
 
-        const rows = data ?? [];
+        let rows = data ?? [];
         if (rows.length === 0) {
           setLoadState({
             status: "empty",
@@ -140,6 +141,21 @@ export default function WastePage() {
           return;
         }
 
+        if (rows.length) {
+          try {
+            const params = new URLSearchParams();
+            params.set("kind", "waste");
+            rows.forEach((item) => params.append("item", String(item.id)));
+            const response = await fetch(`/api/cogs/costs?${params}`, { cache: "no-store" });
+            if (response.ok) {
+              const body = await response.json();
+              rows = linkItemCosts(rows, body.costs || [], "waste", body.mappings || []);
+            }
+          } catch {
+            // Cost-master availability must never erase configured manual costs.
+          }
+        }
+        if (cancelled) return;
         setItems(rows);
         setSandwichRowsByItem(buildInitialSandwichRows(rows));
         setLoadState({ status: "ready", message: "" });
@@ -339,6 +355,7 @@ export default function WastePage() {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div className="min-w-0 flex-1 space-y-2">
             <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{label}</p>
+            {item.cost_source ? <p className="text-[11px] text-emerald-700 dark:text-emerald-400">Cost: {item.cost_source} · SKU {item.cost_sku} · {item.cost_purchase_uom} basis{item.cost_as_of ? ` · observed ${String(item.cost_as_of).slice(0, 10)}` : ""}</p> : null}
             <input
               type="number"
               min={0}
