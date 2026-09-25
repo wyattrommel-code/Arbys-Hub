@@ -25,6 +25,7 @@ function database({ lose = [], failIntent = false, occupied = false } = {}) {
       update(value) { method = "update"; payload = structuredClone(value); return q; },
       upsert(value) { method = "upsert"; payload = structuredClone(value); return q; },
       eq(key, value) { filters[key] = value; return q; },
+      order() { return q; }, limit() { return q; },
       maybeSingle() { return q; }, retry(value) { assert.equal(value, false); return q; },
       abortSignal() { return q; },
       then(resolve, reject) {
@@ -38,6 +39,8 @@ function database({ lose = [], failIntent = false, occupied = false } = {}) {
             if (data) snapshots.set(args.p_date, args.p_orders);
           } else if (table === "brink_sync_state" && method === "select") {
             stage = "check-claim"; data = { ...state };
+          } else if (table === "brink_api_calls" && method === "select") {
+            stage = "read-employee-directory"; data = [];
           } else if (table === "brink_api_calls" && method === "upsert") {
             stage = "log-intent";
             if (failIntent) return resolve({ error: { code: "42501" }, status: 403 });
@@ -66,9 +69,11 @@ function setup(t, options = {}, parCode = 0) {
   Object.assign(process.env, { BRINK_ACCESS_TOKEN: "synthetic-access", BRINK_LOCATION_TOKEN: "synthetic-location", BRINK_ENVIRONMENT: "sandbox", BRINK_API_HOST: "api-apiint.brinkpos.net", BRINK_PUBLISH_HOURLY_SALES: "false" });
   const db = database(options); globalThis.brinkTestDb = db;
   let parCalls = 0;
-  globalThis.fetch = async () => {
+  globalThis.fetch = async (url) => {
     parCalls++;
-    return new Response(`<Envelope><Body><GetOrdersResponse><GetOrdersResult><ResultCode>${parCode}</ResultCode><Message>Register unavailable; AccessToken=synthetic-access</Message><Orders></Orders></GetOrdersResult></GetOrdersResponse></Body></Envelope>`);
+    if (url.endsWith('/Settings2.svc')) return new Response(`<Envelope><Body><GetEmployeesResponse><GetEmployeesResult><ResultCode>${options.employeeDenied ? '4' : '0'}</ResultCode><Collection><Employee><Id>42</Id><DisplayName>Test Employee</DisplayName><Pin>private-pin</Pin></Employee></Collection></GetEmployeesResult></GetEmployeesResponse></Body></Envelope>`);
+    const order = options.withOrder ? `<Order><Id>123</Id><Number>100</Number><BusinessDate>${date}</BusinessDate><IsClosed>true</IsClosed><EmployeeId>42</EmployeeId><OpenedTime>${date}T16:00:00Z</OpenedTime><Subtotal>5</Subtotal><NetSales>5</NetSales><Tax>0</Tax><Total>5</Total><Entries/></Order>` : '';
+    return new Response(`<Envelope><Body><GetOrdersResponse><GetOrdersResult><ResultCode>${parCode}</ResultCode><Message>Register unavailable; AccessToken=synthetic-access</Message><Orders>${order}</Orders></GetOrdersResult></GetOrdersResponse></Body></Envelope>`);
   };
   t.after(() => { globalThis.fetch = oldFetch; process.env = oldEnv; delete globalThis.brinkTestDb; });
   return { db, count: () => parCalls, session: storageSession({ report() {}, sleep: async () => {} }) };
@@ -105,4 +110,22 @@ test("a PAR result-code error is preserved and is never retried or saved as zero
   assert.match(row.response_xml, /<Message>/);
   assert.equal(db.state.last_error, row.error);
   assert.ok(!JSON.stringify(row).includes('synthetic-access'));
+});
+
+test("successful identity enrichment is persisted and logged separately from sales", async t => {
+  const { db, count, session } = setup(t, { withOrder: true });
+  await syncBrink(date, 'automatic', { session, snapshotOnly: true });
+  assert.equal(count(), 2); assert.equal(db.calls.size, 2);
+  assert.equal(db.snapshots.get(date)[0].employee_name, 'Test Employee');
+  assert.ok(!JSON.stringify([...db.calls.values()]).includes('private-pin'));
+  assert.equal([...db.calls.values()].filter(c => c.status === 'success').length, 2);
+});
+
+test("employee permission failure leaves sales successful with IDs and a separate failed call", async t => {
+  const { db, session } = setup(t, { withOrder: true, employeeDenied: true });
+  const result = await syncBrink(date, 'automatic', { session, snapshotOnly: true });
+  assert.equal(result.day.summary.net_sales, 5);
+  assert.equal(db.snapshots.get(date)[0].employee_id, '42');
+  assert.equal(db.snapshots.get(date)[0].employee_name, null);
+  assert.equal([...db.calls.values()].filter(c => c.status === 'error').length, 1);
 });

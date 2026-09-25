@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { getStoreToday, formatStoreDateTime } from "@/lib/store-time";
 import BrinkCallLog from "./BrinkCallLog";
+import BrinkOrderDetails from "./BrinkOrderDetails";
 const dollars = (value) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value || 0);
 export default function BrinkSalesImport() {
   const [date, setDate] = useState(getStoreToday);
@@ -41,7 +42,6 @@ export default function BrinkSalesImport() {
     } catch (err) { setError(err.message || "Could not change automatic sync."); }
     finally { setBusy(false); }
   }
-  const orders = data?.day?.orders?.filter((o) => o.items.length || o.total !== 0) || [];
   return <section className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm sm:p-5">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <h3 className="text-base font-bold text-[#C8102E]">PAR POS · Connected Sales</h3>
@@ -63,7 +63,7 @@ export default function BrinkSalesImport() {
     {data?.day ? <>
       <p className="mt-4 font-semibold">{data.day.summary.closed_orders} closed orders · Net sales {dollars(data.day.summary.net_sales)} · Tax {dollars(data.day.summary.tax)} · Total {dollars(data.day.summary.total)}</p>
       <p className="mt-1 text-xs text-gray-500">{data.day.summary.open_orders} open orders (excluded from totals). Snapshot: {formatStoreDateTime(data.day.synced_at)}</p>
-      <div className="mt-3 max-h-96 overflow-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b text-gray-500"><th className="py-2 pr-3">Order</th><th className="pr-3">Items</th><th className="pr-3">Status</th><th className="text-right">Total</th></tr></thead><tbody>{orders.map((order) => <tr key={order.id} className="border-b"><td className="py-3 pr-3">#{order.number}</td><td className="pr-3">{order.items.map((item) => `${item.description}${item.voided || item.deleted || item.cleared ? " (removed)" : ""}`).join(", ")}</td><td className="pr-3">{order.refund ? "Refund" : order.closed ? "Closed" : "Open"}</td><td className="text-right">{dollars(order.total)}</td></tr>)}</tbody></table></div>
+      <BrinkOrderDetails key={date} orders={data.day.orders || []} date={date} />
     </> : data?.configured && <p className="mt-4 text-sm text-gray-500">No saved API sales for this date yet. Automatic sync reads the current business day; older dates can be imported below.</p>}
     <details className="mt-4 text-sm"><summary className="cursor-pointer text-gray-600">Historical import / manual recovery</summary><button type="button" disabled={busy || !data?.configured} onClick={sync} className="mt-2 rounded border border-gray-300 px-3 py-2 disabled:opacity-50">Import selected date</button></details>
     {data?.configured && <BrinkCallLog key={date} date={date} />}
