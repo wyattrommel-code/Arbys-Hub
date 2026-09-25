@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { brinkConfig, fetchOrders, parseOrders, summarizeOrders, validBusinessDate, validCronSecret } from "../lib/brink.js";
 import { responseEvidence, ordersRequest, parDiagnostic, redactParMessage } from "../lib/brink-evidence.js";
+import { brinkOrderExport, orderMatches } from "../lib/brink-order-data.js";
 
 const env = { BRINK_ACCESS_TOKEN: "synthetic-access", BRINK_LOCATION_TOKEN: "synthetic-location" };
 const order = (extra = "", id = "9007199254740999") => `<Order><Id>${id}</Id><Number>100</Number><BusinessDate>2026-09-09T00:00:00</BusinessDate><IsClosed>true</IsClosed><IsRefund>false</IsRefund><OpenedTime>2026-09-09T18:28:26.0352606Z0</OpenedTime><ClosedTime>2026-09-09T18:28:41Z</ClosedTime><EmployeeId>42</EmployeeId><TerminalId>1</TerminalId><Subtotal>5.49</Subtotal><NetSales>5.49</NetSales><Tax>0.46</Tax><Total>5.95</Total><Entries><OrderEntry><Id>1</Id><ItemId>5</ItemId><Description>BnC Classic &amp; cheese</Description><Price>5.49</Price><NetSales>5.49</NetSales></OrderEntry></Entries>${extra}</Order>`;
@@ -29,6 +30,39 @@ test("SOAP parsing preserves long IDs, normalizes PAR timestamps, strips payment
   assert.equal(summary.closed_orders, 1); assert.equal(summary.total, 5.95);
   assert.equal(summary.hourly[12].net_sales, 5.49);
   assert.equal(summary.hourly.reduce((s, h) => s + h.net_sales, 0), 5.49);
+});
+
+test("offers, allocations, combo links and recursive modifiers survive without sensitive payloads", () => {
+  const extra = '<Discounts><OrderDiscount><Id>7</Id><DiscountId>80</DiscountId><Name>Senior 10%</Name><Amount>0.99</Amount><EmployeeId>42</EmployeeId><ApproverEmployeeId>43</ApproverEmployeeId><ExternalLoyaltyAccount>private-loyalty</ExternalLoyaltyAccount></OrderDiscount></Discounts><Promotions><OrderPromotion><Id>8</Id><PromotionId>90</PromotionId><Name>Lunch offer</Name><Amount>1.00</Amount></OrderPromotion></Promotions><Name>private-customer</Name>';
+  const itemExtra = '<CompositeOrderItemId>6</CompositeOrderItemId><Denominator>2</Denominator><ItemNetSales>4.50</ItemNetSales><Discounts><OrderItemDiscount><Id>0</Id><OrderDiscountId>7</OrderDiscountId><Amount>0.99</Amount></OrderItemDiscount></Discounts><Promotions><OrderEntryPromotion><Id>1</Id><OrderPromotionId>8</OrderPromotionId><Amount>1</Amount></OrderEntryPromotion></Promotions><Modifiers><OrderItemModifier><Id>2</Id><ItemId>101</ItemId><ModifierCodeId>3</ModifierCodeId><Modifiers><OrderItemModifier><Id>3</Id><ItemId>102</ItemId><Modifiers/></OrderItemModifier></Modifiers><Note>private-note</Note></OrderItemModifier></Modifiers>';
+  const xml = soap(order(extra).replace('</OrderEntry>', `${itemExtra}</OrderEntry>`));
+  const [o] = parseOrders(xml, '2026-09-09');
+  assert.equal(o.details_version, 2); assert.equal(o.discounts[0].name, 'Senior 10%');
+  assert.equal(o.discounts[0].approver_employee_id, '43'); assert.equal(o.promotions[0].amount, 1);
+  assert.equal(o.items[0].composite_order_item_id, '6'); assert.equal(o.items[0].split_denominator, 2);
+  assert.equal(o.items[0].discounts[0].order_adjustment_id, '7'); assert.equal(o.items[0].promotions[0].order_adjustment_id, '8');
+  assert.equal(o.items[0].modifiers[0].modifiers[0].item_id, '102');
+  assert.equal(summarizeOrders([o]).net_sales, 5.49, 'never subtract retained adjustments a second time');
+  assert.ok(!JSON.stringify(o).includes('private-'));
+  const evidence = responseEvidence(xml);
+  assert.ok(evidence.response_xml.includes('<Name>Senior 10%</Name>'));
+  assert.ok(evidence.response_xml.includes('<Name>Lunch offer</Name>'));
+  assert.ok(!evidence.response_xml.includes('private-'));
+  assert.equal(orderMatches(o, 'senior'), true); assert.equal(orderMatches(o, '42'), true);
+});
+
+test("missing detail collections remain unknown and malformed details preserve the previous snapshot", () => {
+  const [missing] = parseOrders(soap(order()), '2026-09-09');
+  assert.equal(missing.discounts, null); assert.equal(missing.items[0].modifiers, null);
+  const [empty] = parseOrders(soap(order('<Discounts/><Promotions/>')), '2026-09-09');
+  assert.deepEqual(empty.discounts, []);
+  for (const extra of ['<Discounts><Unexpected/></Discounts>', '<Discounts><OrderDiscount><Amount>bad</Amount></OrderDiscount></Discounts>']) {
+    assert.throws(() => parseOrders(soap(order(extra)), '2026-09-09'));
+  }
+  const legacy = { ...missing }; delete legacy.details_version; delete legacy.discounts;
+  const exported = brinkOrderExport({ environment: 'sandbox', label: 'Lab', business_date: '2026-09-09', day: { orders: [legacy] } });
+  assert.equal(exported.orders[0].details_version, 1); assert.equal(exported.orders[0].discounts, null);
+  assert.equal(exported.environment, 'sandbox'); assert.equal(exported.schema, 'brink.orders.v2');
 });
 test("open orders, refunds and empty collections have correct totals", () => {
   const closed = parseOrders(soap(order()), "2026-09-09")[0];
