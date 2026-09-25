@@ -68,7 +68,7 @@ function setup(t, options = {}, parCode = 0) {
   let parCalls = 0;
   globalThis.fetch = async () => {
     parCalls++;
-    return new Response(`<Envelope><Body><GetOrdersResponse><GetOrdersResult><ResultCode>${parCode}</ResultCode><Orders></Orders></GetOrdersResult></GetOrdersResponse></Body></Envelope>`);
+    return new Response(`<Envelope><Body><GetOrdersResponse><GetOrdersResult><ResultCode>${parCode}</ResultCode><Message>Register unavailable; AccessToken=synthetic-access</Message><Orders></Orders></GetOrdersResult></GetOrdersResponse></Body></Envelope>`);
   };
   t.after(() => { globalThis.fetch = oldFetch; process.env = oldEnv; delete globalThis.brinkTestDb; });
   return { db, count: () => parCalls, session: storageSession({ report() {}, sleep: async () => {} }) };
@@ -101,4 +101,8 @@ test("a PAR result-code error is preserved and is never retried or saved as zero
   assert.equal(count(), 1); assert.equal(db.snapshots.size, 0);
   const row = [...db.calls.values()][0];
   assert.equal(row.status, "error"); assert.equal(row.http_status, 200); assert.equal(row.result_code, "1");
+  assert.match(row.error, /PAR message \(redacted\): Register unavailable/);
+  assert.match(row.response_xml, /<Message>/);
+  assert.equal(db.state.last_error, row.error);
+  assert.ok(!JSON.stringify(row).includes('synthetic-access'));
 });

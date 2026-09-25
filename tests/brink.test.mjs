@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { brinkConfig, fetchOrders, parseOrders, summarizeOrders, validBusinessDate, validCronSecret } from "../lib/brink.js";
-import { responseEvidence, ordersRequest } from "../lib/brink-evidence.js";
+import { responseEvidence, ordersRequest, parDiagnostic, redactParMessage } from "../lib/brink-evidence.js";
 
 const env = { BRINK_ACCESS_TOKEN: "synthetic-access", BRINK_LOCATION_TOKEN: "synthetic-location" };
 const order = (extra = "", id = "9007199254740999") => `<Order><Id>${id}</Id><Number>100</Number><BusinessDate>2026-09-09T00:00:00</BusinessDate><IsClosed>true</IsClosed><IsRefund>false</IsRefund><OpenedTime>2026-09-09T18:28:26.0352606Z0</OpenedTime><ClosedTime>2026-09-09T18:28:41Z</ClosedTime><EmployeeId>42</EmployeeId><TerminalId>1</TerminalId><Subtotal>5.49</Subtotal><NetSales>5.49</NetSales><Tax>0.46</Tax><Total>5.95</Total><Entries><OrderEntry><Id>1</Id><ItemId>5</ItemId><Description>BnC Classic &amp; cheese</Description><Price>5.49</Price><NetSales>5.49</NetSales></OrderEntry></Entries>${extra}</Order>`;
@@ -104,7 +104,7 @@ test("call evidence preserves useful XML but excludes credentials and customer/p
   assert.equal(responseEvidence('<!DOCTYPE x>' + xml).response_xml, null);
   const large = responseEvidence(soap(order().replace('BnC Classic', 'x'.repeat(70000))));
   assert.equal(large.response_truncated, true);
-  assert.ok(large.response_xml.length < 200);
+  assert.ok(large.response_xml.length < 300);
 });
 test("PAR errors retain HTTP and result evidence even when parsing fails", async () => {
   const evidence = {};
@@ -112,5 +112,55 @@ test("PAR errors retain HTTP and result evidence even when parsing fails", async
   assert.equal(evidence.http_status,200); assert.equal(evidence.result_code,'4');
   const httpError = {};
   await assert.rejects(fetchOrders(brinkConfig(env),'2026-09-09',async () => new Response('secret upstream message',{status:500}),httpError));
-  assert.equal(httpError.http_status,500); assert.equal(httpError.response_xml,undefined);
+  assert.equal(httpError.http_status,500); assert.equal(httpError.response_xml,null);
+});
+
+test("result-code 1 retains a bounded, redacted PAR explanation without nested messages", async () => {
+  const message = 'Unable to load business date 2026-09-24. AccessToken=synthetic-access; LocationToken=synthetic-location; customer@example.com; 4111 1111 1111 1111';
+  const xml = soap('', 1).replace('<Orders>', `<Message>${message}</Message><Orders>`);
+  const evidence = {};
+  await assert.rejects(fetchOrders(brinkConfig(env), '2026-09-24', async () => new Response(xml), evidence), e => {
+    assert.match(e.message, /PAR message \(redacted\): Unable to load business date 2026-09-24/);
+    for (const secret of ['synthetic-access', 'synthetic-location', 'customer@example.com', '4111']) assert.ok(!e.message.includes(secret));
+    return true;
+  });
+  assert.equal(evidence.result_code, '1');
+  assert.match(parDiagnostic(evidence.response_xml), /Unable to load/);
+  const nested = responseEvidence(soap('<Order><Message>nested-private-text</Message></Order>', 1).replace('<Orders>', '<Message><CustomerName>private-name</CustomerName></Message><Orders>'));
+  assert.ok(!nested.response_xml.includes('private'));
+  assert.equal(parDiagnostic(nested.response_xml), '');
+  assert.equal(parDiagnostic(responseEvidence(soap('', 0).replace('<Orders>', '<Message>success-private-text</Message><Orders>')).response_xml), '');
+});
+
+test("HTTP SOAP faults retain safe fault text but discard detail and non-XML bodies", async () => {
+  const xml = '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><s:Fault><faultcode>s:Server</faultcode><faultstring>Register unavailable. Bearer private-auth; https://example.com/?token=private-query</faultstring><detail><Message>private-detail</Message><Name>private-name</Name></detail></s:Fault></s:Body></s:Envelope>';
+  const evidence = {};
+  await assert.rejects(fetchOrders(brinkConfig(env), '2026-09-24', async () => new Response(xml, { status: 500 }), evidence), e => {
+    assert.match(e.message, /HTTP 500/); assert.match(e.message, /Register unavailable/);
+    return true;
+  });
+  assert.match(evidence.response_xml, /s:Server/);
+  for (const secret of ['private-auth', 'private-query', 'private-detail', 'private-name']) assert.ok(!evidence.response_xml.includes(secret));
+  const html = responseEvidence('<html><body>private-upstream-page</body></html>');
+  assert.equal(html.response_xml, null);
+  const empty = {};
+  await assert.rejects(fetchOrders(brinkConfig(env), '2026-09-24', async () => new Response(null, { status: 503 }), empty), /HTTP 503/);
+  assert.equal(empty.http_status, 503);
+});
+
+test("redaction occurs before truncation and escapes diagnostic text as XML", () => {
+  const secret = 'long-secret&amp-value';
+  const message = 'x'.repeat(990) + ' ' + secret;
+  assert.ok(!redactParMessage(message, [secret]).includes('long-secret'));
+  assert.equal(redactParMessage('x '.repeat(1000)).length, 1012);
+  assert.equal(redactParMessage('private '.repeat(3000)), '[PAR message omitted: exceeds 16 KiB safety limit]');
+  const xml = soap('', 1).replace('<Orders>', '<Message><![CDATA[Failure & retry. <script>alert(1)</script> "Jane Doe" {"password":"hidden"}]]></Message><Orders>');
+  const evidence = responseEvidence(xml);
+  assert.match(evidence.response_xml, /Failure &amp; retry/);
+  for (const secret of ['alert(1)', 'Jane Doe', 'hidden']) assert.ok(!evidence.response_xml.includes(secret));
+  const encoded = responseEvidence(soap('', 1).replace('<Orders>', '<Message>Failed synthetic&amp;secret</Message><Orders>'), ['synthetic&secret']);
+  assert.ok(!encoded.response_xml.includes('secret'));
+  const oversized = responseEvidence(soap(order().replace('BnC Classic', 'x'.repeat(70000)), 1).replace('<Orders>', '<Message>Register unavailable</Message><Orders>'));
+  assert.equal(oversized.response_truncated, true);
+  assert.equal(parDiagnostic(oversized.response_xml), 'Register unavailable');
 });
