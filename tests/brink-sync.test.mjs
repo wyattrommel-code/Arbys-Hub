@@ -66,7 +66,7 @@ function database({ lose = [], failIntent = false, occupied = false } = {}) {
 function setup(t, options = {}, parCode = 0) {
   const oldFetch = globalThis.fetch;
   const oldEnv = { ...process.env };
-  Object.assign(process.env, { BRINK_ACCESS_TOKEN: "synthetic-access", BRINK_LOCATION_TOKEN: "synthetic-location", BRINK_ENVIRONMENT: "sandbox", BRINK_API_HOST: "api-apiint.brinkpos.net", BRINK_PUBLISH_HOURLY_SALES: "false" });
+  Object.assign(process.env, { BRINK_ACCESS_TOKEN: "synthetic-access", BRINK_LOCATION_TOKEN: "synthetic-location", BRINK_ENVIRONMENT: "sandbox", BRINK_API_HOST: "api-apiint.brinkpos.net", BRINK_PUBLISH_HOURLY_SALES: "false", BRINK_EMPLOYEE_LOOKUP_ENABLED: options.employeeLookupOff ? "false" : "true" });
   const db = database(options); globalThis.brinkTestDb = db;
   let parCalls = 0;
   globalThis.fetch = async (url) => {
@@ -128,4 +128,12 @@ test("employee permission failure leaves sales successful with IDs and a separat
   assert.equal(db.snapshots.get(date)[0].employee_id, '42');
   assert.equal(db.snapshots.get(date)[0].employee_name, null);
   assert.equal([...db.calls.values()].filter(c => c.status === 'error').length, 1);
+});
+
+test("disabled employee lookup makes no Settings2 request and retains detailed sales", async t => {
+  const { db, count, session } = setup(t, { withOrder: true, employeeLookupOff: true });
+  await syncBrink(date, 'automatic', { session, snapshotOnly: true });
+  assert.equal(count(), 1); assert.equal(db.calls.size, 1);
+  assert.equal(db.snapshots.get(date)[0].employee_id, '42');
+  assert.equal(db.snapshots.get(date)[0].details_version, 2);
 });

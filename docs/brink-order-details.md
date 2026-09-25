@@ -1,6 +1,6 @@
 # Detailed PAR sales data
 
-Version 2026-09-25.2 extends the existing private sales snapshot and manager-only
+Version 2026-09-25.3 extends the existing private sales snapshot and manager-only
 Import page. No migration, new paid service, inventory deduction, or AI provider
 is enabled by this change. Sandbox snapshots remain separate from store totals.
 
@@ -27,7 +27,9 @@ empty collections are []. No guessed coupon codes, item quantities or names.
 Sales2.GetOrders continues every three minutes with the existing shared cooldown
 and atomic snapshot replacement. Its request is unchanged (default price rollup).
 Failed reads still preserve prior sales. A separate read-only Settings2.GetEmployees
-lookup runs, when runtime permits, under that same claim, at most every 12 hours
+lookup is **disabled by default**. Set the server-only `BRINK_EMPLOYEE_LOOKUP_ENABLED=true`
+only after PAR confirms directory access for the configured location. When enabled,
+it runs, when runtime permits, under that same claim, at most every 12 hours
 per connection; a failed/interrupted lookup waits at least one hour before retry.
 It uses header authentication, no redirects, a 5-second HTTP timeout and 4 MiB
 response limit. Logging intent is saved before outbound requests. Names are cached
@@ -66,3 +68,20 @@ Interpretation requirements:
 Sources: [PAR GetOrders](https://developers.partech.com/docs/parpos-cloud-apis/soap/sales2/post/GetOrders),
 [PAR SOAP API reference](https://developers.partech.com/docs/parpos-cloud-apis/soap),
 [Settings2 schema](https://cdn.parpos.com/WSDL/latest/Settings2.xml).
+
+## Live validation, September 25
+
+At 11:03 MDT, GetOrders call `1a1999fc-0f40-45c4-97b7-d7701eea57d9`
+succeeded and saved version 2 details. Four closed orders remained $29.88 net /
+$2.52 tax / $32.40 total. Order 101 returned discount definition 640220905,
+amount $0.99, but an empty Name; its item allocations were $0.45, $0.29 and $0.25.
+Order 103 linked four RB Classic items to the CPN - 4/$10 RB Classic parent.
+Order 102 returned three modifier records. POS employee ID 682778809 was present
+on all four; the user identified that sandbox login as their account.
+
+GetEmployees call `eb8548a7-e7f6-4d7b-8e59-ccf0b6f59520` returned HTTP 200,
+ResultCode 1, Message "Unknown error". The failure is retained in the log and
+did not fail sales import. Automatic directory calls were then gated off pending
+PAR resolution; no name mapping was guessed or hardcoded across locations.
+PAR also needs to confirm how this location supplies discount names (the sales
+response or a separate discount catalog). The item coupon description is available.
