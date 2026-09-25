@@ -29,7 +29,7 @@ export default function BrinkOrderDetails({ orders, date }) {
   const visible = orders.filter(o => o.items.length || o.total !== 0).filter(o => orderMatches(o, query));
   return <div className="mt-4">
     <div className="flex flex-wrap items-end justify-between gap-3">
-      <label className="text-sm font-medium">Find an order<input value={query} onChange={e => setQuery(e.target.value)} placeholder="Order, employee, item or offer" className="mt-1 block w-72 max-w-full rounded border border-gray-300 px-3 py-2" /></label>
+      <label className="text-sm font-medium">Find an order<input value={query} onChange={e => setQuery(e.target.value)} placeholder="Order, employee, item, offer or destination" className="mt-1 block w-80 max-w-full rounded border border-gray-300 px-3 py-2" /></label>
       <a href={`/api/integrations/brink?date=${date}&export=orders`} className="rounded border border-[#C8102E] px-3 py-2 text-sm font-semibold text-[#C8102E]">Download order details (JSON)</a>
     </div>
     <p className="mt-2 text-xs text-gray-500">Employee = the POS account that processed the order. Names use a cached PAR directory; they do not identify the person speaking. Coupon menu items appear with the other items.</p>
@@ -39,6 +39,7 @@ export default function BrinkOrderDetails({ orders, date }) {
       return <details key={order.id} className="rounded-lg border border-gray-200">
         <summary className="cursor-pointer p-3 text-sm">
           <span className="font-bold text-[#C8102E]">#{order.number}</span> · {employee(order.employee_id, order.employee_name)} · {order.refund ? "Refund" : order.closed ? "Closed" : "Open"} · <strong>{dollars(order.total)}</strong>
+          <span className="mt-1 block text-gray-600">Destination: {order.destination_name || (order.destination_id ? `POS destination ${order.destination_id}` : "Not provided")}</span>
           <span className="mt-1 block text-gray-600">{order.items.map(i => `${i.description || `Item ${i.item_id}`}${i.voided || i.deleted || i.cleared ? " (removed)" : ""}`).join(", ")}</span>
           {offerNames.length > 0 && <span className="mt-1 block font-medium">Offers: {offerNames.join(", ")}</span>}
         </summary>

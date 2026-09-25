@@ -69,15 +69,40 @@ function setup(t, options = {}, parCode = 0) {
   Object.assign(process.env, { BRINK_ACCESS_TOKEN: "synthetic-access", BRINK_LOCATION_TOKEN: "synthetic-location", BRINK_ENVIRONMENT: "sandbox", BRINK_API_HOST: "api-apiint.brinkpos.net", BRINK_PUBLISH_HOURLY_SALES: "false", BRINK_EMPLOYEE_LOOKUP_ENABLED: options.employeeLookupOff ? "false" : "true" });
   const db = database(options); globalThis.brinkTestDb = db;
   let parCalls = 0;
-  globalThis.fetch = async (url) => {
+  globalThis.fetch = async (url, init) => {
     parCalls++;
+    if (url.endsWith('/Settings.svc')) {
+      if (options.definitionsDenied) return new Response('<Envelope><Body><Fault><faultstring>Unavailable</faultstring></Fault></Body></Envelope>', {status:503});
+      const op = init.headers.SOAPAction.includes('GetDiscounts') ? 'GetDiscounts' : 'GetDestinations';
+      const entry = op === 'GetDiscounts' ? '<Discount><Id>99</Id><Name>Manager Meal</Name></Discount>' : '<Destination><Id>1</Id><Name>Eat In</Name></Destination>';
+      return new Response(`<Envelope><Body><${op}Response><${op}Result>${entry}</${op}Result></${op}Response></Body></Envelope>`);
+    }
     if (url.endsWith('/Settings2.svc')) return new Response(`<Envelope><Body><GetEmployeesResponse><GetEmployeesResult><ResultCode>${options.employeeDenied ? '4' : '0'}</ResultCode><Collection><Employee><Id>42</Id><DisplayName>Test Employee</DisplayName><Pin>private-pin</Pin></Employee></Collection></GetEmployeesResult></GetEmployeesResponse></Body></Envelope>`);
     const order = options.withOrder ? `<Order><Id>123</Id><Number>100</Number><BusinessDate>${date}</BusinessDate><IsClosed>true</IsClosed><EmployeeId>42</EmployeeId><OpenedTime>${date}T16:00:00Z</OpenedTime><Subtotal>5</Subtotal><NetSales>5</NetSales><Tax>0</Tax><Total>5</Total><Entries/></Order>` : '';
-    return new Response(`<Envelope><Body><GetOrdersResponse><GetOrdersResult><ResultCode>${parCode}</ResultCode><Message>Register unavailable; AccessToken=synthetic-access</Message><Orders>${order}</Orders></GetOrdersResult></GetOrdersResponse></Body></Envelope>`);
+    const enriched = options.definitions ? order.replace('</Order>', '<DestinationId>1</DestinationId><Discounts><OrderDiscount><Id>2</Id><DiscountId>99</DiscountId><Amount>1</Amount></OrderDiscount></Discounts></Order>') : order;
+    return new Response(`<Envelope><Body><GetOrdersResponse><GetOrdersResult><ResultCode>${parCode}</ResultCode><Message>Register unavailable; AccessToken=synthetic-access</Message><Orders>${enriched}</Orders></GetOrdersResult></GetOrdersResponse></Body></Envelope>`);
   };
   t.after(() => { globalThis.fetch = oldFetch; process.env = oldEnv; delete globalThis.brinkTestDb; });
   return { db, count: () => parCalls, session: storageSession({ report() {}, sleep: async () => {} }) };
 }
+
+test('definition enrichment is saved with sales, with separate safe call logs', async t => {
+  const {db,count,session}=setup(t,{withOrder:true,definitions:true,employeeLookupOff:true});
+  await syncBrink(date,'automatic',{session,snapshotOnly:true});
+  assert.equal(count(),3);assert.equal(db.calls.size,3);
+  const order=db.snapshots.get(date)[0];
+  assert.equal(order.destination_name,'Eat In');assert.equal(order.discounts[0].name,'Manager Meal');assert.equal(order.net_sales,5);
+  assert.ok(!JSON.stringify([...db.calls.values()]).includes('synthetic-access'));
+  assert.equal([...db.calls.values()].filter(c=>c.status==='success').length,3);
+});
+test('definition failures never block saving valid sales', async t => {
+  const {db,session}=setup(t,{withOrder:true,definitions:true,definitionsDenied:true,employeeLookupOff:true});
+  await syncBrink(date,'automatic',{session,snapshotOnly:true});
+  assert.equal(db.snapshots.get(date)[0].net_sales,5);
+  assert.equal(db.snapshots.get(date)[0].discounts[0].name,'');
+  assert.equal([...db.calls.values()].filter(c=>c.status==='error').length,2);
+  assert.equal([...db.calls.values()].filter(c=>c.status==='success').length,1);
+});
 test("lost write responses recover without duplicate PAR calls, snapshots or log rows", async t => {
   const { db, count, session } = setup(t, { lose: ["claim-sync", "log-intent", "save-snapshot", "log-success"] });
   const result = await syncBrink(date, "automatic", { session, snapshotOnly: true });
