@@ -10,31 +10,35 @@ function FlashBannerInner() {
   const pathname = usePathname();
   const router = useRouter();
   const flashKey = searchParams.get("flash");
-  const [activeFlash, setActiveFlash] = useState(null);
-  const [visible, setVisible] = useState(false);
+  const [previousKey, setPreviousKey] = useState(flashKey);
+  const [activeFlash, setActiveFlash] = useState(() => flashKey ? { key: flashKey, pathname } : null);
+
+  if (flashKey !== previousKey) {
+    setPreviousKey(flashKey);
+    if (flashKey) setActiveFlash({ key: flashKey, pathname });
+  }
 
   useEffect(() => {
     if (!flashKey) return;
-
-    setActiveFlash(flashKey);
-    setVisible(true);
 
     const params = new URLSearchParams(searchParams.toString());
     params.delete("flash");
     const next = params.toString();
     router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
+  }, [flashKey, pathname, router, searchParams]);
 
+  useEffect(() => {
+    if (!activeFlash) return;
     const timer = setTimeout(() => {
-      setVisible(false);
       setActiveFlash(null);
     }, 5000);
 
     return () => clearTimeout(timer);
-  }, [flashKey, pathname, router, searchParams]);
+  }, [activeFlash]);
 
-  if (!activeFlash || !visible) return null;
+  if (!activeFlash || activeFlash.pathname !== pathname) return null;
 
-  const message = FLASH_MESSAGES[activeFlash] || "Something went wrong.";
+  const message = FLASH_MESSAGES[activeFlash.key] || "Something went wrong.";
 
   return (
     <div

@@ -11,14 +11,15 @@ export default function SessionBadge() {
 
   useEffect(() => {
     if (pathname === "/login" || pathname === "/clock") {
-      setLoading(false);
       return;
     }
+    let cancelled = false;
     fetch("/api/auth/me")
       .then((r) => (r.ok ? r.json() : { employee: null }))
-      .then((data) => setEmployee(data.employee))
-      .catch(() => setEmployee(null))
-      .finally(() => setLoading(false));
+      .then((data) => { if (!cancelled) setEmployee(data.employee); })
+      .catch(() => { if (!cancelled) setEmployee(null); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, [pathname]);
 
   const switchUser = useCallback(async () => {

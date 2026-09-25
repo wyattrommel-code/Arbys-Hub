@@ -1074,7 +1074,7 @@ export default function DashboardPage() {
         currentWeekEnd,
       },
     };
-  }, [reportState]);
+  }, [reportState, reportStart, reportEnd]);
 
   function formatSubmittedAt(iso) {
     const d = new Date(iso);

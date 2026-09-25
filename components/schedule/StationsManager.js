@@ -18,36 +18,36 @@ export default function StationsManager() {
   const [toast, setToast] = useState(null);
   const [form, setForm] = useState({ name: "", color: DEFAULT_COLOR });
   const [editingId, setEditingId] = useState(null);
+  const [refreshVersion, setRefreshVersion] = useState(0);
 
   const showToast = useCallback((message, type = "error") => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 4000);
   }, []);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    const { data, error } = await supabase
-      .from("stations")
-      .select("*")
-      .eq("store_id", SCHEDULE_STORE_ID)
-      .order("name", { ascending: true });
-    if (error) {
-      const fallback = await supabase.from("stations").select("*").order("name", { ascending: true });
-      if (fallback.error) {
-        showToast(error.message || "Could not load stations.");
-        setStations([]);
-      } else {
-        setStations([...(fallback.data || [])].sort(byName));
-      }
-    } else {
-      setStations([...(data || [])].sort(byName));
-    }
-    setLoading(false);
-  }, [showToast, supabase]);
-
   useEffect(() => {
-    load();
-  }, [load]);
+    let cancelled = false;
+    async function fetchStations() {
+      const result = await supabase.from("stations").select("*")
+        .eq("store_id", SCHEDULE_STORE_ID).order("name", { ascending: true });
+      if (!result.error) return result;
+      const fallback = await supabase.from("stations").select("*").order("name", { ascending: true });
+      return fallback.error ? result : fallback;
+    }
+    fetchStations()
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) showToast(error.message || "Could not load stations.");
+        setStations(error ? [] : [...(data || [])].sort(byName));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        showToast("Could not load stations.");
+        setStations([]);
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [showToast, supabase, refreshVersion]);
 
   async function saveStation(event) {
     event.preventDefault();
@@ -73,7 +73,8 @@ export default function StationsManager() {
     setForm({ name: "", color: DEFAULT_COLOR });
     setEditingId(null);
     showToast("Station saved.", "success");
-    load();
+    setLoading(true);
+    setRefreshVersion((version) => version + 1);
   }
 
   async function toggleActive(station) {
@@ -85,7 +86,8 @@ export default function StationsManager() {
       showToast(error.message || "Could not update station.");
       return;
     }
-    load();
+    setLoading(true);
+    setRefreshVersion((version) => version + 1);
   }
 
   return (

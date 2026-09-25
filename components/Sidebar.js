@@ -30,6 +30,7 @@ import {
   subnavStorageKey,
 } from "@/lib/nav";
 import { canAccess } from "@/lib/permissions";
+import { setNavigationPreference, useNavigationPreferences } from "@/lib/navigation-preferences";
 
 const ICONS = {
   home: Home,
@@ -185,7 +186,7 @@ export default function Sidebar({
   const pathname = usePathname();
   const subnavId = useId();
   const [role, setRole] = useState("crew");
-  const [openByHref, setOpenByHref] = useState({});
+  const { openByHref } = useNavigationPreferences(pathname);
 
   useEffect(() => {
     let cancelled = false;
@@ -202,28 +203,9 @@ export default function Sidebar({
     };
   }, []);
 
-  useEffect(() => {
-    const next = {};
-    for (const item of SIDEBAR_NAV) {
-      if (!Array.isArray(item.groups) || !item.groups.length) continue;
-      const stored = window.localStorage.getItem(subnavStorageKey(item.href));
-      if (stored === "0") {
-        next[item.href] = false;
-      } else if (stored === "1") {
-        next[item.href] = true;
-      } else {
-        next[item.href] = pathname === item.href || pathname.startsWith(`${item.href}/`);
-      }
-    }
-    setOpenByHref(next);
-  }, [pathname]);
-
   function toggleGroup(href, nextValue) {
-    setOpenByHref((current) => {
-      const nextOpen = typeof nextValue === "boolean" ? nextValue : !current[href];
-      window.localStorage.setItem(subnavStorageKey(href), nextOpen ? "1" : "0");
-      return { ...current, [href]: nextOpen };
-    });
+    const nextOpen = typeof nextValue === "boolean" ? nextValue : !openByHref[href];
+    setNavigationPreference(subnavStorageKey(href), nextOpen);
   }
 
   const railWidth = collapsed ? "w-16" : "w-60";

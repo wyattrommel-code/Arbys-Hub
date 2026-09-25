@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { MoreVertical } from "lucide-react";
 import { accessTierLabel } from "@/lib/access-tier";
@@ -111,9 +111,8 @@ function ActionsMenu({ emp, statusFilter, open, onToggle, onClose, onEdit, onDea
   const menuRef = useRef(null);
   const [menuStyle, setMenuStyle] = useState(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open || !buttonRef.current) {
-      setMenuStyle(null);
       return;
     }
     function positionMenu() {
