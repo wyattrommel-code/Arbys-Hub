@@ -6,33 +6,27 @@ import AppHeader from "@/components/AppHeader";
 import FlashBanner from "@/components/FlashBanner";
 import Sidebar from "@/components/Sidebar";
 import { RAIL_STORAGE_KEY } from "@/lib/nav";
+import { setNavigationPreference, useNavigationPreferences } from "@/lib/navigation-preferences";
 
 export default function AppShell({ children }) {
   const pathname = usePathname();
   const isKiosk = pathname === "/login" || pathname === "/clock";
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [railCollapsed, setRailCollapsed] = useState(false);
+  const [menuPath, setMenuPath] = useState(pathname);
+  const { railCollapsed } = useNavigationPreferences(pathname);
+
+  // Reset route-specific state before rendering the new page, including Back/Forward.
+  if (menuPath !== pathname) {
+    setMenuPath(pathname);
+    setMobileOpen(false);
+  }
 
   const closeMobile = useCallback(() => setMobileOpen(false), []);
   const toggleMobile = useCallback(() => setMobileOpen((o) => !o), []);
 
-  useEffect(() => {
-    setMobileOpen(false);
-  }, [pathname]);
-
-  useEffect(() => {
-    if (window.localStorage.getItem(RAIL_STORAGE_KEY) === "1") {
-      setRailCollapsed(true);
-    }
-  }, []);
-
   const toggleRail = useCallback(() => {
-    setRailCollapsed((current) => {
-      const next = !current;
-      window.localStorage.setItem(RAIL_STORAGE_KEY, next ? "1" : "0");
-      return next;
-    });
-  }, []);
+    setNavigationPreference(RAIL_STORAGE_KEY, !railCollapsed);
+  }, [railCollapsed]);
 
   useEffect(() => {
     if (isKiosk) return;

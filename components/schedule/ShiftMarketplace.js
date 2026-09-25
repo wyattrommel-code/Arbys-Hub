@@ -120,7 +120,7 @@ export default function ShiftMarketplace({ market, busy, onAction, onCreate }) {
       <section className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
         <h3 className="text-sm font-semibold">Swap a shift</h3>
         <p className="mt-1 text-xs text-zinc-500">
-          Trade one of yours for someone else's. It goes to a manager for approval once both shifts are picked.
+          Trade one of yours for someone else&apos;s. It goes to a manager for approval once both shifts are picked.
         </p>
         {!myShifts.length ? (
           <p className="mt-3 text-sm text-zinc-500">You have no upcoming published shifts to swap.</p>
@@ -213,7 +213,7 @@ export default function ShiftMarketplace({ market, busy, onAction, onCreate }) {
                   <ShiftLine shift={offer.shift} />
                   {offer.target_shift ? (
                     <p className="text-xs text-zinc-500">
-                      For {offer.target_shift.employee_name}'s {offer.target_shift.date_label}{" "}
+                      For {offer.target_shift.employee_name}&apos;s {offer.target_shift.date_label}{" "}
                       {offer.target_shift.start_label}–{offer.target_shift.end_label}
                     </p>
                   ) : null}
