@@ -35,7 +35,7 @@ export default function BrinkOrderDetails({ orders, date }) {
     <p className="mt-2 text-xs text-gray-500">Employee = the POS account that processed the order. Names use a cached PAR directory; they do not identify the person speaking. Coupon menu items appear with the other items.</p>
     <div className="mt-3 space-y-2">{visible.map(order => {
       const parents = new Set(order.items.map(i => i.composite_order_item_id).filter(Boolean));
-      const offerNames = [...(order.discounts || []), ...(order.promotions || [])].map(a => a.name || "Unnamed adjustment");
+      const offerNames = [...(order.discounts || []), ...(order.promotions || [])].map(a => a.name || `Adjustment ID ${a.definition_id || a.id || "not provided"}`);
       return <details key={order.id} className="rounded-lg border border-gray-200">
         <summary className="cursor-pointer p-3 text-sm">
           <span className="font-bold text-[#C8102E]">#{order.number}</span> · {employee(order.employee_id, order.employee_name)} · {order.refund ? "Refund" : order.closed ? "Closed" : "Open"} · <strong>{dollars(order.total)}</strong>
