@@ -1,0 +1,8 @@
+# Generated local outputs must not be uploaded to either Vercel project.
+.next
+.next-clock
+node_modules
+coverage
+.git
+.env*
+!.env.example
