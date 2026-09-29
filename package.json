@@ -14,7 +14,8 @@
     "test:cogs": "node --import ./tests/resolve-local.mjs --test tests/cogs.test.mjs tests/cogs-dashboard.test.mjs tests/cogs-database.test.mjs tests/cogs-cli.test.mjs",
     "test:security": "node --import ./tests/resolve-local.mjs --test tests/security.test.mjs tests/security-database.test.mjs tests/clock-station.test.mjs",
     "test:clock:build": "node --test tests/clock-build.test.mjs",
-    "test:security:http": "node --import ./tests/resolve-local.mjs --test tests/security-http.test.mjs"
+    "test:security:http": "node --import ./tests/resolve-local.mjs --test tests/security-http.test.mjs",
+    "test:clock:corrections": "node --import ./tests/resolve-local.mjs --test tests/clock-corrections.test.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

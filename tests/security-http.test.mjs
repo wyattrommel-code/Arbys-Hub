@@ -55,6 +55,14 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
       if (valid) station = { ...station, device_hash: params.p_device_hash, paired_at: new Date().toISOString(), device_expires_at: new Date(Date.now()+86400000).toISOString(), pairing_hash:null, pairing_expires_at:null };
       res.end(JSON.stringify(!!valid)); return;
     }
+    if (url.pathname === '/rest/v1/rpc/hub_correct_missed_punch') {
+      let body = ''; for await (const part of req) body += part;
+      const params = JSON.parse(body);
+      assert.equal(params.p_employee, ids.gm);
+      assert.equal(params.p_type, 'forgot_clock_in');
+      assert.equal(params.p_claimed, '2026-09-29T15:00:00.000Z');
+      res.end(JSON.stringify({punch:{...punch,clock_out:null,on_break:false}})); return;
+    }
     const idFilter = url.searchParams.get("id");
     const id = idFilter?.startsWith("eq.") ? idFilter.slice(3) : null;
     let data = [];
@@ -110,7 +118,8 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
   assert.equal((await request("/api/integrations/brink/logs?date=bad", gm)).status, 400);
   const range = "?from=2026-09-06&to=2026-09-12";
   const approvePath = `/api/timecards/${punch.id}/approve`;
-  assert.equal((await request(approvePath, crew, "POST", { note: "Forged approval" })).status, 403);
+  const forged = await request(approvePath, crew, "POST", { note: "Forged approval" });
+  assert.equal(forged.status, 403, (await forged.text()).slice(0,500) + log.slice(-5000));
   assert.equal((await request("/api/data/timecard_approvals", gm, "POST", {})).status, 403);
   let cards = await (await request("/api/timecards" + range, gm)).json();
   assert.equal(cards.pending_count, 1, JSON.stringify(cards));
@@ -192,7 +201,7 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
   for(const path of ['/api/data/employees','/api/settings/clock-station','/api/auth/me','/api/station/api/clock/status','/people','/timeclock/timecards','/api/photos/punch-photos/payson/a.jpg']) assert.equal((await clockRequest(path,gm)).status,404,path);
   assert.deepEqual(await (await clockRequest('/api/clock/status',gm)).json(),{paired:false,unlocked:false});
   assert.equal((await clockRequest('/api/clock/unlock',gm,'POST',{pin:'5678'})).status,403);
-  for (const path of ['/api/clock/in','/api/clock/out','/api/clock/identify','/api/clock/break/start','/api/clock/break/end']) assert.equal((await clockRequest(path,gm,'POST',{pin:'5678'})).status,401,path);
+  for (const path of ['/api/clock/corrections','/api/clock/in','/api/clock/out','/api/clock/identify','/api/clock/break/start','/api/clock/break/end']) assert.equal((await clockRequest(path,gm,'POST',{pin:'5678'})).status,401,path);
   assert.equal((await clockRequest('/api/clock/unlock','','POST',{pin:'5678'},'https://attacker.invalid')).status,403);
   const issue = async()=>(await (await request(stationPath,gm,'POST',{action:'issue'})).json()).code;
   const pairingCode=await issue(); assert.ok(pairingCode);
@@ -211,6 +220,16 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
   assert.equal(new Set(rateKeys).size,2); // pairing attempts cannot consume the employee-PIN budget
   assert.deepEqual(await (await clockRequest('/api/clock/status',authorized)).json(),{paired:true,unlocked:true});
   assert.equal((await clockRequest('/api/clock/roster',authorized)).status,200);
+  const missed = {employee_id:ids.gm,pin:'0000',type:'forgot_clock_in',claimed_time:'2026-09-29T09:00',reason:'Missed while busy',punch_id:null,break_id:null};
+  assert.equal((await clockRequest('/api/clock/corrections',authorized,'POST',missed)).status,401);
+  assert.equal((await clockRequest('/api/clock/corrections',authorized,'POST',{...missed,pin:'5678',employee_id:ids.crew})).status,401);
+  assert.equal((await clockRequest('/api/clock/corrections',authorized,'POST',{...missed,pin:'5678'},'https://attacker.invalid')).status,403);
+  assert.equal((await request('/api/clock/corrections',authorized,'POST',{...missed,pin:'5678'})).status,401);
+  assert.equal((await clockRequest('/api/clock/corrections',authorized,'POST',{...missed,type:'delete_punch'})).status,400);
+  const savedMissed = await clockRequest('/api/clock/corrections',authorized,'POST',{...missed,pin:'5678'});
+  assert.equal(savedMissed.status,200,await savedMissed.clone().text());
+  assert.deepEqual(await savedMissed.json(),{ok:true,action:'forgot_clock_in',clocked_in:true,on_break:false});
+  assert.match(savedMissed.headers.get('cache-control'),/no-store/);
   managerActive=false;
   assert.deepEqual(await (await clockRequest('/api/clock/status',authorized)).json(),{paired:true,unlocked:false});
   assert.equal((await clockRequest('/api/clock/roster',authorized)).status,401);

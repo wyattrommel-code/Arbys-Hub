@@ -1,5 +1,7 @@
 "use client";
 
+import { CORRECTION_LABELS } from "@/lib/clock-corrections";
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import EmployeeAvatar from "@/components/EmployeeAvatar";
 import { addDaysISO, getStoreToday, toStoreDateTimeLocal } from "@/lib/store-time";
@@ -400,6 +402,7 @@ export default function TimecardsBoard() {
                       <td className="px-3 py-2 text-zinc-600">{punch.scheduled_label}</td>
                       <td className="px-3 py-2">
                         <div className="mb-2 text-xs">
+                          {punch.corrections?.map(c => <p key={c.id} className="mb-2 text-zinc-700 dark:text-zinc-300">{CORRECTION_LABELS[c.correction_type] || c.correction_type}: {toStoreDateTimeLocal(c.claimed_time).replace("T", " ")} — {c.reason}</p>)}
                           {punch.pending_approval ? <div className="font-semibold text-red-800"><p>⚑ Manager approval required</p>{punch.review_flags.map((flag) => <p key={flag}>{flag}</p>)}</div> : punch.approval ? <div className="text-green-800"><p>Approved by {punch.approval.approved_by_name}</p><p>{toStoreDateTimeLocal(punch.approval.approved_at).replace("T", " ")}</p><p>{punch.approval.note}</p></div> : punch.payroll_ready ? <p className="text-green-800">Cleared for payroll</p> : null}
                         </div>
                         <div className="flex flex-wrap gap-1">
@@ -516,6 +519,7 @@ export default function TimecardsBoard() {
           <p className="text-sm">Scheduled: {approving.scheduled_label}</p>
           <p className="mt-2 font-semibold">{approving.worked_hours_display} recorded hours / {approving.break_minutes} unpaid break minutes</p>
           <ul className="my-3 list-inside list-disc text-sm text-red-800">{approving.review_flags.map((flag) => <li key={flag}>{flag}</li>)}</ul>
+          {approving.corrections?.map(c => <p key={c.id} className="my-2 text-sm">{CORRECTION_LABELS[c.correction_type] || c.correction_type}: {toStoreDateTimeLocal(c.claimed_time).replace("T", " ")} — {c.reason}</p>)}
           <p className="text-sm text-zinc-600">Confirm these hours were worked. Approval clears this timecard for payroll and records your name, time, and note. Later changes require a new review.</p>
           <label className="mt-4 block text-sm font-semibold">Review note<textarea required maxLength={1000} value={approving.note} onChange={(event) => setApproving({ ...approving, note: event.target.value })} className="mt-1 block w-full rounded border border-zinc-300 p-2" /></label>
           {error && <p role="alert" className="mt-2 text-sm text-red-800">{error}</p>}
