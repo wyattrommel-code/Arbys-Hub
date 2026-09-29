@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  distDir: process.env.CLOCK_ONLY === "true" ? ".next-clock" : ".next",
   serverExternalPackages: ["@mediapipe/tasks-vision"],
   async headers() {
     return [{ source: "/:path*", headers: [

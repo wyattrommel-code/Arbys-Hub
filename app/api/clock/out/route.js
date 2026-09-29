@@ -17,10 +17,10 @@ import { isOnBreak, totalBreakMinutes } from "@/lib/break-punches";
 import { getSupabaseServer } from "@/lib/supabase-server";
 
 export async function POST(request) {
-  const pinError = await guardPinAttempt(request);
-  if (pinError) return pinError;
   const kioskError = await requireKiosk();
   if (kioskError) return kioskError;
+  const pinError = await guardPinAttempt(request);
+  if (pinError) return pinError;
   try {
     const { pin, faceDetected, photo, employeeId } = await readPhotoFromRequest(request);
     if (!employeeId) {

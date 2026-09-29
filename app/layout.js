@@ -1,5 +1,6 @@
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { connection } from "next/server";
 import AppShell from "@/components/AppShell";
 
 const geistSans = Geist({
@@ -17,14 +18,16 @@ export const metadata = {
   description: "Store operations",
 };
 
-export default function RootLayout({ children }) {
+export default async function RootLayout({ children }) {
+  // The clock deployment has no Hub credentials and serves only runtime-gated routes.
+  if (process.env.CLOCK_ONLY === "true") await connection();
   return (
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="flex min-h-dvh flex-col bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
-        <AppShell>{children}</AppShell>
+        {process.env.CLOCK_ONLY === "true" ? children : <AppShell>{children}</AppShell>}
       </body>
     </html>
   );

@@ -5,6 +5,8 @@ import {
   verifySessionToken,
 } from "./lib/session";
 
+import { clockRouteAllowed } from "./lib/clock-gateway-policy";
+
 const PUBLIC_PREFIXES = ["/login", "/api/auth", "/api/clock", "/clock"];
 
 function isPublicPath(pathname) {
@@ -13,12 +15,24 @@ function isPublicPath(pathname) {
   );
 }
 
-export async function middleware(request) {
+export async function proxy(request) {
   const { pathname } = request.nextUrl;
   if (pathname.startsWith("/api/") && !["GET", "HEAD", "OPTIONS"].includes(request.method)) {
     if (request.headers.get("origin") !== request.nextUrl.origin) {
       return NextResponse.json({ error: "Invalid origin" }, { status: 403 });
     }
+  }
+  if (process.env.CLOCK_ONLY === "true") {
+    if (pathname === "/clock") return NextResponse.next();
+    if (pathname === "/") {
+      const url = request.nextUrl.clone(); url.pathname = "/clock"; url.search = "";
+      return NextResponse.rewrite(url);
+    }
+    if (clockRouteAllowed(pathname, request.method)) {
+      const url = request.nextUrl.clone(); url.pathname = "/api/station" + pathname; url.search = "";
+      return NextResponse.rewrite(url);
+    }
+    return new NextResponse("Not found", { status: 404, headers: { "Cache-Control": "no-store" } });
   }
   // Every API endpoint authenticates using a live employee lookup. Image access
   // also accepts a separately scoped kiosk cookie for profile photos only.

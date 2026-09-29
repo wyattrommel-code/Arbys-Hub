@@ -5,7 +5,7 @@ export default function TimeClockLayout({ children }) {
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="flex justify-end px-4 pt-3">
         <Link
-          href="/clock"
+          href={process.env.CLOCK_SITE_URL || "/clock"}
           target="_blank"
           rel="noopener noreferrer"
           className="text-xs font-semibold text-[#C8102E] hover:underline"

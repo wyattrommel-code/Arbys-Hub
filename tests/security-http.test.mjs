@@ -7,9 +7,13 @@ import { SESSION_COOKIE } from "../lib/constants.js";
 import { KIOSK_COOKIE_NAME } from "./test-fixtures.mjs";
 
 // Real Next routes against a synthetic HTTP backend. Never uses production env.
-test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses", { timeout: 180000 }, async (t) => {
+test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses", { timeout: 300000 }, async (t) => {
   const ids = { crew: "11111111-1111-4111-8111-111111111111", gm: "22222222-2222-4222-8222-222222222222", inactive: "33333333-3333-4333-8333-333333333333" };
   const calls = [];
+  let station = null;
+  let managerActive = true;
+  const rateKeys = [];
+  const gatewaySecret = 'synthetic-clock-gateway-secret-at-least-32-characters';
   const approvals = [];
   const punch = { id: "44444444-4444-4444-8444-444444444444", employee_id: ids.crew, employee_name: "Synthetic Crew", store_id: "payson", clock_in: "2026-09-09T16:00:00Z", clock_out: "2026-09-09T22:00:00Z", worked_minutes: 360, unscheduled: true };
 
@@ -27,10 +31,34 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
       approvals.push({ ...JSON.parse(body), approved_at: new Date().toISOString() });
       res.statusCode = 201; res.end(); return;
     }
+    if (url.pathname === "/rest/v1/clock_kiosk_stations") {
+      if (req.method === "POST") {
+        let body = ""; for await (const part of req) body += part;
+        station = { ...station, ...JSON.parse(body) }; res.statusCode=201; res.end(); return;
+      }
+      const matching = station && ['device_hash','pairing_hash'].every(field => !url.searchParams.has(field) || url.searchParams.get(field) === `eq.${station[field]}`)
+        && ['device_expires_at','pairing_expires_at'].every(field => !url.searchParams.has(field) || new Date(station[field]) > new Date());
+      res.end(JSON.stringify(matching ? [station] : [])); return;
+    }
+    if (url.pathname === '/rest/v1/rpc/hub_consume_pin_attempt') {
+      let body = ''; for await (const part of req) body += part;
+      rateKeys.push(JSON.parse(body).p_client_key); res.end('true'); return;
+    }
+    if (url.pathname === '/rest/v1/rpc/hub_employee_by_pin') {
+      let body = ''; for await (const part of req) body += part;
+      res.end(JSON.stringify(JSON.parse(body).p_pin === '5678' ? ids.gm : null)); return;
+    }
+    if (url.pathname === '/rest/v1/rpc/hub_pair_clock_station') {
+      let body = ''; for await (const part of req) body += part;
+      const params = JSON.parse(body);
+      const valid = station && station.pairing_hash === params.p_pairing_hash && station.pairing_by === params.p_issuer && new Date(station.pairing_expires_at) > new Date();
+      if (valid) station = { ...station, device_hash: params.p_device_hash, paired_at: new Date().toISOString(), device_expires_at: new Date(Date.now()+86400000).toISOString(), pairing_hash:null, pairing_expires_at:null };
+      res.end(JSON.stringify(!!valid)); return;
+    }
     const idFilter = url.searchParams.get("id");
     const id = idFilter?.startsWith("eq.") ? idFilter.slice(3) : null;
     let data = [];
-    if (url.pathname === "/rest/v1/employees" && id) data = { id, first_name: "Synthetic", last_name: "User", is_active: id !== ids.inactive, status: "active", store_id: "07462", role: id === ids.gm ? "gm" : "crew" };
+    if (url.pathname === "/rest/v1/employees" && id) data = { id, first_name: "Synthetic", last_name: "User", is_active: id !== ids.inactive && (id !== ids.gm || managerActive), status: "active", store_id: "07462", role: id === ids.gm ? "gm" : "crew" };
     else if (url.pathname === "/rest/v1/employee_roles") data = [{ role_id: "r", employee_id: url.searchParams.get("employee_id")?.replace("eq.", ""), roles: { id: "r", name: "Test", access_tier: url.searchParams.get("employee_id") === `eq.${ids.gm}` ? "gm" : "crew", is_active: true } }];
     else if (url.pathname === "/rest/v1/schedule_weeks") data = [{ week_start_date: "2026-09-06" }];
     else if (url.pathname === "/rest/v1/time_punches") data = [punch];
@@ -47,7 +75,7 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
   process.env.SESSION_SECRET = secret;
   const app = spawn(process.execPath, ["node_modules/next/dist/bin/next", "dev", "--hostname", "localhost", "--port", String(port)], {
     cwd: process.cwd(), windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, NEXT_TELEMETRY_DISABLED: "1", NEXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${backend.address().port}`, NEXT_PUBLIC_SUPABASE_ANON_KEY: "fake-public-key", SUPABASE_SERVICE_ROLE_KEY: "fake-service-key", SESSION_SECRET: secret, VERCEL: "" },
+    env: { ...process.env, NEXT_TELEMETRY_DISABLED: "1", NEXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${backend.address().port}`, NEXT_PUBLIC_SUPABASE_ANON_KEY: "fake-public-key", SUPABASE_SERVICE_ROLE_KEY: "fake-service-key", SESSION_SECRET: secret, VERCEL: "", CLOCK_ONLY: "false", CLOCK_GATEWAY_SECRET: gatewaySecret },
   });
   let log = "";
   app.stdout.on("data", (d) => { log += d; }); app.stderr.on("data", (d) => { log += d; });
@@ -126,5 +154,76 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
   const kiosk = `${KIOSK_COOKIE_NAME}=${await token(ids.gm, "gm", "kiosk")}`;
   assert.equal((await request("/api/data/employee_wages", kiosk)).status, 401);
   assert.equal((await request("/api/photos/punch-photos/payson/other/photo.jpg", crew)).status, 403);
+
   assert.equal((await request("/api/photos/profile-photos/payson/employee.jpg")).status, 401);
+  // A manager PIN or old kiosk cookie alone no longer authorizes a personal device.
+  assert.equal((await request('/api/clock/unlock', gm, 'POST', {pin:'5678'})).status,403);
+  assert.equal((await request('/api/clock/roster', kiosk)).status,401);
+  assert.equal((await request('/api/settings/clock-station', crew, 'POST', {action:'issue'})).status,403);
+  const stationPath = '/api/settings/clock-station';
+  assert.equal((await request(stationPath, gm, 'POST', {action:'issue'}, 'https://attacker.invalid')).status,403);
+
+  const findClockPort = http.createServer();
+  await new Promise(resolve => findClockPort.listen(0,'127.0.0.1',resolve));
+  const clockPort = findClockPort.address().port;
+  await new Promise(resolve=>findClockPort.close(resolve));
+  const clockOrigin = `http://localhost:${clockPort}`;
+  const clockApp = spawn(process.execPath,['node_modules/next/dist/bin/next','dev','--hostname','localhost','--port',String(clockPort)],{
+    cwd:process.cwd(), windowsHide:true, stdio:['ignore','pipe','pipe'],
+    env:{...process.env,NEXT_TELEMETRY_DISABLED:'1',CLOCK_ONLY:'true',HUB_BACKEND_URL:origin,CLOCK_GATEWAY_SECRET:gatewaySecret,
+      SESSION_SECRET:'',NEXT_PUBLIC_SUPABASE_URL:'',NEXT_PUBLIC_SUPABASE_ANON_KEY:'',SUPABASE_SERVICE_ROLE_KEY:'',VERCEL:''},
+  });
+  let clockLog=''; clockApp.stdout.on('data',d=>{clockLog+=d;});clockApp.stderr.on('data',d=>{clockLog+=d;});
+  t.after(async()=>{
+    if(process.platform==='win32') await new Promise(resolve=>execFile('taskkill',['/PID',String(clockApp.pid),'/T','/F'],{windowsHide:true},resolve));
+    else clockApp.kill('SIGTERM');
+    clockApp.stdout.destroy(); clockApp.stderr.destroy(); clockApp.unref();
+  });
+  const clockRequest = (path,cookieValue='',method='GET',body,originValue=clockOrigin)=>fetch(clockOrigin+path,{
+    method,redirect:'manual',headers:{Cookie:cookieValue,Origin:originValue,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined,
+  });
+  let clockReady=false;
+  for(let i=0;i<120;i++){
+    try{if((await clockRequest('/api/clock/status')).status===200){clockReady=true;break;}}catch{/*starting*/}
+    if(clockApp.exitCode!=null)break;
+    await new Promise(resolve=>setTimeout(resolve,500));
+  }
+  assert.ok(clockReady,clockLog.slice(-4000));
+  for(const path of ['/api/data/employees','/api/settings/clock-station','/api/auth/me','/api/station/api/clock/status','/people','/timeclock/timecards','/api/photos/punch-photos/payson/a.jpg']) assert.equal((await clockRequest(path,gm)).status,404,path);
+  assert.deepEqual(await (await clockRequest('/api/clock/status',gm)).json(),{paired:false,unlocked:false});
+  assert.equal((await clockRequest('/api/clock/unlock',gm,'POST',{pin:'5678'})).status,403);
+  for (const path of ['/api/clock/in','/api/clock/out','/api/clock/identify','/api/clock/break/start','/api/clock/break/end']) assert.equal((await clockRequest(path,gm,'POST',{pin:'5678'})).status,401,path);
+  assert.equal((await clockRequest('/api/clock/unlock','','POST',{pin:'5678'},'https://attacker.invalid')).status,403);
+  const issue = async()=>(await (await request(stationPath,gm,'POST',{action:'issue'})).json()).code;
+  const pairingCode=await issue(); assert.ok(pairingCode);
+  const pairResult=await clockRequest('/api/clock/device/pair','','POST',{code:pairingCode});
+  assert.equal(pairResult.status,200,await pairResult.clone().text());
+  assert.match(pairResult.headers.get('cache-control'),/no-store/);
+  const deviceCookie=pairResult.headers.getSetCookie().find(c=>c.startsWith('hub_clock_device=')).split(';')[0];
+  assert.match(pairResult.headers.getSetCookie().find(c=>c.startsWith('hub_clock_device=')),/HttpOnly/i);
+  assert.equal((await clockRequest('/api/clock/device/pair','','POST',{code:pairingCode})).status,403);
+  assert.deepEqual(await (await clockRequest('/api/clock/status',deviceCookie)).json(),{paired:true,unlocked:false});
+  assert.equal((await clockRequest('/api/clock/roster',deviceCookie)).status,401);
+  const unlock=await clockRequest('/api/clock/unlock',deviceCookie,'POST',{pin:'5678'});
+  assert.equal(unlock.status,200,await unlock.clone().text());
+  const shiftCookie=unlock.headers.getSetCookie().find(c=>c.startsWith('hub_kiosk=')).split(';')[0];
+  const authorized=deviceCookie+'; '+shiftCookie;
+  assert.equal(new Set(rateKeys).size,2); // pairing attempts cannot consume the employee-PIN budget
+  assert.deepEqual(await (await clockRequest('/api/clock/status',authorized)).json(),{paired:true,unlocked:true});
+  assert.equal((await clockRequest('/api/clock/roster',authorized)).status,200);
+  managerActive=false;
+  assert.deepEqual(await (await clockRequest('/api/clock/status',authorized)).json(),{paired:true,unlocked:false});
+  assert.equal((await clockRequest('/api/clock/roster',authorized)).status,401);
+  managerActive=true;
+  assert.equal((await request('/api/clock/roster',authorized)).status,401); // bypassing the gateway fails
+  assert.equal((await clockRequest('/api/clock/roster',shiftCookie)).status,401);
+  const replacement=await issue();
+  assert.equal((await clockRequest('/api/clock/roster',authorized)).status,200); // issuing alone preserves old iPad
+  assert.equal((await clockRequest('/api/clock/device/pair','','POST',{code:replacement})).status,200);
+  assert.equal((await clockRequest('/api/clock/roster',authorized)).status,401); // replaced device rejected
+  const pending=await issue();
+  assert.equal((await request(stationPath,gm,'POST',{action:'revoke'})).status,200);
+  assert.equal((await clockRequest('/api/clock/device/pair','','POST',{code:pending})).status,403);
+  assert.deepEqual(await (await clockRequest('/api/clock/status',authorized)).json(),{paired:false,unlocked:false});
+
 });

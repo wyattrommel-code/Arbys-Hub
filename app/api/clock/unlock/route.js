@@ -6,7 +6,9 @@ import { getSupabaseServer } from "@/lib/supabase-server";
 import { currentActor } from "@/lib/security/current-actor";
 import { canAccess } from "@/lib/permissions";
 import { createSessionToken, sessionCookieOptions } from "@/lib/session";
+import { hasClockDevice } from "@/lib/security/clock-device";
 export async function POST(request) {
+  if (!(await hasClockDevice())) return secureJson({ ok: false, error: "This device is not authorized. Ask your GM to pair the store iPad." }, { status: 403 });
   const limited = await guardPinAttempt(request);
   if (limited) return limited;
   try {
