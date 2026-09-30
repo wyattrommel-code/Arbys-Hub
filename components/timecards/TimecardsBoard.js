@@ -1,52 +1,106 @@
 "use client";
 
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, ChevronLeft, ChevronRight, Download, RefreshCw, X } from "lucide-react";
+import EmployeeAvatar from "@/components/EmployeeAvatar";
 import PunchEditor from "@/components/timecards/PunchEditor";
 import { CORRECTION_LABELS } from "@/lib/clock-corrections";
-
-import { useCallback, useEffect, useMemo, useState } from "react";
-import EmployeeAvatar from "@/components/EmployeeAvatar";
-import { addDaysISO, getStoreToday, toStoreDateTimeLocal } from "@/lib/store-time";
+import { addDaysISO, formatStoreDateTime, getStoreToday, toStoreDateTimeLocal } from "@/lib/store-time";
 import { weekStartSunday } from "@/lib/schedule";
 import { payrollFilename } from "@/lib/timecards";
-import { payPeriodFor, filterTimecardGroups } from "@/lib/timecard-review";
+import { matchesPunchReview, payPeriodFor } from "@/lib/timecard-review";
+import styles from "./TimecardsBoard.module.css";
 
-function PunchPhotoThumb({ url, label, noFace, onOpen }) {
-  if (!url) {
-    return <span className="text-[10px] text-zinc-400">{label}: none</span>;
-  }
-  return (
-    <button type="button" onClick={onOpen} className="relative block" title={label}>
-      <img src={url} alt={label} className="h-8 w-8 rounded-md object-cover" />
-      <span className="mt-0.5 block text-[9px] font-semibold uppercase text-zinc-500">{label}</span>
-      {noFace ? (
-        <span className="absolute -right-1 -top-1 rounded bg-red-600 px-1 text-[9px] font-bold text-white">
-          No face
-        </span>
-      ) : null}
-    </button>
-  );
+const fieldClass = "h-9 min-w-0 rounded-md border border-zinc-300 bg-white px-2 text-sm dark:border-zinc-700 dark:bg-zinc-900";
+const buttonClass = "inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-zinc-300 bg-white px-3 text-xs font-semibold hover:bg-zinc-50 disabled:opacity-40 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800";
+
+function dateLabel(date) {
+  if (!date) return "—";
+  return new Date(date + "T12:00:00Z").toLocaleDateString("en-US", {
+    timeZone: "UTC", month: "short", day: "numeric", year: "numeric",
+  });
 }
 
-function BreakSegments({ punch }) {
-  const rows = punch.breaks || [];
-  if (!rows.length && !punch.break_minutes) {
-    return <span className="text-xs text-zinc-400">—</span>;
-  }
-  return (
-    <div className="space-y-1 text-xs text-zinc-600 dark:text-zinc-400">
-      {rows.map((row) => (
-        <p key={row.id || `${row.start}-${row.end}`}>
-          {row.start_label} – {row.end_label}
-          {row.open ? " (open)" : row.minutes != null ? ` · ${row.minutes} min` : ""}
-        </p>
-      ))}
-      {punch.break_minutes ? (
-        <p className="font-medium text-zinc-800 dark:text-zinc-200">
-          {punch.break_minutes} min unpaid
-        </p>
-      ) : null}
+function Flags({ punch }) {
+  const flags = [];
+  if (punch.pending_approval) flags.push(["Needs review", "red"]);
+  else if (punch.approval) flags.push(["Approved", "green"]);
+  if (punch.on_break) flags.push(["On break", "amber"]);
+  else if (punch.open) flags.push(["Open", "amber"]);
+  if (punch.unscheduled) flags.push(["Unscheduled", "purple"]);
+  if ((punch.clock_in_photo_url && !punch.face_detected_in) || (punch.clock_out_photo_url && !punch.face_detected_out)) flags.push(["No face detected", "red"]);
+  if (punch.edited) flags.push(["Edited", "gray"]);
+  const colors = {
+    green: "bg-green-50 text-green-800 dark:bg-green-950 dark:text-green-200",
+    red: "bg-red-50 text-red-800 dark:bg-red-950 dark:text-red-200",
+    amber: "bg-amber-50 text-amber-900 dark:bg-amber-950 dark:text-amber-200",
+    purple: "bg-purple-50 text-purple-800 dark:bg-purple-950 dark:text-purple-200",
+    gray: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300",
+  };
+  return flags.length ? <div className="flex flex-wrap gap-1">{flags.map(([label, color]) => (
+    <span key={label} className={"rounded px-1.5 py-0.5 text-[11px] font-medium " + colors[color]}>{label}</span>
+  ))}</div> : <span className="text-xs text-zinc-500">{punch.payroll_ready ? "Cleared" : "—"}</span>;
+}
+
+function Corrections({ punch }) {
+  return punch.corrections?.map((correction) => <p key={correction.id} className="mt-2 text-xs leading-relaxed">
+    <span className="font-medium">{CORRECTION_LABELS[correction.correction_type] || "Punch correction"}</span>
+    {": "}{formatStoreDateTime(correction.claimed_time)} · {correction.reason}
+    {correction.photo_url ? <a href={correction.photo_url} target="_blank" rel="noopener noreferrer" className="ml-2 font-semibold text-[#C8102E] underline dark:text-red-300">View correction photo</a> : null}
+  </p>);
+}
+
+function PunchTime({ punch, direction, onOpen }) {
+  const isIn = direction === "in";
+  const timestamp = isIn ? punch.clock_in : punch.clock_out;
+  const photo = isIn ? punch.clock_in_photo_url : punch.clock_out_photo_url;
+  const time = isIn ? punch.clock_in_time : punch.clock_out_time;
+  return <div className="flex items-center gap-2">
+    {photo ? <button type="button" onClick={onOpen} className="shrink-0 rounded-md" aria-label={"View clock-" + direction + " photo for " + punch.employee_name}>
+      <img src={photo} alt="" loading="lazy" className="h-9 w-9 rounded-md object-cover" />
+    </button> : null}
+    {timestamp ? <time dateTime={timestamp} className="block whitespace-nowrap leading-snug">
+      <span className="block text-[11px] text-zinc-500 dark:text-zinc-400">{dateLabel(getStoreToday(new Date(timestamp)))}</span>
+      <span className="tabular-nums">{time}</span>
+    </time> : <span className="text-zinc-400">—</span>}
+  </div>;
+}
+
+function PunchDetails({ punch }) {
+  return <div className="grid gap-4 text-xs sm:grid-cols-3">
+    <div><p className="mb-1 font-semibold">Scheduled shift</p><p className="text-zinc-600 dark:text-zinc-400">{punch.scheduled_label}</p>
+      {punch.authorized_by ? <p className="mt-1">Authorized by {punch.authorized_by}</p> : null}</div>
+    <div><p className="mb-1 font-semibold">Breaks</p>
+      {(punch.breaks || []).map((row, index) => <p key={row.id || index} className="text-zinc-600 dark:text-zinc-400">
+        {row.start_label} – {row.end_label} · {row.open ? "On break" : row.minutes + " min"}
+      </p>)}
+      <p className="mt-1">{punch.break_minutes || 0} min unpaid total</p>
     </div>
-  );
+    <div><p className="mb-1 font-semibold">Paid time</p>
+      <p>{punch.open ? "Clock out to calculate paid time." : (punch.worked_minutes ?? 0) + " paid minutes ÷ 60 = " + punch.worked_hours_display + " hours"}</p>
+      {!punch.payroll_ready ? <p className="mt-1 font-medium text-red-700 dark:text-red-300">Not yet cleared for payroll.</p> : null}
+      {punch.review_flags?.length ? <ul className="mt-2 list-inside list-disc">{punch.review_flags.map((flag) => <li key={flag}>{flag}</li>)}</ul> : null}
+      {punch.approval ? <div className="mt-2 text-green-800 dark:text-green-300"><p>Approved by {punch.approval.approved_by_name} · {formatStoreDateTime(punch.approval.approved_at)}</p><p>{punch.approval.note}</p></div> : null}
+      <Corrections punch={punch} />
+    </div>
+  </div>;
+}
+
+function Modal({ title, onClose, busy = false, children }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const dialog = ref.current;
+    dialog.showModal();
+    return () => dialog.close();
+  }, []);
+  return <dialog ref={ref} aria-labelledby="timecard-dialog-title" className={styles.dialog}
+    onCancel={(event) => { event.preventDefault(); if (!busy) onClose(); }}>
+    <div className="flex items-center justify-between gap-3 border-b border-zinc-200 px-5 py-3 dark:border-zinc-700">
+      <h3 id="timecard-dialog-title" className="font-semibold">{title}</h3>
+      <button type="button" onClick={onClose} disabled={busy} className={buttonClass} aria-label="Close dialog"><X size={16} /></button>
+    </div>
+    <div className="p-5">{children}</div>
+  </dialog>;
 }
 
 function downloadCsv(filename, text) {
@@ -60,87 +114,142 @@ function downloadCsv(filename, text) {
 }
 
 export default function TimecardsBoard() {
-  const today = getStoreToday();
-  const currentPeriod = payPeriodFor(today);
+  const currentPeriod = payPeriodFor(getStoreToday());
   const [from, setFrom] = useState(currentPeriod.from);
   const [to, setTo] = useState(currentPeriod.to);
-  const [search, setSearch] = useState("");
-  const [reviewFilter, setReviewFilter] = useState("all");
-  const [view, setView] = useState("punches");
+  const [preset, setPreset] = useState(currentPeriod.from);
   const [payload, setPayload] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [editError, setEditError] = useState("");
   const [saving, setSaving] = useState(false);
   const [lightbox, setLightbox] = useState(null);
   const [editing, setEditing] = useState(null);
   const [approving, setApproving] = useState(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const res = await fetch(`/api/timecards?from=${from}&to=${to}`);
-      const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error || "Could not load timecards.");
-      setPayload(data);
-    } catch (err) {
-      setError(err.message || "Could not load timecards.");
-      setPayload(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [from, to]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const grouped = useMemo(() => {
-    const groups = payload?.groups || [];
-    const grandMinutes = groups.reduce((sum, group) => sum + (Number(group.totalMinutes) || 0), 0);
-    return {
-      groups,
-      grandMinutes,
-      grandDisplay: payload?.grand_display || "0.00",
-      grandExact: payload?.grand_exact,
-      openCount: payload?.open_count || 0,
-    };
-  }, [payload]);
-  const visibleGroups = useMemo(() => filterTimecardGroups(grouped.groups, search, reviewFilter), [grouped.groups, search, reviewFilter]);
+  const [exporting, setExporting] = useState(false);
+  const [person, setPerson] = useState("");
+  const [search, setSearch] = useState("");
+  const [reviewFilter, setReviewFilter] = useState("all");
+  const [view, setView] = useState("punches");
+  const [expanded, setExpanded] = useState(null);
+  const [sort, setSort] = useState({ key: "clock_in", direction: "desc" });
+  const activeRequest = useRef(null);
+  const validRange = Boolean(from && to && from <= to);
   const periodOptions = Array.from({ length: 12 }, (_, index) => {
     const start = addDaysISO(currentPeriod.from, -index * 14);
     return { from: start, to: addDaysISO(start, 13) };
   });
-  const selectedPeriod = periodOptions.find((period) => period.from === from && period.to === to);
 
-  function setThisWeek() {
-    const start = weekStartSunday(getStoreToday());
-    setFrom(start);
-    setTo(addDaysISO(start, 6));
-  }
-
-  function setLastWeek() {
-    const start = addDaysISO(weekStartSunday(getStoreToday()), -7);
-    setFrom(start);
-    setTo(addDaysISO(start, 6));
-  }
-
-  function setLast14() {
-    const end = getStoreToday();
-    setFrom(addDaysISO(end, -13));
-    setTo(end);
-  }
-
-  async function exportCsv() {
+  const load = useCallback(async () => {
+    activeRequest.current?.abort();
+    if (!from || !to || from > to) return;
+    const controller = new AbortController();
+    activeRequest.current = controller;
+    setLoading(true);
     setError("");
     try {
-      const res = await fetch(`/api/timecards/export?from=${from}&to=${to}`);
-      if (!res.ok) throw new Error((await res.json()).error || "Could not export payroll.");
-      downloadCsv(payrollFilename(from, to), await res.text());
-    } catch (err) { setError(err.message); }
+      const res = await fetch("/api/timecards?from=" + from + "&to=" + to, { signal: controller.signal });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || "Could not load timecards.");
+      if (!controller.signal.aborted) setPayload(data);
+    } catch (err) {
+      if (controller.signal.aborted) return;
+      setError(err.message || "Could not load timecards.");
+      setPayload(null);
+    } finally {
+      if (!controller.signal.aborted) setLoading(false);
+    }
+  }, [from, to]);
+
+  useEffect(() => {
+    // Defer to keep rapid date edits from starting redundant requests.
+    const timer = setTimeout(load, 150);
+    return () => { clearTimeout(timer); activeRequest.current?.abort(); };
+  }, [load]);
+
+  const grouped = useMemo(() => {
+    const groups = payload?.groups || [];
+    return { groups, grandMinutes: groups.reduce((sum, group) => sum + (Number(group.totalMinutes) || 0), 0) };
+  }, [payload]);
+  const allPunches = useMemo(() => grouped.groups.flatMap((group) => group.punches.map((punch) => ({
+    ...punch, groupKey: String(group.key), profile_photo_url: group.profile_photo_url,
+  }))), [grouped]);
+  const selectedPerson = grouped.groups.some((group) => String(group.key) === person) ? person : "";
+  const visiblePunches = useMemo(() => allPunches.filter((punch) =>
+    (!selectedPerson || punch.groupKey === selectedPerson) && punch.employee_name.toLowerCase().includes(search.trim().toLowerCase()) && matchesPunchReview(punch, reviewFilter)
+  ).sort((a, b) => {
+    const first = a[sort.key];
+    const second = b[sort.key];
+    // Keep incomplete hours/timestamps at the end in either sort direction.
+    if (first == null && second == null) return 0;
+    if (first == null) return 1;
+    if (second == null) return -1;
+    const result = sort.key === "worked_minutes" ? first - second : String(first).localeCompare(String(second));
+    return sort.direction === "asc" ? result : -result;
+  }), [allPunches, selectedPerson, search, reviewFilter, sort]);
+  const visibleGroups = grouped.groups.filter((group) => (!selectedPerson || String(group.key) === selectedPerson) && group.name.toLowerCase().includes(search.trim().toLowerCase()));
+  const ready = validRange && !loading && payload?.from === from && payload?.to === to;
+  const canEdit = Boolean(payload?.can_edit);
+  const personIndex = grouped.groups.findIndex((group) => String(group.key) === selectedPerson);
+
+  function changePreset(value) {
+    setPreset(value);
+    if (value === "custom") return;
+    const period = periodOptions.find((option) => option.from === value);
+    if (period) { setFrom(period.from); setTo(period.to); return; }
+    const today = getStoreToday();
+    const start = weekStartSunday(today);
+    setFrom(value === "last" ? addDaysISO(start, -7) : value === "14" ? addDaysISO(today, -13) : start);
+    setTo(value === "last" ? addDaysISO(start, -1) : value === "14" ? today : addDaysISO(start, 6));
   }
+
+  function shiftPeriod(direction) {
+    if (!validRange) return;
+    const days = Math.round((new Date(to + "T12:00:00Z") - new Date(from + "T12:00:00Z")) / 86400000) + 1;
+    setFrom(addDaysISO(from, days * direction));
+    setTo(addDaysISO(to, days * direction));
+    const nextFrom = addDaysISO(from, days * direction);
+    const nextTo = addDaysISO(to, days * direction);
+    setPreset(periodOptions.some((period) => period.from === nextFrom && period.to === nextTo) ? nextFrom : "custom");
+  }
+
+  function sortBy(key) {
+    setSort((current) => ({ key, direction: current.key === key && current.direction === "asc" ? "desc" : "asc" }));
+  }
+
+  function openEdit(punch) {
+    setEditError("");
+    setEditing({ id: punch.id, name: punch.employee_name, version: punch.edit_version,
+      breaks: (punch.breaks || []).map((row) => ({ id: row.id, key: row.id, start: toStoreDateTimeLocal(row.start), end: row.end ? toStoreDateTimeLocal(row.end) : "" })),
+      edits: punch.edits || [], scheduled_unpaid: payload.use_break_punches ? null : punch.break_minutes,
+      clock_in: toStoreDateTimeLocal(punch.clock_in),
+      clock_out: punch.clock_out ? toStoreDateTimeLocal(punch.clock_out) : "", note: "" });
+  }
+
+  async function saveEdit(event) {
+    event.preventDefault();
+    if (!editing || saving) return;
+    setSaving(true);
+    setEditError("");
+    try {
+      const res = await fetch("/api/timecards/" + editing.id, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ version: editing.version,
+          breaks: editing.breaks.filter((row) => !row.removed).map(({ id, start, end }) => ({ id, start, end: end || null })),
+          clock_in: editing.clock_in, clock_out: editing.clock_out || null, note: editing.note || "" }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || "Could not save punch.");
+      setEditing(null);
+      await load();
+    } catch (err) { setEditError(err.message || "Could not save punch."); }
+    finally { setSaving(false); }
+  }
+
   async function approveTimecard(event) {
-    event.preventDefault(); setSaving(true); setError("");
+    event.preventDefault();
+    if (!approving || saving) return;
+    setSaving(true); setEditError("");
     try {
       const res = await fetch(`/api/timecards/${approving.id}/approve`, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -149,351 +258,169 @@ export default function TimecardsBoard() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Could not approve timecard.");
       setApproving(null); await load();
-    } catch (err) { setError(err.message); }
+    } catch (err) { setEditError(err.message); }
     finally { setSaving(false); }
   }
 
-  async function saveEdit(event) {
-    event.preventDefault();
-    if (!editing) return;
-    setSaving(true);
-    setError("");
+  async function exportCsv() {
+    if (!ready || payload.payroll_blocked || exporting) return;
+    setExporting(true); setError("");
     try {
-      const res = await fetch(`/api/timecards/${editing.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          version: editing.version,
-          breaks: editing.breaks.filter(row => !row.removed).map(({id,start,end}) => ({id,start,end:end || null})),
-          clock_in: editing.clock_in,
-          clock_out: editing.clock_out || null,
-          note: editing.note || "",
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error || "Could not save punch.");
-      setEditing(null);
-      await load();
-    } catch (err) {
-      setError(err.message || "Could not save punch.");
-    } finally {
-      setSaving(false);
-    }
+      const res = await fetch(`/api/timecards/export?from=${from}&to=${to}`);
+      if (!res.ok) throw new Error((await res.json()).error || "Could not export payroll.");
+      downloadCsv(payrollFilename(from, to), await res.text());
+    } catch (err) { setError(err.message); }
+    finally { setExporting(false); }
   }
 
-  const canEdit = Boolean(payload?.can_edit);
+  function sortHeading(key, label, className = "") {
+    return <th scope="col" className={className} aria-sort={sort.key === key ? (sort.direction === "asc" ? "ascending" : "descending") : "none"}>
+      <button type="button" onClick={() => sortBy(key)} className="inline-flex items-center gap-1 font-semibold">
+        {label}<span aria-hidden="true" className="text-zinc-400">{sort.key === key ? sort.direction === "asc" ? "↑" : "↓" : "↕"}</span>
+      </button>
+    </th>;
+  }
 
-  return (
-    <div className="mx-auto flex w-full max-w-[1440px] flex-1 flex-col gap-3 px-3 py-3 sm:px-4">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Timecards</h2>
-          <p className="text-xs text-zinc-500">Review punches, approve flagged hours, and export payroll.</p>
+  return <div className={styles.board + " w-full min-w-0 flex-1 px-4 py-4 sm:px-6"}>
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <div><h2 className="text-xl font-semibold">Timecards</h2><p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">Review punches and hours for payroll.</p></div>
+      <button type="button" disabled={!ready || payload?.payroll_blocked || exporting} onClick={exportCsv}
+        className="inline-flex h-9 items-center gap-2 rounded-md bg-[#C8102E] px-3 text-xs font-semibold text-white hover:bg-[#a90e27] disabled:opacity-40">
+        <Download size={15} />{exporting ? "Exporting…" : "Export payroll CSV"}
+      </button>
+    </div>
+
+    <div className="mb-4 flex flex-wrap items-end gap-2">
+      <label className="grid gap-1 text-[11px] font-medium text-zinc-500">Pay period
+        <select value={preset} onChange={(event) => changePreset(event.target.value)} className={fieldClass}>
+          {periodOptions.map((period) => <option key={period.from} value={period.from}>{dateLabel(period.from)} – {dateLabel(period.to)}</option>)}
+          <option value="week">This week</option><option value="last">Last week</option><option value="14">Last 14 days</option><option value="custom">Custom range</option>
+        </select>
+      </label>
+      <div className="flex items-center gap-1">
+        <button type="button" onClick={() => shiftPeriod(-1)} disabled={!validRange} className={buttonClass} aria-label="Previous date range"><ChevronLeft size={16} /></button>
+        <button type="button" onClick={() => shiftPeriod(1)} disabled={!validRange} className={buttonClass} aria-label="Next date range"><ChevronRight size={16} /></button>
+      </div>
+      <label className="grid gap-1 text-[11px] font-medium text-zinc-500">Start date
+        <input type="date" value={from} max={to || undefined} onChange={(event) => { setFrom(event.target.value); setPreset("custom"); }} className={fieldClass} />
+      </label>
+      <label className="grid gap-1 text-[11px] font-medium text-zinc-500">End date
+        <input type="date" value={to} min={from || undefined} onChange={(event) => { setTo(event.target.value); setPreset("custom"); }} className={fieldClass} />
+      </label>
+      <button type="button" onClick={load} disabled={!validRange || loading} className={buttonClass} aria-label="Refresh timecards"><RefreshCw size={15} /></button>
+    </div>
+
+    {!validRange ? <p role="alert" className="mb-3 text-sm text-red-700">Choose a start date on or before the end date.</p> : null}
+    {error ? <div role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error} <button type="button" onClick={load} className="font-semibold underline">Try again</button></div> : null}
+
+    <section className="rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900" aria-label="Timecard records">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
+        <div className="flex gap-1" aria-label="Timecard view">
+          {[["punches", "Punches"], ["totals", "Employee totals"]].map(([value, label]) => <button key={value} type="button" aria-pressed={view === value} onClick={() => setView(value)}
+            className={"rounded-md px-3 py-2 text-xs font-semibold " + (view === value ? "bg-[#C8102E]/10 text-[#C8102E] dark:text-red-300" : "text-zinc-500 hover:bg-zinc-50 dark:hover:bg-zinc-800")}>{label}</button>)}
         </div>
-        <button
-          type="button"
-          onClick={exportCsv}
-          disabled={!payload || loading || payload.payroll_blocked}
-          className="rounded-lg bg-[#C8102E] px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
-        >
-          Export full period CSV
-        </button>
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500" aria-live="polite">
+          <span>Recorded <strong className="ml-1 tabular-nums text-zinc-900 dark:text-zinc-100">{ready ? payload.grand_display : "—"} hrs</strong></span>
+          <span>Cleared <strong className="ml-1 tabular-nums text-green-800 dark:text-green-300">{ready ? payload.approved_display : "—"} hrs</strong></span>
+          <span>Pending <strong className="ml-1 tabular-nums text-red-800 dark:text-red-300">{ready ? payload.pending_display : "—"} hrs</strong></span>
+        </div>
       </div>
 
-      {payload?.payroll_blocked && <div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">
-        <span><strong>Payroll on hold</strong> · {payload.pending_count} flagged · {payload.open_count || 0} open <span className="text-xs">— close and approve before exporting.</span></span>
-        <button className="min-h-8 font-semibold underline" onClick={() => { setReviewFilter(payload.pending_count ? "pending" : "open"); setSearch(""); }}>Review punches</button>
-      </div>}
-      {!payload?.payroll_blocked && Boolean(payload?.open_count) && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">{payload.open_count} open punches need closing before payroll.</p>}
-
-      {error ? (
-        <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800" role="alert">
-          {error}
-        </p>
-      ) : null}
-
-      <section aria-label="Timecard filters" className="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
-        <div className="flex flex-wrap items-end gap-2">
-          <label className="min-w-48 flex-1 text-xs font-semibold">Pay period
-            <select aria-label="Pay period" value={selectedPeriod?.from || "custom"} onChange={event => {
-              const period = periodOptions.find(item => item.from === event.target.value);
-              if (period) { setFrom(period.from); setTo(period.to); }
-            }} className="mt-1 block min-h-9 w-full rounded-md border border-zinc-300 bg-transparent px-2 text-sm dark:bg-zinc-900">
-              {!selectedPeriod && <option value="custom">Custom date range</option>}
-              {periodOptions.map(period => <option key={period.from} value={period.from}>{period.from} — {period.to}</option>)}
-            </select>
-          </label>
-          <label className="min-w-40 flex-1 text-xs font-semibold">Employee
-            <input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search names" className="mt-1 block min-h-9 w-full rounded-md border border-zinc-300 bg-transparent px-2 text-sm" />
-          </label>
-          <label className="text-xs font-semibold">Show
-            <select value={reviewFilter} onChange={event => setReviewFilter(event.target.value)} className="mt-1 block min-h-9 rounded-md border border-zinc-300 bg-transparent px-2 text-sm dark:bg-zinc-900">
-              <option value="all">All punches</option><option value="pending">Needs review</option><option value="open">Open punches</option><option value="unscheduled">Unscheduled</option><option value="edited">Edited punches</option><option value="long">Over 16 hours</option><option value="photo">Face not detected</option>
-            </select>
-          </label>
-          <button type="button" disabled={loading} onClick={load} className="min-h-9 rounded-md border border-zinc-300 px-3 text-sm font-semibold disabled:opacity-50">Refresh</button>
-          <div className="flex gap-1" aria-label="Timecard view">
-            {[["punches","Punches"],["totals","Totals"]].map(([value,label]) => <button key={value} type="button" aria-pressed={view === value} onClick={() => setView(value)} className={`min-h-9 rounded-md px-3 text-sm font-semibold ${view === value ? "bg-[#C8102E] text-white" : "border border-zinc-300"}`}>{label}</button>)}
-          </div>
+      <div className="flex flex-wrap items-center gap-3 border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
+        <div className="flex min-w-0 items-center gap-1">
+          <button type="button" className={buttonClass + " !px-1.5"} disabled={personIndex < 0} aria-label="Previous employee" onClick={() => setPerson(personIndex === 0 ? "" : String(grouped.groups[personIndex - 1].key))}><ChevronLeft size={16} /></button>
+          <label className="sr-only" htmlFor="timecard-employee">Employee</label>
+          <select id="timecard-employee" value={selectedPerson} onChange={(event) => setPerson(event.target.value)} className={fieldClass + " w-48 sm:w-56"}>
+            <option value="">All employees</option>{grouped.groups.map((group) => <option key={group.key} value={String(group.key)}>{group.name}</option>)}
+          </select>
+          <button type="button" className={buttonClass + " !px-1.5"} disabled={personIndex >= grouped.groups.length - 1} aria-label="Next employee" onClick={() => setPerson(String(grouped.groups[personIndex + 1].key))}><ChevronRight size={16} /></button>
         </div>
-        <details className="mt-2 text-xs">
-          <summary className="w-fit cursor-pointer py-1 font-semibold text-zinc-600 dark:text-zinc-300">Change dates · {from} – {to}</summary>
-          <div className="mt-2 flex flex-wrap items-end gap-2">
-            <label>From<input type="date" value={from} onChange={e => setFrom(e.target.value)} className="ml-2 min-h-9 rounded-md border border-zinc-300 bg-transparent px-2 text-sm" /></label>
-            <label>To<input type="date" value={to} onChange={e => setTo(e.target.value)} className="ml-2 min-h-9 rounded-md border border-zinc-300 bg-transparent px-2 text-sm" /></label>
-            {[[setThisWeek,"This week"],[setLastWeek,"Last week"],[setLast14,"Last 14 days"]].map(([action,label]) => <button key={label} type="button" onClick={action} className="min-h-9 rounded-md border border-zinc-300 px-3 font-semibold">{label}</button>)}
-          </div>
-        </details>
-        <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-zinc-100 pt-2 text-xs dark:border-zinc-800">
-          <span>Recorded <strong className="text-sm tabular-nums">{payload?.grand_display || "0.00"} hrs</strong></span>
-          <span>Cleared <strong className="text-sm tabular-nums text-green-700">{payload?.approved_display || "0.00"} hrs</strong></span>
-          <span>Pending <strong className="text-sm tabular-nums text-red-700">{payload?.pending_display || "0.00"} hrs</strong></span>
-          <span className="text-zinc-500">{visibleGroups.length} employees · {visibleGroups.reduce((sum,group) => sum + group.punches.length,0)} shown</span>
-        </div>
-      </section>
+        <input type="search" aria-label="Search employees" placeholder="Search employees" value={search} onChange={(event) => setSearch(event.target.value)} className={fieldClass + " w-40"} />
+        {view === "punches" ? <select aria-label="Review filter" value={reviewFilter} onChange={(event) => setReviewFilter(event.target.value)} className={fieldClass}>
+          <option value="all">All punches</option><option value="pending">Needs approval</option><option value="open">Open punches</option>
+          <option value="unscheduled">Unscheduled</option><option value="edited">Edited punches</option><option value="long">Over 16 hours</option><option value="photo">No face detected</option>
+        </select> : null}
+        <p className="ml-auto text-xs tabular-nums text-zinc-500" role="status">{ready ? view === "punches" ? visiblePunches.length + " of " + allPunches.length + " punches" : visibleGroups.length + " employees" : ""}</p>
+      </div>
 
-      {loading ? (
-        <p className="rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-500">Loading timecards…</p>
-      ) : !visibleGroups.length ? (
-        <p className="rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-500">
-          No punches match this date range and these filters.
-        </p>
-      ) : (
-        view === "totals" ? (
-          <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white dark:bg-zinc-900">
-            <table className="w-full text-left text-sm"><caption className="p-4 text-left font-semibold">Full-period employee totals · select a name to review punches</caption>
-              <thead className="bg-red-50 text-zinc-700"><tr><th className="p-3">Employee</th><th className="p-3">Punches</th><th className="p-3">Open</th><th className="p-3">Recorded hours</th><th className="p-3">Cleared hours</th><th className="p-3">Pending hours</th></tr></thead>
-              <tbody>{visibleGroups.map((group) => {
-                const full = grouped.groups.find((item) => item.key === group.key);
-                return <tr key={group.key} className="border-t border-zinc-100"><td className="p-3"><button className="font-semibold text-[#C8102E] underline" onClick={() => { setSearch(group.name); setReviewFilter('all'); setView('punches'); }}>{group.name}</button></td><td className="p-3">{full.punches.length}</td><td className="p-3">{full.openCount || 0}</td><td className="p-3 font-semibold">{full.totalDisplay}</td><td className="p-3">{full.approvedDisplay}</td><td className="p-3 text-red-800">{full.pendingDisplay}</td></tr>;
-              })}</tbody>
-            </table>
-          </div>
-        ) : visibleGroups.map((group) => (
-          <section
-            key={group.key}
-            className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
-          >
-            <div className="flex items-center justify-between gap-3 border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
-              <div className="flex min-w-0 items-center gap-3">
-                <EmployeeAvatar name={group.name} src={group.profile_photo_url} size="sm" />
-                <div className="min-w-0">
-                  <p className="font-semibold">{group.name}</p>
-                  {group.openCount ? (
-                    <p className="text-xs font-medium text-amber-800">{group.openCount} open</p>
-                  ) : null}
-                </div>
-              </div>
-              <p className="text-sm font-bold">{group.totalDisplay} hrs <span className="text-xs font-normal text-zinc-500">recorded / {group.approvedDisplay} cleared / {group.pendingDisplay} pending</span></p>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="min-w-[900px] w-full text-left text-sm">
-                <thead className="bg-zinc-50 text-xs uppercase text-zinc-500 dark:bg-zinc-800">
-                  <tr>
-                    <th className="px-3 py-2">Photos</th>
-                    <th className="px-3 py-2">Date</th>
-                    <th className="px-3 py-2">In</th>
-                    <th className="px-3 py-2">Out</th>
-                    <th className="px-3 py-2">Breaks</th>
-                    <th className="px-3 py-2">Recorded</th>
-                    <th className="px-3 py-2">Scheduled</th>
-                    <th className="px-3 py-2">Status</th>
-                    {canEdit ? <th className="px-3 py-2"> </th> : null}
-                  </tr>
-                </thead>
-                <tbody>
-                  {group.punches.map((punch) => (
-                    <tr
-                      key={punch.id}
-                      className={`border-t border-zinc-100 dark:border-zinc-800 ${punch.pending_approval ? "bg-red-50/60" : punch.open ? "bg-amber-50/80" : ""}`}
-                    >
-                      <td className="px-3 py-2">
-                        {punch.clock_in_photo_url || punch.clock_out_photo_url ? (
-                          <div className="flex items-start gap-2">
-                            <PunchPhotoThumb
-                              url={punch.clock_in_photo_url}
-                              label="In"
-                              noFace={punch.clock_in_photo_url && !punch.face_detected_in}
-                              onOpen={() => setLightbox(punch)}
-                            />
-                            <PunchPhotoThumb
-                              url={punch.clock_out_photo_url}
-                              label="Out"
-                              noFace={punch.clock_out_photo_url && !punch.face_detected_out}
-                              onOpen={() => setLightbox(punch)}
-                            />
-                          </div>
-                        ) : (
-                          <span className="text-xs text-zinc-400">No photo</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap">{punch.date_label}</td>
-                      <td className="px-3 py-2 whitespace-nowrap">{punch.clock_in_time}</td>
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        {punch.open ? <span className="font-semibold text-amber-800">Open</span> : punch.clock_out_time}
-                        {punch.clock_out && getStoreToday(new Date(punch.clock_out)) !== getStoreToday(new Date(punch.clock_in)) && <span className="block text-xs font-semibold text-amber-800">{getStoreToday(new Date(punch.clock_out))}</span>}
-                      </td>
-                      <td className="px-3 py-2">
-                        <BreakSegments punch={punch} />
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap font-medium">
-                        {punch.open ? (
-                          "—"
-                        ) : (
-                          <span
-                            title={
-                              punch.worked_minutes == null
-                                ? ""
-                                : `${punch.worked_minutes} min ÷ 60${
-                                    punch.break_minutes
-                                      ? ` (minus ${punch.break_minutes} min unpaid break)`
-                                      : ""
-                                  }`
-                            }
-                          >
-                            {punch.worked_hours_display} hrs
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 text-zinc-600">{punch.scheduled_label}</td>
-                      <td className="px-3 py-2">
-                        <details className="min-w-32 max-w-64 text-xs">
-                          <summary className={`cursor-pointer py-1 font-semibold ${punch.pending_approval ? "text-red-800" : punch.open ? "text-amber-800" : "text-green-800"}`}>
-                            {punch.pending_approval ? `Needs review (${punch.review_flags.length})` : punch.open ? "Open shift" : punch.approval ? "Approved" : punch.payroll_ready ? "Cleared" : "Details"}
-                          </summary>
-                          <div className="mt-2 border-t border-zinc-200 pt-2">
-                        <div className="mb-2 text-xs">
-                          {punch.corrections?.map(c => <p key={c.id} className="mb-2 text-zinc-700 dark:text-zinc-300">{CORRECTION_LABELS[c.correction_type] || c.correction_type}: {toStoreDateTimeLocal(c.claimed_time).replace("T", " ")} — {c.reason}{c.photo_url && <a href={c.photo_url} target="_blank" rel="noopener noreferrer" className="ml-2 font-semibold text-[#C8102E] underline">View correction photo</a>}</p>)}
-                          {punch.pending_approval ? <div className="font-semibold text-red-800"><p>⚑ Manager approval required</p>{punch.review_flags.map((flag) => <p key={flag}>{flag}</p>)}</div> : punch.approval ? <div className="text-green-800"><p>Approved by {punch.approval.approved_by_name}</p><p>{toStoreDateTimeLocal(punch.approval.approved_at).replace("T", " ")}</p><p>{punch.approval.note}</p></div> : punch.payroll_ready ? <p className="text-green-800">Cleared for payroll</p> : null}
-                        </div>
-                        <div className="flex flex-wrap gap-1">
-                          {punch.clock_out && Date.parse(punch.clock_out) - Date.parse(punch.clock_in) > 16 * 3600000 && <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-800">Over 16 hours · review</span>}
-                          {punch.on_break ? (
-                            <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900">
-                              On break
-                            </span>
-                          ) : null}
-                          {punch.open ? (
-                            <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900">
-                              Open
-                            </span>
-                          ) : null}
-                          {punch.edited ? (
-                            <span className="rounded bg-zinc-200 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-700">
-                              Edited
-                            </span>
-                          ) : null}
-                          {punch.unscheduled ? (
-                            <span className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-semibold text-purple-800">
-                              Unscheduled
-                            </span>
-                          ) : null}
-                          {punch.authorized_by ? (
-                            <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-600">
-                              Auth: {punch.authorized_by}
-                            </span>
-                          ) : null}
-                        </div>
-                          </div>
-                        </details>
-                      </td>
-                      {canEdit ? (
-                        <td className="px-3 py-2">
-                          {punch.pending_approval && <button type="button" disabled={punch.open || punch.on_break || punch.breaks.some((row) => row.open)} onClick={() => { setError(""); setApproving({ ...punch, note: "" }); }} className="mb-1 block min-h-8 rounded bg-[#C8102E] px-2 py-1 text-xs font-semibold text-white disabled:opacity-40">Review &amp; approve</button>}
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setEditing({
-                                id: punch.id, version: punch.edit_version,
-                                breaks: punch.breaks.map(row => ({id:row.id,key:row.id,start:toStoreDateTimeLocal(row.start),end:row.end ? toStoreDateTimeLocal(row.end) : ""})),
-                                edits: punch.edits || [],
-                                scheduled_unpaid: payload.use_break_punches ? null : punch.break_minutes,
-                                name: punch.employee_name,
-                                clock_in: toStoreDateTimeLocal(punch.clock_in),
-                                clock_out: punch.clock_out ? toStoreDateTimeLocal(punch.clock_out) : "",
-                                note: "",
-                              })
-                            }
-                            className="text-xs font-semibold text-[#C8102E]"
-                          >
-                            Edit punch & breaks
-                          </button>
-                        </td>
-                      ) : null}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        ))
-      )}
+      {ready && payload.payroll_blocked ? <div className="flex flex-wrap items-center justify-between gap-2 border-b border-red-200 bg-red-50/70 px-4 py-2 text-xs text-red-900 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200">
+        <span><strong>Payroll on hold</strong> · {payload.pending_count} flagged · {payload.open_count || 0} open. Close and approve before exporting.</span>
+        <button type="button" onClick={() => { setView("punches"); setReviewFilter(payload.pending_count ? "pending" : "open"); setPerson(""); setSearch(""); }} className="font-semibold underline underline-offset-2">Review punches</button>
+      </div> : null}
 
-      <p className="text-sm font-semibold text-zinc-700">
-        Recorded period total: {payload?.grand_display || "0.00"} hrs
-      </p>
-      {!canEdit && payload ? (
-        <p className="text-xs text-zinc-500">Shift leads can review timecards. GM or assistant manager can correct punches and approve red flags.</p>
-      ) : null}
+      {!ready ? <p className="px-4 py-12 text-center text-sm text-zinc-500" role="status">{error ? "Timecards could not be loaded." : !validRange ? "Select a valid date range." : "Loading timecards…"}</p> : view === "punches" ? <>
+        <table className={styles.punchTable}>
+          <caption className="sr-only">Punches from {dateLabel(from)} to {dateLabel(to)}</caption>
+          <thead><tr>{sortHeading("employee_name", "Person")}{sortHeading("clock_in", "Clock in")}{sortHeading("clock_out", "Clock out")}
+            <th scope="col">Breaks</th>{sortHeading("worked_minutes", "Hours", styles.numeric)}<th scope="col">Status</th><th scope="col"><span className="sr-only">Actions</span></th>
+          </tr></thead>
+          <tbody>{visiblePunches.map((punch) => <Fragment key={punch.id}>
+            <tr className={styles.punchRow}>
+              <td className={styles.personCell}><div className="flex items-center gap-2"><EmployeeAvatar name={punch.employee_name} src={punch.profile_photo_url} size="sm" /><span className="font-medium">{punch.employee_name}</span></div></td>
+              <td><span className={styles.mobileLabel}>Clock in</span><PunchTime punch={punch} direction="in" onOpen={() => setLightbox(punch)} /></td>
+              <td><span className={styles.mobileLabel}>Clock out</span><PunchTime punch={punch} direction="out" onOpen={() => setLightbox(punch)} /></td>
+              <td><span className={styles.mobileLabel}>Unpaid breaks</span><span className="whitespace-nowrap tabular-nums text-zinc-500">{punch.break_minutes ? punch.break_minutes + " min" : "—"}</span></td>
+              <td className={styles.numeric}><span className={styles.mobileLabel}>Recorded hours</span><span className="font-semibold tabular-nums" title={punch.open ? "Punch is still open" : punch.worked_minutes + " paid minutes ÷ 60"}>{punch.open ? "—" : punch.worked_hours_display}</span></td>
+              <td className={styles.flagsCell}><Flags punch={punch} /></td>
+              <td className={styles.actionsCell}><div className="flex items-center justify-end gap-2">
+                {canEdit && punch.pending_approval ? <button type="button" disabled={punch.open || punch.on_break || punch.breaks.some((row) => row.open)}
+                  onClick={() => { setEditError(""); setApproving({ ...punch, note: "" }); }} aria-label={"Review timecard for " + punch.employee_name + " on " + punch.date_label}
+                  title={punch.open || punch.on_break || punch.breaks.some((row) => row.open) ? "Close the punch and all breaks before approving" : "Review and approve recorded hours"}
+                  className="rounded bg-[#C8102E]/10 px-2 py-1.5 text-xs font-semibold text-[#C8102E] disabled:opacity-40 dark:text-red-300">Review</button> : null}
+                {canEdit ? <button type="button" onClick={() => openEdit(punch)} className="rounded px-1 py-2 text-xs font-semibold text-[#C8102E] dark:text-red-300" aria-label={"Edit punch for " + punch.employee_name + " on " + punch.date_label}>Edit</button> : null}
+                <button type="button" aria-label={"Details for " + punch.employee_name + " on " + punch.date_label} aria-expanded={expanded === punch.id} aria-controls={"punch-detail-" + punch.id} onClick={() => setExpanded(expanded === punch.id ? null : punch.id)} className="rounded p-2 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"><ChevronDown size={16} className={expanded === punch.id ? "rotate-180" : ""} /></button>
+              </div></td>
+            </tr>
+            {expanded === punch.id ? <tr className={styles.detailRow}><td colSpan={7}><div id={"punch-detail-" + punch.id}><PunchDetails punch={punch} />
+            </div></td></tr> : null}
+          </Fragment>)}</tbody>
+        </table>
+        {!visiblePunches.length ? <div className="px-4 py-12 text-center text-sm text-zinc-500"><p>{allPunches.length ? "No punches match these filters." : "No punches in this date range."}</p>
+          {allPunches.length ? <button type="button" onClick={() => { setPerson(""); setReviewFilter("all"); setSearch(""); }} className="mt-2 font-semibold text-[#C8102E]">Clear filters</button> : null}</div> : null}
+      </> : <table className={styles.totalsTable}>
+        <caption className="sr-only">Employee totals for the selected date range</caption>
+        <thead><tr><th scope="col">Person</th><th scope="col" className={styles.numeric}>Recorded</th><th scope="col" className={styles.numeric}>Cleared</th><th scope="col" className={styles.numeric}>Pending</th></tr></thead>
+        <tbody>{visibleGroups.map((group) => <tr key={group.key}>
+          <td><button type="button" onClick={() => { setPerson(String(group.key)); setReviewFilter("all"); setView("punches"); }} className="flex items-center gap-2 text-left font-medium hover:text-[#C8102E]"><EmployeeAvatar name={group.name} src={group.profile_photo_url} size="sm" /><span>{group.name}<span className="block text-[11px] font-normal text-zinc-500">{group.punches.length} punches{group.openCount ? " · " + group.openCount + " open" : ""}</span></span></button></td>
+          <td className={styles.numeric + " font-semibold"}>{group.totalDisplay}</td><td className={styles.numeric + " text-green-800 dark:text-green-300"}>{group.approvedDisplay}</td><td className={styles.numeric + " text-red-800 dark:text-red-300"}>{group.pendingDisplay}</td>
+        </tr>)}</tbody>
+        <tfoot><tr><th scope="row">{selectedPerson || search ? "Filtered total" : "Period total"} (hrs)</th>{["totalMinutes", "approvedMinutes", "pendingMinutes"].map((key) => <td key={key} className={styles.numeric + " font-semibold"}>{(visibleGroups.reduce((sum, group) => sum + (group[key] || 0), 0) / 60).toFixed(2)}</td>)}</tr></tfoot>
+      </table>}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-zinc-200 px-4 py-2 text-[11px] text-zinc-500 dark:border-zinc-800">
+        <span>{dateLabel(from)} – {dateLabel(to)}</span><span>Export includes all employees in this date range.</span>
+      </div>
+    </section>
 
-      {lightbox ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setLightbox(null)}>
-          <div className="max-h-[90vh] max-w-2xl overflow-auto rounded-xl bg-white p-3" onClick={(e) => e.stopPropagation()}>
-            <p className="mb-2 text-sm font-semibold">
-              {lightbox.employee_name} · {lightbox.clock_in_label}
-            </p>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div>
-                <p className="mb-1 text-xs font-semibold uppercase text-zinc-500">Clock in</p>
-                {lightbox.clock_in_photo_url ? (
-                  <img src={lightbox.clock_in_photo_url} alt="Clock-in photo" className="max-h-[60vh] w-full rounded-lg object-contain" />
-                ) : (
-                  <p className="text-sm text-zinc-500">No clock-in photo</p>
-                )}
-                {lightbox.clock_in_photo_url && !lightbox.face_detected_in ? (
-                  <p className="mt-2 text-sm font-medium text-red-700">Face was not detected at clock-in.</p>
-                ) : null}
-              </div>
-              <div>
-                <p className="mb-1 text-xs font-semibold uppercase text-zinc-500">Clock out</p>
-                {lightbox.clock_out_photo_url ? (
-                  <img src={lightbox.clock_out_photo_url} alt="Clock-out photo" className="max-h-[60vh] w-full rounded-lg object-contain" />
-                ) : (
-                  <p className="text-sm text-zinc-500">No clock-out photo</p>
-                )}
-                {lightbox.clock_out_photo_url && !lightbox.face_detected_out ? (
-                  <p className="mt-2 text-sm font-medium text-red-700">Face was not detected at clock-out.</p>
-                ) : null}
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setLightbox(null)}
-              className="mt-3 w-full rounded-lg border border-zinc-300 py-2 text-sm font-semibold"
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      ) : null}
+    <details className="mt-3 text-xs text-zinc-500 dark:text-zinc-400"><summary className="w-fit cursor-pointer rounded py-1">How hours are calculated</summary>
+      <p className="mt-1 max-w-3xl leading-relaxed">Punch timestamps stay exact. Paid hours are paid minutes ÷ 60, shown to two decimals; CSV hours are unrounded.
+        {payload?.use_break_punches ? " Actual unpaid breaks are subtracted." : payload?.subtract_scheduled_break ? " Scheduled unpaid breaks are subtracted." : " No break deduction is applied."}
+        {" "}Recorded totals include closed punches awaiting approval. Cleared totals include only payroll-ready hours. Open punches have no hours calculated yet. Export stays on hold until all punches are closed and cleared.</p>
+    </details>
+    {!canEdit && payload ? <p className="mt-2 text-xs text-zinc-500">Read-only access. A GM or assistant manager can correct punches.</p> : null}
 
-      {approving && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-        <form role="dialog" aria-modal="true" aria-labelledby="approval-title" onSubmit={approveTimecard} className="w-full max-w-lg rounded-xl bg-white p-5 shadow-xl dark:bg-zinc-900">
-          <h3 id="approval-title" className="text-lg font-bold text-[#C8102E]">Review flagged timecard</h3>
-          <p className="mt-2 font-semibold">{approving.employee_name}</p>
-          <p className="mt-2 text-sm">{approving.clock_in_label} to {approving.clock_out_label}</p>
-          <p className="text-sm">Scheduled: {approving.scheduled_label}</p>
-          <p className="mt-2 font-semibold">{approving.worked_hours_display} recorded hours / {approving.break_minutes} unpaid break minutes</p>
-          <ul className="my-3 list-inside list-disc text-sm text-red-800">{approving.review_flags.map((flag) => <li key={flag}>{flag}</li>)}</ul>
-          {approving.corrections?.map(c => <p key={c.id} className="my-2 text-sm">{CORRECTION_LABELS[c.correction_type] || c.correction_type}: {toStoreDateTimeLocal(c.claimed_time).replace("T", " ")} — {c.reason}{c.photo_url && <a href={c.photo_url} target="_blank" rel="noopener noreferrer" className="ml-2 font-semibold text-[#C8102E] underline">View correction photo</a>}</p>)}
-          <p className="text-sm text-zinc-600">Confirm these hours were worked. Approval clears this timecard for payroll and records your name, time, and note. Later changes require a new review.</p>
-          <label className="mt-4 block text-sm font-semibold">Review note<textarea required maxLength={1000} value={approving.note} onChange={(event) => setApproving({ ...approving, note: event.target.value })} className="mt-1 block w-full rounded border border-zinc-300 p-2" /></label>
-          {error && <p role="alert" className="mt-2 text-sm text-red-800">{error}</p>}
-          <div className="mt-4 flex justify-end gap-2"><button type="button" disabled={saving} onClick={() => setApproving(null)} className="rounded border px-3 py-2">Cancel</button><button type="submit" disabled={saving || !approving.note.trim()} className="rounded bg-[#C8102E] px-3 py-2 font-semibold text-white disabled:opacity-50">{saving ? "Saving..." : "Approve recorded hours"}</button></div>
-        </form>
-      </div>}
-      {editing && <PunchEditor editing={editing} setEditing={setEditing} saving={saving} error={error} onSave={saveEdit} onCancel={() => setEditing(null)} />}
+    {lightbox ? <Modal title={"Punch photos · " + lightbox.employee_name} onClose={() => setLightbox(null)}>
+      <p className="mb-3 text-xs text-zinc-500">{lightbox.clock_in_label}</p>
+      <div className="grid gap-4 sm:grid-cols-2">{["in", "out"].map((direction) => <div key={direction}>
+        <h4 className="mb-2 text-xs font-semibold">Clock {direction}</h4>
+        {lightbox["clock_" + direction + "_photo_url"] ? <><img src={lightbox["clock_" + direction + "_photo_url"]} alt={"Clock-" + direction + " photo of " + lightbox.employee_name} className="max-h-[55vh] w-full rounded-lg object-contain" />
+          {!lightbox["face_detected_" + direction] ? <p className="mt-2 text-xs text-red-700 dark:text-red-300">Face was not detected.</p> : null}</> : <p className="py-8 text-sm text-zinc-500">No clock-{direction} photo</p>}
+      </div>)}</div>
+    </Modal> : null}
 
-    </div>
-  );
+    {approving ? <Modal title="Review flagged timecard" onClose={() => setApproving(null)} busy={saving}>
+      <form onSubmit={approveTimecard} className="space-y-3">
+        <p className="font-semibold">{approving.employee_name}</p>
+        <p className="text-sm">{approving.clock_in_label} to {approving.clock_out_label}</p>
+        <p className="text-xs text-zinc-500">Scheduled: {approving.scheduled_label}</p>
+        <p className="text-sm font-semibold">{approving.worked_hours_display} recorded hours · {approving.break_minutes} unpaid break minutes</p>
+        <ul className="list-inside list-disc text-sm text-red-800 dark:text-red-300">{approving.review_flags.map((flag) => <li key={flag}>{flag}</li>)}</ul>
+        <Corrections punch={approving} />
+        <p className="text-xs leading-relaxed text-zinc-500">Confirm these hours were worked. Approval clears this timecard for payroll and records your name, time, and note. Later changes require a new review.</p>
+        <label className="grid gap-1 text-xs font-semibold">Review note<textarea required maxLength={1000} disabled={saving} value={approving.note} onChange={(event) => setApproving({ ...approving, note: event.target.value })} className="rounded-md border border-zinc-300 p-2 text-sm dark:border-zinc-700 dark:bg-zinc-950" /></label>
+        {editError ? <p role="alert" className="text-sm text-red-800">{editError}</p> : null}
+        <div className="flex justify-end gap-2"><button type="button" disabled={saving} onClick={() => setApproving(null)} className={buttonClass}>Cancel</button><button type="submit" disabled={saving || !approving.note.trim()} className="rounded-md bg-[#C8102E] px-3 py-2 text-sm font-semibold text-white disabled:opacity-40">{saving ? "Saving…" : "Approve recorded hours"}</button></div>
+      </form>
+    </Modal> : null}
+    {editing ? <PunchEditor editing={editing} setEditing={setEditing} saving={saving} error={editError} onSave={saveEdit} onCancel={() => setEditing(null)} /> : null}
+  </div>;
 }

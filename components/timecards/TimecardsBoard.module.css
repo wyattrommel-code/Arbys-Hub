@@ -1,0 +1,80 @@
+.board { container: timecards / inline-size; }
+.board :is(button, input, select, summary, a):focus-visible,
+.dialog :is(button, input, textarea, a):focus-visible {
+  outline: 2px solid #C8102E;
+  outline-offset: 3px;
+}
+
+.punchTable, .totalsTable {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 13px;
+}
+.punchTable th, .totalsTable th {
+  padding: 10px 12px;
+  background: #fafafa;
+  color: #71717a;
+  font-size: 11px;
+  font-weight: 600;
+}
+.punchTable td, .totalsTable td {
+  padding: 10px 12px;
+  border-top: 1px solid #f0f0f2;
+  vertical-align: middle;
+}
+.punchRow:hover, .totalsTable tbody tr:hover { background: #fafafa; }
+.numeric { text-align: right; font-variant-numeric: tabular-nums; }
+.personCell { width: 24%; }
+.flagsCell { width: 16%; }
+.actionsCell { width: 130px; }
+.mobileLabel { display: none; }
+.detailRow td { background: #fafafa; padding: 16px; }
+.totalsTable tfoot { border-top: 1px solid #e4e4e7; }
+
+.dialog {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  width: min(640px, calc(100vw - 24px));
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  border: 1px solid #e4e4e7;
+  border-radius: 12px;
+  background: white;
+  color: #18181b;
+  box-shadow: 0 16px 48px #0003;
+}
+.dialog::backdrop { background: #0008; }
+
+/* Reflow on smaller screens; the page remains the only vertical scroll area. */
+@container timecards (max-width: 1050px) {
+  .punchTable th, .punchTable td { padding: 9px 8px; }
+  .personCell { width: 20%; }
+  .flagsCell { width: 13%; }
+}
+@container timecards (max-width: 760px) {
+  .punchTable, .punchTable tbody { display: block; }
+  .punchTable thead { display: none; }
+  .punchRow {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    border-top: 1px solid #e4e4e7;
+    padding: 8px;
+  }
+  .punchTable .punchRow td { width: auto; min-width: 0; border: 0; padding: 6px; }
+  .punchTable .personCell { grid-column: 1 / -1; }
+  .punchTable .numeric { text-align: left; }
+  .mobileLabel { display: block; margin-bottom: 4px; color: #71717a; font-size: 10px; }
+  .detailRow, .detailRow td { display: block; }
+  .totalsTable th, .totalsTable td { padding: 8px; }
+  .totalsTable { font-size: 12px; }
+  .totalsTable td:first-child button { gap: 6px; }
+}
+@media (prefers-color-scheme: dark) {
+  .punchTable th, .totalsTable th { background: #18181b; color: #a1a1aa; }
+  .punchTable td, .totalsTable td, .punchRow, .totalsTable tfoot { border-color: #27272a; }
+  .punchRow:hover, .totalsTable tbody tr:hover, .detailRow td { background: #1e1e22; }
+  .dialog { background: #18181b; color: #f4f4f5; border-color: #3f3f46; }
+  .mobileLabel { color: #a1a1aa; }
+}
