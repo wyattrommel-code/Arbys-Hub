@@ -12,6 +12,7 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
   const calls = [];
   let station = null;
   let managerActive = true;
+  let storageFailure = false;
   const rateKeys = [];
   const gatewaySecret = 'synthetic-clock-gateway-secret-at-least-32-characters';
   const approvals = [];
@@ -55,13 +56,22 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
       if (valid) station = { ...station, device_hash: params.p_device_hash, paired_at: new Date().toISOString(), device_expires_at: new Date(Date.now()+86400000).toISOString(), pairing_hash:null, pairing_expires_at:null };
       res.end(JSON.stringify(!!valid)); return;
     }
-    if (url.pathname === '/rest/v1/rpc/hub_correct_missed_punch') {
+    if (url.pathname.startsWith('/storage/v1/object/punch-photos/') && req.method === 'POST') {
+      let bytes=0; for await (const part of req) bytes+=part.length;
+      assert.ok(bytes>0);
+      if (storageFailure) { res.statusCode=500; res.end(JSON.stringify({message:'Synthetic upload failure'})); }
+      else res.end(JSON.stringify({Key:url.pathname.split('/object/')[1]}));
+      return;
+    }
+    if (url.pathname === '/rest/v1/rpc/hub_correct_missed_punch_photo') {
       let body = ''; for await (const part of req) body += part;
       const params = JSON.parse(body);
       assert.equal(params.p_employee, ids.gm);
-      assert.equal(params.p_type, 'forgot_clock_in');
+      assert.ok(['forgot_clock_in','forgot_clock_out','forgot_break_start','forgot_break_end'].includes(params.p_type));
+      assert.ok(params.p_photo_url.includes(`/punch-photos/payson/${ids.gm}/`));
+      assert.equal(params.p_face_detected,true);
       assert.equal(params.p_claimed, '2026-09-29T15:00:00.000Z');
-      res.end(JSON.stringify({punch:{...punch,clock_out:null,on_break:false}})); return;
+      res.end(JSON.stringify({punch:{...punch,clock_out:params.p_type === 'forgot_clock_out' ? new Date().toISOString() : null,on_break:params.p_type === 'forgot_break_start'}})); return;
     }
     const idFilter = url.searchParams.get("id");
     const id = idFilter?.startsWith("eq.") ? idFilter.slice(3) : null;
@@ -189,7 +199,7 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
     clockApp.stdout.destroy(); clockApp.stderr.destroy(); clockApp.unref();
   });
   const clockRequest = (path,cookieValue='',method='GET',body,originValue=clockOrigin)=>fetch(clockOrigin+path,{
-    method,redirect:'manual',headers:{Cookie:cookieValue,Origin:originValue,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined,
+    method,redirect:'manual',headers:{Cookie:cookieValue,Origin:originValue,...(body instanceof FormData ? {} : {'Content-Type':'application/json'})},body:body instanceof FormData ? body : body?JSON.stringify(body):undefined,
   });
   let clockReady=false;
   for(let i=0;i<120;i++){
@@ -220,16 +230,37 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
   assert.equal(new Set(rateKeys).size,2); // pairing attempts cannot consume the employee-PIN budget
   assert.deepEqual(await (await clockRequest('/api/clock/status',authorized)).json(),{paired:true,unlocked:true});
   assert.equal((await clockRequest('/api/clock/roster',authorized)).status,200);
-  const missed = {employee_id:ids.gm,pin:'0000',type:'forgot_clock_in',claimed_time:'2026-09-29T09:00',reason:'Missed while busy',punch_id:null,break_id:null};
-  assert.equal((await clockRequest('/api/clock/corrections',authorized,'POST',missed)).status,401);
-  assert.equal((await clockRequest('/api/clock/corrections',authorized,'POST',{...missed,pin:'5678',employee_id:ids.crew})).status,401);
-  assert.equal((await clockRequest('/api/clock/corrections',authorized,'POST',{...missed,pin:'5678'},'https://attacker.invalid')).status,403);
+
+  const missed = {employee_id:ids.gm,pin:'0000',type:'forgot_clock_in',claimed_time:'2026-09-29T09:00',reason:'Missed while busy',punch_id:'',break_id:''};
+  const jpeg = new Blob([new Uint8Array([255,216,255,0,255,217])],{type:'image/jpeg'});
+  const correctionForm = (body,photo=jpeg) => {
+    const form=new FormData(); Object.entries({...body,face_detected:'true'}).forEach(([key,value])=>form.set(key,value));
+    if (photo) form.set('file',photo,'capture.jpg'); return form;
+  };
+  assert.equal((await clockRequest('/api/clock/corrections',authorized,'POST',correctionForm(missed))).status,401);
+  assert.equal((await clockRequest('/api/clock/corrections',authorized,'POST',correctionForm({...missed,pin:'5678',employee_id:ids.crew}))).status,401);
+  assert.equal((await clockRequest('/api/clock/corrections',authorized,'POST',correctionForm({...missed,pin:'5678'}),'https://attacker.invalid')).status,403);
   assert.equal((await request('/api/clock/corrections',authorized,'POST',{...missed,pin:'5678'})).status,401);
-  assert.equal((await clockRequest('/api/clock/corrections',authorized,'POST',{...missed,type:'delete_punch'})).status,400);
-  const savedMissed = await clockRequest('/api/clock/corrections',authorized,'POST',{...missed,pin:'5678'});
-  assert.equal(savedMissed.status,200,await savedMissed.clone().text());
-  assert.deepEqual(await savedMissed.json(),{ok:true,action:'forgot_clock_in',clocked_in:true,on_break:false});
-  assert.match(savedMissed.headers.get('cache-control'),/no-store/);
+  assert.equal((await clockRequest('/api/clock/corrections',authorized,'POST',correctionForm({...missed,type:'delete_punch'}))).status,400);
+  assert.equal((await clockRequest('/api/clock/corrections',authorized,'POST',{...missed,pin:'5678'})).status,400);
+  for (const type of ['forgot_clock_in','forgot_clock_out','forgot_break_start','forgot_break_end']) {
+    const body={...missed,type,pin:'5678'};
+    const before=calls.filter(c=>c.path.includes('hub_correct_missed_punch_photo')).length;
+    for (const invalid of [null,new Blob([],{type:'image/jpeg'}),new Blob(['not a photo'],{type:'image/jpeg'})]) {
+      assert.equal((await clockRequest('/api/clock/corrections',authorized,'POST',correctionForm(body,invalid))).status,400);
+    }
+    assert.equal(calls.filter(c=>c.path.includes('hub_correct_missed_punch_photo')).length,before);
+    const saved=await clockRequest('/api/clock/corrections',authorized,'POST',correctionForm(body));
+    assert.equal(saved.status,200,await saved.clone().text());
+    assert.deepEqual(await saved.json(),{ok:true,action:type,clocked_in:type!=='forgot_clock_out',on_break:type==='forgot_break_start'});
+    assert.match(saved.headers.get('cache-control'),/no-store/);
+  }
+  storageFailure=true;
+  const rpcCount=calls.filter(c=>c.path.includes('hub_correct_missed_punch_photo')).length;
+  assert.equal((await clockRequest('/api/clock/corrections',authorized,'POST',correctionForm({...missed,pin:'5678'}))).status,500);
+  assert.equal(calls.filter(c=>c.path.includes('hub_correct_missed_punch_photo')).length,rpcCount);
+  assert.equal(calls.some(c=>c.path==='/storage/v1/bucket'),false);
+  storageFailure=false;
   managerActive=false;
   assert.deepEqual(await (await clockRequest('/api/clock/status',authorized)).json(),{paired:true,unlocked:false});
   assert.equal((await clockRequest('/api/clock/roster',authorized)).status,401);

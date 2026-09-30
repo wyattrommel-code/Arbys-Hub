@@ -3,195 +3,94 @@
 import { useEffect, useRef, useState } from "react";
 import { captureJpegBlob, createFaceDetector } from "@/lib/face-detect";
 
-const FACE_FALLBACK_MS = 4500;
-
-export default function FaceCapture({
-  actionLabel = "Capture & continue",
-  onCaptured,
-  onCancel,
-  busy = false,
-}) {
+export default function FaceCapture({ actionLabel = "Take photo", onCaptured, onCancel, busy = false }) {
   const videoRef = useRef(null);
-  const streamRef = useRef(null);
-  const detectorRef = useRef(null);
-  const rafRef = useRef(0);
+  const faceRef = useRef({ found: false, at: 0 });
+  const captureLock = useRef(false);
   const [cameraError, setCameraError] = useState("");
-  const [facePresent, setFacePresent] = useState(false);
-  const [timedOut, setTimedOut] = useState(false);
+  const [ready, setReady] = useState(false);
   const [capturing, setCapturing] = useState(false);
 
   useEffect(() => {
-    let cancelled = false;
-    const startedAt = Date.now();
-
+    let cancelled = false, stream, timer;
+    const detectorPromise = createFaceDetector();
     async function start() {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
-          audio: false,
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "user", width: { ideal: 960 }, height: { ideal: 720 },
+            resizeMode: "none", frameRate: { ideal: 24, max: 30 } }, audio: false,
         });
-        if (cancelled) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
-        }
-        streamRef.current = stream;
-        const video = videoRef.current;
-        if (video) {
-          video.srcObject = stream;
-          await video.play();
-        }
-        try {
-          detectorRef.current = await createFaceDetector();
-        } catch {
-          detectorRef.current = null;
+        if (cancelled) { stream.getTracks().forEach(track => track.stop()); return; }
+        const track = stream.getVideoTracks()[0];
+        const zoom = track.getCapabilities?.().zoom;
+        if (zoom && Number.isFinite(zoom.min)) {
+          // Browser-controlled zoom only; do not crop the camera's native frame.
+          try { await track.applyConstraints({ advanced: [{ zoom: zoom.min }] }); } catch { /* optional */ }
         }
         if (cancelled) return;
-
-        const tick = async () => {
+        const video = videoRef.current;
+        video.srcObject = stream;
+        await video.play();
+        if (cancelled) return;
+        setReady(video.readyState >= 2 && video.videoWidth > 0);
+        const detector = await detectorPromise;
+        const canvas = document.createElement("canvas");
+        async function tick() {
           if (cancelled) return;
-          const videoEl = videoRef.current;
-          const detector = detectorRef.current;
-          if (videoEl && detector && videoEl.readyState >= 2) {
-            try {
-              const found = await detector.detect(videoEl);
-              if (!cancelled) {
-                setFacePresent(Boolean(found));
-                if (found) setTimedOut(false);
-                else if (Date.now() - startedAt >= FACE_FALLBACK_MS) setTimedOut(true);
-              }
-            } catch {
-              if (!cancelled && Date.now() - startedAt >= FACE_FALLBACK_MS) setTimedOut(true);
+          if (captureLock.current) { timer = window.setTimeout(tick, 750); return; }
+          if (video.readyState >= 2 && video.videoWidth > 0) {
+            const scale = Math.min(1, 320 / Math.max(video.videoWidth, video.videoHeight));
+            canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+            canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+            const ctx = canvas.getContext("2d");
+            if (ctx) {
+              ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+              try {
+                const found = await detector.detect(canvas);
+                if (!cancelled) faceRef.current = { found: Boolean(found), at: performance.now() };
+              } catch { /* Photo capture remains available if detection is unavailable. */ }
             }
-          } else if (!cancelled && Date.now() - startedAt >= FACE_FALLBACK_MS) {
-            setTimedOut(true);
           }
-          rafRef.current = window.setTimeout(tick, 200);
-        };
+          if (!cancelled) timer = window.setTimeout(tick, 750);
+        }
         tick();
       } catch (err) {
-        if (!cancelled) {
-          setCameraError(err?.message || "Camera is blocked. Allow camera access and try again.");
-        }
+        if (!cancelled) setCameraError(err?.message || "Allow camera access and try again.");
       }
     }
-
     start();
-
     return () => {
       cancelled = true;
-      window.clearTimeout(rafRef.current);
-      detectorRef.current?.close?.();
-      streamRef.current?.getTracks?.().forEach((t) => t.stop());
-      streamRef.current = null;
+      window.clearTimeout(timer);
+      stream?.getTracks().forEach(track => track.stop());
     };
   }, []);
 
-  async function captureAndSend(faceDetected) {
-    const video = videoRef.current;
-    if (!video || capturing || busy) return;
-    setCapturing(true);
+  async function capture() {
+    if (!ready || busy || captureLock.current) return;
+    captureLock.current = true; setCapturing(true); setCameraError("");
     try {
-      const blob = await captureJpegBlob(video);
-      onCaptured(blob, faceDetected);
+      const face = faceRef.current;
+      const blob = await captureJpegBlob(videoRef.current);
+      await onCaptured(blob, face.found && performance.now() - face.at < 1500);
     } catch (err) {
-      setCameraError(err?.message || "Could not capture photo.");
-    } finally {
-      setCapturing(false);
-    }
+      setCameraError(err?.message || "Could not capture photo. Try again.");
+    } finally { captureLock.current = false; setCapturing(false); }
   }
-
-  async function handleCapture() {
-    const video = videoRef.current;
-    const detector = detectorRef.current;
-    if (!video || capturing || busy) return;
-    setCapturing(true);
-    try {
-      let present = facePresent;
-      if (detector) {
-        present = await detector.detect(video);
-        setFacePresent(present);
-      }
-      if (!present) {
-        setTimedOut(true);
-        return;
-      }
-      const blob = await captureJpegBlob(video);
-      onCaptured(blob, true);
-    } catch (err) {
-      setCameraError(err?.message || "Could not capture photo.");
-    } finally {
-      setCapturing(false);
-    }
-  }
-
   const locked = busy || capturing;
-  const showAnyway = timedOut && !facePresent && !cameraError;
-
   return (
     <div className="flex flex-col items-center">
-      <div className="relative w-full overflow-hidden rounded-2xl bg-black">
-        <video
-          ref={videoRef}
-          className="h-[min(52vh,420px)] w-full object-cover"
-          style={{ transform: "scaleX(-1)" }}
-          playsInline
-          muted
-          autoPlay
-        />
-        <div
-          className={`pointer-events-none absolute inset-x-8 top-8 bottom-8 rounded-[40%] border-4 ${
-            facePresent ? "border-emerald-400" : "border-white/50"
-          }`}
-        />
-        <p
-          className={`absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full px-3 py-1 text-sm font-semibold ${
-            facePresent ? "bg-emerald-500 text-white" : "bg-black/70 text-white"
-          }`}
-        >
-          {facePresent ? "Face detected" : "Look at the camera — hats are OK"}
-        </p>
+      <div className="w-full overflow-hidden rounded-2xl bg-black">
+        <video ref={videoRef} className="h-[min(52vh,420px)] w-full object-contain" style={{ transform: "scaleX(-1)" }}
+          playsInline muted autoPlay onLoadedData={() => setReady(true)} aria-label="Camera preview" />
       </div>
-
-      {cameraError ? (
-        <p className="mt-4 text-center text-base font-medium text-red-600" role="alert">
-          {cameraError}
-        </p>
-      ) : showAnyway ? (
-        <p className="mt-4 text-center text-sm text-zinc-500">
-          Couldn&apos;t confirm a face (hats and lighting can do that). Take the photo anyway.
-        </p>
-      ) : (
-        <p className="mt-4 text-center text-sm text-zinc-500">
-          Capture is enabled once a face is in the frame.
-        </p>
-      )}
-
-      <button
-        type="button"
-        disabled={locked || !facePresent || Boolean(cameraError)}
-        onClick={handleCapture}
-        className="mt-6 w-full min-h-16 rounded-2xl bg-[#C8102E] text-xl font-bold text-white shadow-sm disabled:opacity-40"
-      >
-        {locked ? "Working…" : actionLabel}
+      {cameraError && <p className="mt-4 text-center text-base font-medium text-red-600" role="alert">{cameraError}</p>}
+      <button type="button" disabled={locked || !ready} onClick={capture}
+        className="mt-6 min-h-16 w-full rounded-2xl bg-[#C8102E] text-xl font-bold text-white disabled:opacity-40">
+        {locked ? "Saving…" : actionLabel}
       </button>
-      {showAnyway ? (
-        <button
-          type="button"
-          disabled={locked}
-          onClick={() => captureAndSend(false)}
-          className="mt-3 w-full min-h-16 rounded-2xl border-2 border-[#C8102E] text-xl font-bold text-[#C8102E] disabled:opacity-40"
-        >
-          Take photo anyway
-        </button>
-      ) : null}
-      <button
-        type="button"
-        disabled={locked}
-        onClick={onCancel}
-        className="mt-3 min-h-12 w-full rounded-2xl border border-zinc-300 text-base font-semibold dark:border-zinc-700"
-      >
-        Cancel
-      </button>
+      <button type="button" disabled={locked} onClick={onCancel}
+        className="mt-3 min-h-12 w-full rounded-2xl border border-zinc-300 text-base font-semibold dark:border-zinc-700">Cancel</button>
     </div>
   );
 }

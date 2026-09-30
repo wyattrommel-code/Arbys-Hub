@@ -6,7 +6,7 @@ export const metadata = {
 
 export default function TimeClockSettingsPage() {
   return (
-    <section className="mx-auto w-full max-w-4xl flex-1 px-4 py-5 sm:px-6">
+    <section className="mx-auto w-full max-w-[1440px] flex-1 px-3 py-3 sm:px-4">
       <AttendanceSettings />
     </section>
   );

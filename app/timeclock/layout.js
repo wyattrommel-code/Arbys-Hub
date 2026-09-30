@@ -1,19 +1,7 @@
-import Link from "next/link";
-
+import HubClockNav from "@/components/clock/HubClockNav";
 export default function TimeClockLayout({ children }) {
-  return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div className="flex justify-end px-4 pt-3">
-        <Link
-          href={process.env.CLOCK_SITE_URL || "/clock"}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-xs font-semibold text-[#C8102E] hover:underline"
-        >
-          Open time clock kiosk
-        </Link>
-      </div>
-      {children}
-    </div>
-  );
+  return <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+    <HubClockNav kioskUrl={process.env.CLOCK_SITE_URL || "/clock"} />
+    {children}
+  </div>;
 }

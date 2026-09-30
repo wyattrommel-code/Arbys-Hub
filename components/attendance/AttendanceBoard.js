@@ -199,11 +199,11 @@ export default function AttendanceBoard() {
   );
 
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 py-5">
+    <div className="mx-auto flex w-full max-w-[1440px] flex-1 flex-col gap-3 px-3 py-3 sm:px-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Attendance flags</h2>
-          <p className="text-sm text-zinc-500">Late, no-show, call-out, and unscheduled work vs the published schedule.</p>
+          <p className="text-sm text-zinc-500">Review attendance against the published schedule.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <a
@@ -229,8 +229,8 @@ export default function AttendanceBoard() {
         </p>
       ) : null}
 
-      <section className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-        <p className="text-sm font-semibold">Patterns</p>
+      <details className="rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
+        <summary className="cursor-pointer text-sm font-semibold">Attendance patterns <span className="ml-2 text-xs font-normal text-zinc-500">{chronic.length ? `${chronic.length} employees to review` : "30 / 60 / 90 days"}</span></summary>
         <div className="mt-2 flex flex-wrap gap-2">
           {WINDOWS.map((days) => (
             <button
@@ -253,7 +253,7 @@ export default function AttendanceBoard() {
           <p className="mt-3 text-sm text-zinc-500">No chronic patterns in this window.</p>
         )}
         <div className="mt-3 overflow-x-auto">
-          <table className="min-w-[640px] w-full text-left text-sm">
+          <table className="min-w-[560px] w-full text-left text-sm">
             <thead className="bg-zinc-50 text-xs uppercase text-zinc-500 dark:bg-zinc-800">
               <tr>
                 <th className="px-2 py-2">Employee</th>
@@ -283,11 +283,13 @@ export default function AttendanceBoard() {
             </tbody>
           </table>
         </div>
-      </section>
+      </details>
 
+      <details className="rounded-lg border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900">
+        <summary className="cursor-pointer text-sm font-semibold text-[#C8102E]">Add attendance event</summary>
       <form
         onSubmit={addManual}
-        className="grid gap-3 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:grid-cols-2 lg:grid-cols-5"
+        className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5"
       >
         <label className="text-xs font-medium text-zinc-600">
           Employee
@@ -348,8 +350,9 @@ export default function AttendanceBoard() {
           </button>
         </div>
       </form>
+      </details>
 
-      <section className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+      <section className="rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
         <div className="grid gap-3 sm:grid-cols-3">
           <label className="text-xs font-medium text-zinc-600">
             From
@@ -389,8 +392,8 @@ export default function AttendanceBoard() {
         {loading ? (
           <p className="mt-4 text-sm text-zinc-500">Loading flags…</p>
         ) : (
-          <div className="mt-4 overflow-x-auto">
-            <table className="min-w-[860px] w-full text-left text-sm">
+          <div className="mt-3 overflow-x-auto">
+            <table className="min-w-[720px] w-full text-left text-sm">
               <thead className="bg-zinc-50 text-xs uppercase text-zinc-500 dark:bg-zinc-800">
                 <tr>
                   <th className="px-2 py-2">Date</th>
@@ -418,10 +421,11 @@ export default function AttendanceBoard() {
                     <td className="px-2 py-2 text-zinc-600">{event.shift_label}</td>
                     <td className="px-2 py-2">
                       <textarea
-                        rows={2}
+                        rows={1}
                         value={noteDrafts[event.id] ?? event.note}
                         onChange={(e) => setNoteDrafts((s) => ({ ...s, [event.id]: e.target.value }))}
-                        className="w-full rounded-md border border-zinc-200 px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-950"
+                        aria-label={`Note for ${event.employee_name}`}
+                        className="min-h-8 w-full rounded-md border border-zinc-200 px-2 py-1 text-sm focus:min-h-16 dark:border-zinc-700 dark:bg-zinc-950"
                       />
                       {noteDrafts[event.id] != null && noteDrafts[event.id] !== event.note ? (
                         <button

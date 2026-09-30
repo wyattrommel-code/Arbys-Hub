@@ -82,7 +82,7 @@ export default function AttendanceSettings() {
 
   function toggle(field, label, hint, locked = false) {
     return (
-      <label className="flex items-start gap-3 rounded-lg border border-zinc-200 px-3 py-3 text-sm dark:border-zinc-700">
+      <label className="flex items-start gap-3 rounded-lg border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700">
         <input
           type="checkbox"
           className="mt-0.5"
@@ -103,7 +103,7 @@ export default function AttendanceSettings() {
   }
 
   return (
-    <form onSubmit={save} className="max-w-xl space-y-5">
+    <form onSubmit={save} className="max-w-4xl space-y-3">
       <div>
         <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Time clock settings</h2>
         <p className="mt-1 text-sm text-zinc-500">
@@ -135,12 +135,12 @@ export default function AttendanceSettings() {
         </label>
       </div>
 
-      <div className="space-y-2">
-        {toggle("require_face_on_clock_in", "Require face on clock-in", "Time clock waits for a detected face before capturing.")}
+      <div className="grid gap-2 sm:grid-cols-2">
+        {toggle("require_face_on_clock_in", "Require photo on clock-in", "Photo required; face detection runs in the background.")}
         {toggle(
           "require_photo_on_clock_out",
           "Require photo on clock-out",
-          "Same camera and face-present capture as clock-in."
+          "Use the same photo capture as clock-in."
         )}
         {toggle(
           "use_break_punches",
@@ -155,8 +155,8 @@ export default function AttendanceSettings() {
             : "Payroll uses exact punch times minus the shift’s unpaid break.",
           Boolean(form.use_break_punches)
         )}
-        <p className="rounded-lg border border-zinc-200 px-3 py-3 text-sm text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
-          Breaks are unpaid. Start/end break does not take a photo.
+        <p className="rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
+          Breaks are unpaid. Every missed-punch correction requires a photo, including missed breaks.
         </p>
       </div>
 

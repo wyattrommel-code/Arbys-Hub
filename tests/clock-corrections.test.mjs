@@ -46,14 +46,18 @@ test('missed punches update state, paid minutes and audit atomically', async t =
   `);
   const migration=(await readdir(new URL('../supabase/migrations/',import.meta.url))).find(f=>f.endsWith('_missed_clock_corrections.sql'));
   await db.exec(await readFile(new URL('../supabase/migrations/'+migration,import.meta.url),'utf8'));
+  const photoMigration=(await readdir(new URL('../supabase/migrations/',import.meta.url))).find(f=>f.endsWith('_correction_photos.sql'));
+  await db.exec(await readFile(new URL('../supabase/migrations/'+photoMigration,import.meta.url),'utf8'));
   const id='11111111-1111-4111-8111-111111111111';
   const now=Date.now(); const at=mins=>new Date(now-mins*60000).toISOString();
-  const call=async(type,time,punch=null,br=null)=> (await db.query('select hub_correct_missed_punch($1,$2,$3,$4,$5,$6) as result',[id,type,time,'Forgot while busy',punch,br])).rows[0].result;
+  const call=async(type,time,punch=null,br=null)=> (await db.query('select hub_correct_missed_punch_photo($1,$2,$3,$4,$5,$6,$7,$8) as result',[id,type,time,'Forgot while busy',`https://synthetic.invalid/storage/v1/object/public/punch-photos/payson/${id}/photo.jpg`,true,punch,br])).rows[0].result;
   const count=async(table)=>(await db.query(`select count(*)::int as n from ${table}`)).rows[0].n;
   for (const role of ['anon','authenticated']) {
     await db.exec(`set role ${role}`); await assert.rejects(call('forgot_clock_in',at(240)),/permission denied/); await db.exec('reset role');
   }
   await db.exec('set role service_role');
+  await assert.rejects(db.query("select hub_correct_missed_punch($1,'forgot_clock_in',now(),'Missing photo',null,null)",[id]),/permission denied/);
+  await assert.rejects(db.query("select hub_correct_missed_punch_photo($1,'forgot_clock_in',now(),'Missing photo',null,false,null,null)",[id]),/photo is required/);
   await assert.rejects(call('forgot_clock_in',at(-10)),/past 7 days/);
   await assert.rejects(call('forgot_clock_in',at(8*1440)),/past 7 days/);
   const first=await call('forgot_clock_in',at(240)); const punch=first.punch.id;
@@ -73,7 +77,8 @@ test('missed punches update state, paid minutes and audit atomically', async t =
   const out=await call('forgot_clock_out',at(60),punch);
   assert.equal(out.punch.worked_minutes,150); assert.equal(out.punch.status,'closed');
   assert.equal(await count('punch_corrections'),4);
-  await assert.rejects(call('forgot_clock_in',at(100)),/overlaps/);
+  assert.equal((await db.query('select count(*)::int as n from punch_corrections where photo_url is not null and face_detected and photo_captured_at > claimed_time')).rows[0].n,4);
+  await assert.rejects(call('forgot_clock_in' ,at(100)),/overlaps/);
   // A failed audit insert must roll back the status change too.
   await db.exec(`reset role; create function reject_audit() returns trigger language plpgsql as $$begin raise exception 'test audit failure'; end;$$;
     create trigger reject_audit before insert on punch_corrections for each row execute function reject_audit(); set role service_role;`);

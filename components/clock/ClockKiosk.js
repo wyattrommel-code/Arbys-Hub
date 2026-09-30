@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import EmployeeAvatar from "@/components/EmployeeAvatar";
 import FaceCapture from "@/components/clock/FaceCapture";
+import { createFaceDetector } from "@/lib/face-detect";
 import PinPad from "@/components/PinPad";
 import { STORE_TIMEZONE } from "@/lib/constants";
 import { formatClock } from "@/lib/schedule";
@@ -74,6 +75,7 @@ export default function ClockKiosk() {
   const sectionRefs = useRef({});
 
   useEffect(() => {
+    createFaceDetector().catch(() => {});
     setClock(nowLabel());
     setToday(getStoreToday());
     const id = window.setInterval(() => setClock(nowLabel()), 1000);
@@ -306,16 +308,16 @@ export default function ClockKiosk() {
   }
 
 
-  async function submitCorrection(event) {
-    event.preventDefault();
+  async function submitCorrection(photoBlob, faceDetected) {
     if (loading) return;
     setLoading(true); setError("");
     try {
-      const res = await fetch("/api/clock/corrections", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...correction, pin, employee_id: selected.id,
-          punch_id: session.openPunch?.id || null, break_id: session.openBreak?.id || null }),
-      });
+      const form = new FormData();
+      Object.entries({ ...correction, pin, employee_id: selected.id,
+        punch_id: session.openPunch?.id || "", break_id: session.openBreak?.id || "" }).forEach(([key, value]) => form.set(key, value));
+      form.set("file", photoBlob, "correction.jpg");
+      form.set("face_detected", faceDetected ? "true" : "false");
+      const res = await fetch("/api/clock/corrections", { method: "POST", body: form });
       const data = await res.json();
       if (!res.ok) {
         if (res.status === 401 || (res.status === 409 && /select your name again/i.test(data.error || ""))) { bounceToList(data.error); await loadRoster({ silent: true }); }
@@ -572,7 +574,7 @@ export default function ClockKiosk() {
           ) : null}
 
           {step === "correction" && correction ? (
-            <form onSubmit={submitCorrection} className="mx-auto w-full max-w-lg">
+            <form onSubmit={event => { event.preventDefault(); setError(""); setStep("correction_photo"); }} className="mx-auto w-full max-w-lg">
               <PunchHeader employee={selected} clockedIn={clockedIn} onBreak={onBreak} />
               <h2 className="mt-5 text-center text-2xl font-bold">{CORRECTION_LABELS[correction.type]}</h2>
               <p className="mt-3 text-center">Your status updates immediately. A GM or assistant manager must review the corrected timecard.</p>
@@ -584,9 +586,18 @@ export default function ClockKiosk() {
                 <textarea required minLength={3} maxLength={1000} rows={3} value={correction.reason} onChange={e => setCorrection({ ...correction, reason: e.target.value })} className="mt-2 w-full rounded-xl border border-zinc-300 p-3 dark:bg-zinc-900" />
               </label>
               {error && <p role="alert" className="mt-3 text-red-700">{error}</p>}
-              <button disabled={loading} className="mt-5 min-h-16 w-full rounded-2xl bg-[#C8102E] text-xl font-bold text-white disabled:opacity-40">{loading ? "Saving…" : "Save missed time"}</button>
+              <button disabled={loading} className="mt-5 min-h-16 w-full rounded-2xl bg-[#C8102E] text-xl font-bold text-white disabled:opacity-40">Continue to photo</button>
               <button type="button" disabled={loading} onClick={() => { setStep("actions"); setError(""); }} className="mt-3 min-h-12 w-full rounded-2xl border border-zinc-300 font-semibold">Back</button>
             </form>
+          ) : null}
+
+          {step === "correction_photo" && correction ? (
+            <>
+              <PunchHeader employee={selected} clockedIn={clockedIn} onBreak={onBreak} />
+              {error && <p role="alert" className="mt-3 text-center text-red-700">{error}</p>}
+              <FaceCapture busy={loading} actionLabel="Capture & save missed time" onCaptured={submitCorrection}
+                onCancel={() => { setError(""); setStep("correction"); }} />
+            </>
           ) : null}
 
           {step === "correction_done" ? (

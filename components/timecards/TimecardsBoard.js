@@ -15,7 +15,7 @@ function PunchPhotoThumb({ url, label, noFace, onOpen }) {
   }
   return (
     <button type="button" onClick={onOpen} className="relative block" title={label}>
-      <img src={url} alt={label} className="h-11 w-11 rounded-md object-cover" />
+      <img src={url} alt={label} className="h-8 w-8 rounded-md object-cover" />
       <span className="mt-0.5 block text-[9px] font-semibold uppercase text-zinc-500">{label}</span>
       {noFace ? (
         <span className="absolute -right-1 -top-1 rounded bg-red-600 px-1 text-[9px] font-bold text-white">
@@ -181,18 +181,11 @@ export default function TimecardsBoard() {
   const canEdit = Boolean(payload?.can_edit);
 
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 py-5">
+    <div className="mx-auto flex w-full max-w-[1440px] flex-1 flex-col gap-3 px-3 py-3 sm:px-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Timecards</h2>
-          <p className="text-sm text-zinc-500">
-            Exact punch times for payroll. Hours on screen are 2 decimals; the CSV is unrounded
-            {payload?.use_break_punches
-              ? " and subtracts actual unpaid break punches."
-              : payload?.subtract_scheduled_break
-                ? " and subtracts each shift's unpaid break."
-                : "."}
-          </p>
+          <p className="text-xs text-zinc-500">Review punches, approve flagged hours, and export payroll.</p>
         </div>
         <button
           type="button"
@@ -204,16 +197,11 @@ export default function TimecardsBoard() {
         </button>
       </div>
 
-      {payload?.payroll_blocked && <div role="status" className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-900">
-        <p className="font-bold">⚑ Payroll on hold: {payload.pending_count} red flags awaiting approval</p>
-        <p>Recorded hours are preserved. Close incomplete punches and have a GM or assistant manager approve each flagged timecard before exporting payroll.</p>
-        <button className="mt-2 font-semibold underline" onClick={() => { setReviewFilter("pending"); setSearch(""); }}>Review red flags</button>
+      {payload?.payroll_blocked && <div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">
+        <span><strong>Payroll on hold</strong> · {payload.pending_count} flagged · {payload.open_count || 0} open <span className="text-xs">— close and approve before exporting.</span></span>
+        <button className="min-h-8 font-semibold underline" onClick={() => { setReviewFilter(payload.pending_count ? "pending" : "open"); setSearch(""); }}>Review punches</button>
       </div>}
-      {payload?.open_count ? (
-        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950" role="status">
-          {payload.open_count} open punch{payload.open_count === 1 ? "" : "es"} — never clocked out. Fix before paying.
-        </p>
-      ) : null}
+      {!payload?.payroll_blocked && Boolean(payload?.open_count) && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">{payload.open_count} open punches need closing before payroll.</p>}
 
       {error ? (
         <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800" role="alert">
@@ -221,79 +209,44 @@ export default function TimecardsBoard() {
         </p>
       ) : null}
 
-      <section className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-        <div className="mb-4 flex flex-wrap items-end gap-3">
-          <label className="flex-1 text-sm font-semibold">Pay period
-            <select aria-label="Pay period" value={selectedPeriod?.from || "custom"} onChange={(event) => {
-              const period = periodOptions.find((item) => item.from === event.target.value);
+      <section aria-label="Timecard filters" className="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="min-w-48 flex-1 text-xs font-semibold">Pay period
+            <select aria-label="Pay period" value={selectedPeriod?.from || "custom"} onChange={event => {
+              const period = periodOptions.find(item => item.from === event.target.value);
               if (period) { setFrom(period.from); setTo(period.to); }
-            }} className="mt-1 block w-full rounded-lg border border-zinc-300 bg-white p-2 dark:bg-zinc-950">
+            }} className="mt-1 block min-h-9 w-full rounded-md border border-zinc-300 bg-transparent px-2 text-sm dark:bg-zinc-900">
               {!selectedPeriod && <option value="custom">Custom date range</option>}
-              {periodOptions.map((period) => <option key={period.from} value={period.from}>{period.from} — {period.to}</option>)}
+              {periodOptions.map(period => <option key={period.from} value={period.from}>{period.from} — {period.to}</option>)}
             </select>
           </label>
-          <button type="button" disabled={loading} onClick={load} className="rounded-lg border border-[#C8102E] px-4 py-2 text-sm font-semibold text-[#C8102E] disabled:opacity-50">Refresh punches</button>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={setThisWeek} className="rounded-full border border-zinc-300 px-3 py-1 text-xs font-semibold">
-            This week
-          </button>
-          <button type="button" onClick={setLastWeek} className="rounded-full border border-zinc-300 px-3 py-1 text-xs font-semibold">
-            Last week
-          </button>
-          <button type="button" onClick={setLast14} className="rounded-full border border-zinc-300 px-3 py-1 text-xs font-semibold">
-            Last 14 days
-          </button>
-        </div>
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <label className="text-xs font-medium text-zinc-600">
-            Pay period start
-            <input
-              type="date"
-              value={from}
-              onChange={(e) => setFrom(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-zinc-300 px-2 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-            />
+          <label className="min-w-40 flex-1 text-xs font-semibold">Employee
+            <input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search names" className="mt-1 block min-h-9 w-full rounded-md border border-zinc-300 bg-transparent px-2 text-sm" />
           </label>
-          <label className="text-xs font-medium text-zinc-600">
-            Pay period end
-            <input
-              type="date"
-              value={to}
-              onChange={(e) => setTo(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-zinc-300 px-2 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-            />
+          <label className="text-xs font-semibold">Show
+            <select value={reviewFilter} onChange={event => setReviewFilter(event.target.value)} className="mt-1 block min-h-9 rounded-md border border-zinc-300 bg-transparent px-2 text-sm dark:bg-zinc-900">
+              <option value="all">All punches</option><option value="pending">Needs review</option><option value="open">Open punches</option><option value="unscheduled">Unscheduled</option><option value="edited">Edited punches</option><option value="long">Over 16 hours</option><option value="photo">Face not detected</option>
+            </select>
           </label>
-        </div>
-        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
-          <div className="rounded-lg border border-zinc-200 p-3 text-sm dark:border-zinc-700">
-            <p className="text-xs text-zinc-500">Recorded hours</p>
-            <p className="font-bold">{payload?.grand_display || "0.00"} hrs</p>
-          </div>
-          <div className="rounded-lg border border-zinc-200 p-3 text-sm dark:border-zinc-700">
-            <p className="text-xs text-zinc-500">Cleared for payroll</p>
-            <p className="font-bold">{payload?.approved_display || "0.00"} hrs</p>
-          </div>
-          <div className="rounded-lg border border-zinc-200 p-3 text-sm dark:border-zinc-700">
-            <p className="text-xs text-red-700">Awaiting review / completion</p>
-            <p className="font-bold text-red-800">{payload?.pending_display || "0.00"} hrs / {payload?.open_count || 0} open</p>
+          <button type="button" disabled={loading} onClick={load} className="min-h-9 rounded-md border border-zinc-300 px-3 text-sm font-semibold disabled:opacity-50">Refresh</button>
+          <div className="flex gap-1" aria-label="Timecard view">
+            {[["punches","Punches"],["totals","Totals"]].map(([value,label]) => <button key={value} type="button" aria-pressed={view === value} onClick={() => setView(value)} className={`min-h-9 rounded-md px-3 text-sm font-semibold ${view === value ? "bg-[#C8102E] text-white" : "border border-zinc-300"}`}>{label}</button>)}
           </div>
         </div>
-      </section>
-
-      <section className="flex flex-wrap items-end gap-3 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-        <label className="min-w-48 flex-1 text-xs font-semibold">Find an employee
-          <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search employee names" className="mt-1 block w-full rounded-lg border border-zinc-300 bg-transparent p-2 text-sm" />
-        </label>
-        <label className="text-xs font-semibold">Review
-          <select value={reviewFilter} onChange={(event) => setReviewFilter(event.target.value)} className="mt-1 block rounded-lg border border-zinc-300 bg-white p-2 text-sm dark:bg-zinc-950">
-            <option value="all">All punches</option><option value="pending">Red flags awaiting approval</option><option value="open">Open punches</option><option value="unscheduled">Unscheduled</option><option value="edited">Edited punches</option><option value="long">Over 16 hours</option><option value="photo">Face not detected</option>
-          </select>
-        </label>
-        <div className="flex gap-1" aria-label="Timecard view">
-          {[['punches', 'Punch details'], ['totals', 'Employee totals']].map(([value, label]) => <button key={value} type="button" aria-pressed={view === value} onClick={() => setView(value)} className={`rounded-lg px-3 py-2 text-sm font-semibold ${view === value ? 'bg-[#C8102E] text-white' : 'border border-zinc-300'}`}>{label}</button>)}
+        <details className="mt-2 text-xs">
+          <summary className="w-fit cursor-pointer py-1 font-semibold text-zinc-600 dark:text-zinc-300">Change dates · {from} – {to}</summary>
+          <div className="mt-2 flex flex-wrap items-end gap-2">
+            <label>From<input type="date" value={from} onChange={e => setFrom(e.target.value)} className="ml-2 min-h-9 rounded-md border border-zinc-300 bg-transparent px-2 text-sm" /></label>
+            <label>To<input type="date" value={to} onChange={e => setTo(e.target.value)} className="ml-2 min-h-9 rounded-md border border-zinc-300 bg-transparent px-2 text-sm" /></label>
+            {[[setThisWeek,"This week"],[setLastWeek,"Last week"],[setLast14,"Last 14 days"]].map(([action,label]) => <button key={label} type="button" onClick={action} className="min-h-9 rounded-md border border-zinc-300 px-3 font-semibold">{label}</button>)}
+          </div>
+        </details>
+        <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-zinc-100 pt-2 text-xs dark:border-zinc-800">
+          <span>Recorded <strong className="text-sm tabular-nums">{payload?.grand_display || "0.00"} hrs</strong></span>
+          <span>Cleared <strong className="text-sm tabular-nums text-green-700">{payload?.approved_display || "0.00"} hrs</strong></span>
+          <span>Pending <strong className="text-sm tabular-nums text-red-700">{payload?.pending_display || "0.00"} hrs</strong></span>
+          <span className="text-zinc-500">{visibleGroups.length} employees · {visibleGroups.reduce((sum,group) => sum + group.punches.length,0)} shown</span>
         </div>
-        <p className="w-full text-xs text-zinc-500">Showing {visibleGroups.reduce((sum, group) => sum + group.punches.length, 0)} punches for {visibleGroups.length} employees. Recorded totals include all punches. Payroll export requires every punch in the selected date range to be cleared.</p>
       </section>
 
       {loading ? (
@@ -318,7 +271,7 @@ export default function TimecardsBoard() {
             key={group.key}
             className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
           >
-            <div className="flex items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+            <div className="flex items-center justify-between gap-3 border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
               <div className="flex min-w-0 items-center gap-3">
                 <EmployeeAvatar name={group.name} src={group.profile_photo_url} size="sm" />
                 <div className="min-w-0">
@@ -331,7 +284,7 @@ export default function TimecardsBoard() {
               <p className="text-sm font-bold">{group.totalDisplay} hrs <span className="text-xs font-normal text-zinc-500">recorded / {group.approvedDisplay} cleared / {group.pendingDisplay} pending</span></p>
             </div>
             <div className="overflow-x-auto">
-              <table className="min-w-[1100px] w-full text-left text-sm">
+              <table className="min-w-[900px] w-full text-left text-sm">
                 <thead className="bg-zinc-50 text-xs uppercase text-zinc-500 dark:bg-zinc-800">
                   <tr>
                     <th className="px-3 py-2">Photos</th>
@@ -401,8 +354,13 @@ export default function TimecardsBoard() {
                       </td>
                       <td className="px-3 py-2 text-zinc-600">{punch.scheduled_label}</td>
                       <td className="px-3 py-2">
+                        <details className="min-w-32 max-w-64 text-xs">
+                          <summary className={`cursor-pointer py-1 font-semibold ${punch.pending_approval ? "text-red-800" : punch.open ? "text-amber-800" : "text-green-800"}`}>
+                            {punch.pending_approval ? `Needs review (${punch.review_flags.length})` : punch.open ? "Open shift" : punch.approval ? "Approved" : punch.payroll_ready ? "Cleared" : "Details"}
+                          </summary>
+                          <div className="mt-2 border-t border-zinc-200 pt-2">
                         <div className="mb-2 text-xs">
-                          {punch.corrections?.map(c => <p key={c.id} className="mb-2 text-zinc-700 dark:text-zinc-300">{CORRECTION_LABELS[c.correction_type] || c.correction_type}: {toStoreDateTimeLocal(c.claimed_time).replace("T", " ")} — {c.reason}</p>)}
+                          {punch.corrections?.map(c => <p key={c.id} className="mb-2 text-zinc-700 dark:text-zinc-300">{CORRECTION_LABELS[c.correction_type] || c.correction_type}: {toStoreDateTimeLocal(c.claimed_time).replace("T", " ")} — {c.reason}{c.photo_url && <a href={c.photo_url} target="_blank" rel="noopener noreferrer" className="ml-2 font-semibold text-[#C8102E] underline">View correction photo</a>}</p>)}
                           {punch.pending_approval ? <div className="font-semibold text-red-800"><p>⚑ Manager approval required</p>{punch.review_flags.map((flag) => <p key={flag}>{flag}</p>)}</div> : punch.approval ? <div className="text-green-800"><p>Approved by {punch.approval.approved_by_name}</p><p>{toStoreDateTimeLocal(punch.approval.approved_at).replace("T", " ")}</p><p>{punch.approval.note}</p></div> : punch.payroll_ready ? <p className="text-green-800">Cleared for payroll</p> : null}
                         </div>
                         <div className="flex flex-wrap gap-1">
@@ -433,10 +391,12 @@ export default function TimecardsBoard() {
                             </span>
                           ) : null}
                         </div>
+                          </div>
+                        </details>
                       </td>
                       {canEdit ? (
                         <td className="px-3 py-2">
-                          {punch.pending_approval && <button type="button" disabled={punch.open || punch.on_break || punch.breaks.some((row) => row.open)} onClick={() => { setError(""); setApproving({ ...punch, note: "" }); }} className="mb-3 block rounded bg-[#C8102E] px-2 py-1 text-xs font-semibold text-white disabled:opacity-40">Review &amp; approve</button>}
+                          {punch.pending_approval && <button type="button" disabled={punch.open || punch.on_break || punch.breaks.some((row) => row.open)} onClick={() => { setError(""); setApproving({ ...punch, note: "" }); }} className="mb-1 block min-h-8 rounded bg-[#C8102E] px-2 py-1 text-xs font-semibold text-white disabled:opacity-40">Review &amp; approve</button>}
                           <button
                             type="button"
                             onClick={() =>
@@ -519,7 +479,7 @@ export default function TimecardsBoard() {
           <p className="text-sm">Scheduled: {approving.scheduled_label}</p>
           <p className="mt-2 font-semibold">{approving.worked_hours_display} recorded hours / {approving.break_minutes} unpaid break minutes</p>
           <ul className="my-3 list-inside list-disc text-sm text-red-800">{approving.review_flags.map((flag) => <li key={flag}>{flag}</li>)}</ul>
-          {approving.corrections?.map(c => <p key={c.id} className="my-2 text-sm">{CORRECTION_LABELS[c.correction_type] || c.correction_type}: {toStoreDateTimeLocal(c.claimed_time).replace("T", " ")} — {c.reason}</p>)}
+          {approving.corrections?.map(c => <p key={c.id} className="my-2 text-sm">{CORRECTION_LABELS[c.correction_type] || c.correction_type}: {toStoreDateTimeLocal(c.claimed_time).replace("T", " ")} — {c.reason}{c.photo_url && <a href={c.photo_url} target="_blank" rel="noopener noreferrer" className="ml-2 font-semibold text-[#C8102E] underline">View correction photo</a>}</p>)}
           <p className="text-sm text-zinc-600">Confirm these hours were worked. Approval clears this timecard for payroll and records your name, time, and note. Later changes require a new review.</p>
           <label className="mt-4 block text-sm font-semibold">Review note<textarea required maxLength={1000} value={approving.note} onChange={(event) => setApproving({ ...approving, note: event.target.value })} className="mt-1 block w-full rounded border border-zinc-300 p-2" /></label>
           {error && <p role="alert" className="mt-2 text-sm text-red-800">{error}</p>}
