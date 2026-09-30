@@ -1,5 +1,6 @@
 "use client";
 
+import PunchEditor from "@/components/timecards/PunchEditor";
 import { CORRECTION_LABELS } from "@/lib/clock-corrections";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -162,6 +163,8 @@ export default function TimecardsBoard() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          version: editing.version,
+          breaks: editing.breaks.filter(row => !row.removed).map(({id,start,end}) => ({id,start,end:end || null})),
           clock_in: editing.clock_in,
           clock_out: editing.clock_out || null,
           note: editing.note || "",
@@ -401,7 +404,10 @@ export default function TimecardsBoard() {
                             type="button"
                             onClick={() =>
                               setEditing({
-                                id: punch.id,
+                                id: punch.id, version: punch.edit_version,
+                                breaks: punch.breaks.map(row => ({id:row.id,key:row.id,start:toStoreDateTimeLocal(row.start),end:row.end ? toStoreDateTimeLocal(row.end) : ""})),
+                                edits: punch.edits || [],
+                                scheduled_unpaid: payload.use_break_punches ? null : punch.break_minutes,
                                 name: punch.employee_name,
                                 clock_in: toStoreDateTimeLocal(punch.clock_in),
                                 clock_out: punch.clock_out ? toStoreDateTimeLocal(punch.clock_out) : "",
@@ -410,7 +416,7 @@ export default function TimecardsBoard() {
                             }
                             className="text-xs font-semibold text-[#C8102E]"
                           >
-                            Edit
+                            Edit punch & breaks
                           </button>
                         </td>
                       ) : null}
@@ -486,64 +492,8 @@ export default function TimecardsBoard() {
           <div className="mt-4 flex justify-end gap-2"><button type="button" disabled={saving} onClick={() => setApproving(null)} className="rounded border px-3 py-2">Cancel</button><button type="submit" disabled={saving || !approving.note.trim()} className="rounded bg-[#C8102E] px-3 py-2 font-semibold text-white disabled:opacity-50">{saving ? "Saving..." : "Approve recorded hours"}</button></div>
         </form>
       </div>}
-      {editing ? (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-3 sm:items-center">
-          <form
-            onSubmit={saveEdit}
-            className="w-full max-w-md rounded-xl border border-zinc-200 bg-white p-4 shadow-xl dark:border-zinc-700 dark:bg-zinc-900"
-          >
-            <h3 className="text-lg font-semibold text-[#C8102E]">Edit punch</h3>
-            <p className="mt-1 text-sm text-zinc-500">{editing.name}</p>
-            {error && <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-800">{error}</p>}
-            <label className="mt-4 block text-xs font-medium text-zinc-600">
-              Clock in
-              <input
-                type="datetime-local"
-                step="1"
-                required
-                value={editing.clock_in}
-                onChange={(e) => setEditing((s) => ({ ...s, clock_in: e.target.value }))}
-                className="mt-1 w-full rounded-lg border border-zinc-300 px-2 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-              />
-            </label>
-            <label className="mt-3 block text-xs font-medium text-zinc-600">
-              Clock out
-              <input
-                type="datetime-local"
-                step="1"
-                value={editing.clock_out}
-                onChange={(e) => setEditing((s) => ({ ...s, clock_out: e.target.value }))}
-                className="mt-1 w-full rounded-lg border border-zinc-300 px-2 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-              />
-            </label>
-            <label className="mt-3 block text-xs font-medium text-zinc-600">
-              Note (optional)
-              <input
-                value={editing.note}
-                onChange={(e) => setEditing((s) => ({ ...s, note: e.target.value }))}
-                placeholder="Why this was corrected"
-                className="mt-1 w-full rounded-lg border border-zinc-300 px-2 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-              />
-            </label>
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setEditing(null)}
-                className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-semibold"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={saving}
-                className="rounded-lg bg-[#C8102E] px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
-              >
-                {saving ? "Saving…" : "Save"}
-              </button>
-            </div>
-          </form>
-        </div>
-      ) : null}
+      {editing && <PunchEditor editing={editing} setEditing={setEditing} saving={saving} error={error} onSave={saveEdit} onCancel={() => setEditing(null)} />}
+
     </div>
   );
 }

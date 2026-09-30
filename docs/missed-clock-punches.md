@@ -13,3 +13,9 @@ GM/AM review uses the existing Hub Timecards screen and its Red flags awaiting a
 Validation uses synthetic employees only: state choices, restaurant timezone parsing, atomic status/audit updates, paid-minute calculations, duplicate/stale submissions, invalid ordering, restricted database function access, HTTP device/PIN/ownership/origin checks, timecard approval invalidation, and the existing clock security suite. Production employee punches are not created for testing.
 
 Migration: `20260929180900_missed_clock_corrections.sql`. Deploy migration before the Hub and clock builds. Both Vercel projects follow GitHub main; clock output remains `.next-clock`.
+
+## Manager shift and break corrections
+
+The Hub Edit punch & breaks dialog follows the Jolt shift-detail pattern: clock-in/out, separate break start/end fields, and shift, break and paid-duration totals. GM/AM users can add, edit, remove, or undo removal before saving. Times use the restaurant timezone, including overnight shifts. Every save requires a reason, recalculates stored paid minutes, and creates a before/after entry with the manager and timestamp. Changes invalidate payroll approval. Open shifts keep the open status needed by the store clock.
+
+The service-only hub_edit_timecard transaction validates shift boundaries, non-overlapping breaks, employee ownership, and the original punch/break state before saving. Failed saves roll back all changes. Removing a break preserves its earlier missed-punch reason and photo through a nullable history link. Migration 20260930184004_timecard_break_editing.sql must be applied before publishing this editor.

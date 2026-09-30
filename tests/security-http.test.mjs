@@ -16,6 +16,9 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
   const rateKeys = [];
   const gatewaySecret = 'synthetic-clock-gateway-secret-at-least-32-characters';
   const approvals = [];
+  let breakRows = [];
+  const editCalls = [];
+  let editFailure = null;
   const punch = { id: "44444444-4444-4444-8444-444444444444", employee_id: ids.crew, employee_name: "Synthetic Crew", store_id: "payson", clock_in: "2026-09-09T16:00:00Z", clock_out: "2026-09-09T22:00:00Z", worked_minutes: 360, unscheduled: true };
 
   const backend = http.createServer(async (req, res) => {
@@ -73,6 +76,16 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
       assert.equal(params.p_claimed, '2026-09-29T15:00:00.000Z');
       res.end(JSON.stringify({punch:{...punch,clock_out:params.p_type === 'forgot_clock_out' ? new Date().toISOString() : null,on_break:params.p_type === 'forgot_break_start'}})); return;
     }
+    if (url.pathname === '/rest/v1/rpc/hub_edit_timecard') {
+      let body = ''; for await (const part of req) body += part;
+      const params = JSON.parse(body); editCalls.push(params);
+      if (editFailure) { res.statusCode=400; res.end(JSON.stringify(editFailure)); return; }
+      assert.equal(params.p_actor,ids.gm); assert.equal(params.p_actor_name,'Synthetic User');
+      breakRows=params.p_breaks.map((b,index)=>({id:b.id || `66666666-6666-4666-8666-${String(index).padStart(12,'0')}`,time_punch_id:punch.id,break_start:b.start,break_end:b.end,break_minutes:Math.round((Date.parse(b.end)-Date.parse(b.start))/60000),status:'edited'}));
+      Object.assign(punch,{clock_in:params.p_clock_in,clock_out:params.p_clock_out,status:'edited',edit_revision:(punch.edit_revision||0)+1,total_break_minutes:breakRows.reduce((n,b)=>n+b.break_minutes,0)});
+      punch.worked_minutes=Math.round((Date.parse(punch.clock_out)-Date.parse(punch.clock_in))/60000)-punch.total_break_minutes;
+      res.end(JSON.stringify(punch));return;
+    }
     const idFilter = url.searchParams.get("id");
     const id = idFilter?.startsWith("eq.") ? idFilter.slice(3) : null;
     let data = [];
@@ -81,6 +94,7 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
     else if (url.pathname === "/rest/v1/schedule_weeks") data = [{ week_start_date: "2026-09-06" }];
     else if (url.pathname === "/rest/v1/time_punches") data = [punch];
     else if (url.pathname === "/rest/v1/timecard_approvals") data = approvals;
+    else if (url.pathname === "/rest/v1/break_punches") data = breakRows;
     res.end(JSON.stringify(data));
   });
   await new Promise((resolve) => backend.listen(0, "127.0.0.1", resolve));
@@ -141,6 +155,31 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
   assert.equal(approvals[0].approved_by, ids.gm);
   assert.equal(approvals[0].reviewed_snapshot.minutes, 360);
   assert.equal((await request("/api/timecards/export" + range, gm)).status, 200);
+  const editPath=`/api/timecards/${punch.id}`;
+  const originalPunch={...punch};
+  let editInput={clock_in:'2026-09-09T10:00',clock_out:'2026-09-09T16:00',breaks:[{start:'2026-09-09T12:00',end:'2026-09-09T12:30'}],note:'Correct missed break',version:cards.groups[0].punches[0].edit_version};
+  assert.equal((await request(editPath,undefined,'PATCH',editInput)).status,401);
+  assert.equal((await request(editPath,crew,'PATCH',editInput)).status,403);
+  assert.equal((await request(editPath,gm,'PATCH',editInput,'https://attacker.invalid')).status,403);
+  assert.equal((await request(editPath,gm,'PATCH',{...editInput,note:''})).status,400);
+  assert.equal((await request(editPath,gm,'PATCH',{...editInput,version:'b'.repeat(64)})).status,409);
+  assert.equal(editCalls.length,0);
+  const addedResponse=await request(editPath,gm,'PATCH',editInput);
+  assert.equal(addedResponse.status,200,await addedResponse.text());
+  assert.equal(editCalls[0].p_expected.breaks.length,0);
+  assert.equal(punch.worked_minutes,330);
+  assert.equal((await request('/api/timecards/export'+range,gm)).status,409);
+  assert.equal((await request(editPath,gm,'PATCH',editInput)).status,409);
+  cards=await (await request('/api/timecards'+range,gm)).json();
+  editInput={...editInput,version:cards.groups[0].punches[0].edit_version,breaks:[{id:breakRows[0].id,start:'2026-09-09T12:00',end:'2026-09-09T12:45'}]};
+  assert.equal((await request(editPath,gm,'PATCH',editInput)).status,200);assert.equal(punch.worked_minutes,315);
+  cards=await (await request('/api/timecards'+range,gm)).json();
+  editInput={...editInput,version:cards.groups[0].punches[0].edit_version,breaks:[]};
+  editFailure={code:'40001',message:'This punch changed.'};
+  assert.equal((await request(editPath,gm,'PATCH',editInput)).status,409);assert.equal(breakRows.length,1);
+  editFailure=null;
+  assert.equal((await request(editPath,gm,'PATCH',editInput)).status,200);assert.equal(punch.worked_minutes,360);assert.equal(breakRows.length,0);
+  for (const key of Object.keys(punch)) delete punch[key];Object.assign(punch,originalPunch);
   punch.clock_out = "2026-09-09T22:30:00Z";
   assert.equal((await request("/api/timecards/export" + range, gm)).status, 409);
   punch.clock_out = null;

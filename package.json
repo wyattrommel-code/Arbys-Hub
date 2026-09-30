@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "test:brink": "node --import ./tests/resolve-local.mjs --test tests/brink.test.mjs tests/brink-storage.test.mjs tests/brink-sync.test.mjs tests/brink-employees.test.mjs tests/brink-definitions.test.mjs",
-    "test:timecards": "node --import ./tests/resolve-local.mjs --test tests/timecard-review.test.mjs",
+    "test:timecards": "node --import ./tests/resolve-local.mjs --test tests/timecard-review.test.mjs tests/timecard-edit.test.mjs",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
