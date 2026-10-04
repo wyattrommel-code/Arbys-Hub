@@ -3,7 +3,8 @@
 import { useMemo, useRef, useState } from "react";
 import { fetchEmployees } from "@/lib/employees";
 import { calculateOvertimeForWeekRows, getWeekEndSaturday, getWeekStartSunday } from "@/lib/laborOvertime";
-import { formatLongDate, resolveEmployeeId } from "@/lib/schedule";
+import { formatLongDate } from "@/lib/schedule";
+import { importScheduleCsv } from "@/lib/schedule-import";
 import { getSupabase } from "@/lib/supabase";
 import BrinkSalesImport from "@/components/BrinkSalesImport";
 
@@ -150,35 +151,6 @@ function parseLaborDate(rawValue) {
   const parsed = new Date(String(rawValue).trim());
   if (Number.isNaN(parsed.getTime())) return null;
   return parsed;
-}
-
-function parseIsoLikeDate(rawValue) {
-  if (!rawValue) return null;
-  const value = String(rawValue).trim();
-  if (!value) return null;
-  const parsed = new Date(`${value}T00:00:00`);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return parsed;
-}
-
-function parseTime12hTo24(rawValue) {
-  const value = String(rawValue || "").trim();
-  const m = value.match(/^(\d{1,2}):(\d{2})\s*(am|pm)$/i);
-  if (!m) return null;
-  let hour = Number(m[1]);
-  const minute = Number(m[2]);
-  const meridiem = m[3].toLowerCase();
-  if (hour < 1 || hour > 12 || minute < 0 || minute > 59) return null;
-  if (meridiem === "pm" && hour !== 12) hour += 12;
-  if (meridiem === "am" && hour === 12) hour = 0;
-  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:00`;
-}
-
-function getWeekStartMonday(dateValue) {
-  const d = new Date(`${toDateStr(dateValue)}T00:00:00`);
-  const day = (d.getDay() + 6) % 7;
-  d.setDate(d.getDate() - day);
-  return d;
 }
 
 async function upsertLaborOvertimeRows(supabase, updates) {
@@ -464,34 +436,6 @@ function parseLaborCsv(csvText) {
     });
   }
 
-  return { rows, error: null };
-}
-
-function parseScheduleCsv(csvText) {
-  const lines = csvText.split(/\r?\n/).filter((line) => line.trim().length > 0);
-  if (!lines.length) return { rows: [], error: "CSV file is empty." };
-  const headers = parseCsvLine(lines[0]).map((h) => h.trim());
-  const required = ["Role", "Employee", "Employee Id", "Date", "Time In", "Time Out", "Hours"];
-  const headerMap = new Map();
-  headers.forEach((name, idx) => headerMap.set(name, idx));
-  const missing = required.filter((name) => !headerMap.has(name));
-  if (missing.length) return { rows: [], error: `Missing required columns: ${missing.join(", ")}` };
-
-  const rows = [];
-  for (let i = 1; i < lines.length; i += 1) {
-    const cols = parseCsvLine(lines[i]);
-    if (!cols.some((c) => String(c || "").trim() !== "")) continue;
-    rows.push({
-      role: cols[headerMap.get("Role")] || "",
-      employee: cols[headerMap.get("Employee")] || "",
-      employeeId: cols[headerMap.get("Employee Id")] || "",
-      date: cols[headerMap.get("Date")] || "",
-      timeIn: cols[headerMap.get("Time In")] || "",
-      timeOut: cols[headerMap.get("Time Out")] || "",
-      hours: cols[headerMap.get("Hours")] || "",
-      rowNumber: i + 1,
-    });
-  }
   return { rows, error: null };
 }
 
@@ -892,83 +836,14 @@ export default function ImportPage() {
     setScheduleState({ loading: true, error: "", summary: null });
     try {
       const csvText = await readAsText(file);
-      const parsed = parseScheduleCsv(csvText);
-      if (parsed.error) {
-        setScheduleState({ loading: false, error: parsed.error, summary: null });
-        return;
+      const supabase = getSupabase();
+      const result = await importScheduleCsv(supabase, csvText);
+      try {
+        await recalcEmployeeAttendanceForNames(supabase, result.rows.map((row) => row.employee_name));
+      } catch {
+        // Keep import success even if attendance cache update fails.
       }
-
-      const upsertRows = [];
-      let skippedSystemCount = 0;
-      const employees = new Set();
-      const days = new Set();
-
-      for (const row of parsed.rows) {
-        const employeeName = String(row.employee || "").trim();
-        const isSystem =
-          !employeeName ||
-          employeeName.toLowerCase() === "joshua api" ||
-          employeeName.toLowerCase() === "store ." ||
-          employeeName.toLowerCase().includes("api");
-        if (isSystem) {
-          skippedSystemCount += 1;
-          continue;
-        }
-
-        const shiftDate = parseIsoLikeDate(row.date);
-        const scheduledStart = parseTime12hTo24(row.timeIn);
-        const scheduledEnd = parseTime12hTo24(row.timeOut);
-        if (!shiftDate || !scheduledStart || !scheduledEnd) continue;
-
-        const shiftDateStr = toDateStr(shiftDate);
-        const weekStartDate = getWeekStartMonday(shiftDate);
-        upsertRows.push({
-          shift_date: shiftDateStr,
-          employee_name: employeeName,
-          jolt_employee_id: String(row.employeeId || "").trim() || null,
-          role: String(row.role || "").trim() || null,
-          scheduled_start: scheduledStart,
-          scheduled_end: scheduledEnd,
-          scheduled_hours: parseMoneyLike(row.hours),
-          week_start_date: toDateStr(weekStartDate),
-          store_id: DEFAULT_STORE_ID,
-        });
-        employees.add(employeeName.toLowerCase());
-        days.add(shiftDateStr);
-      }
-
-      if (upsertRows.length > 0) {
-        const supabase = getSupabase();
-        const roster = await fetchEmployees(supabase, { select: "id, first_name, last_name" });
-        for (const row of upsertRows) {
-          row.employee_id = resolveEmployeeId(roster, { employee_name: row.employee_name });
-        }
-        const { error: upsertError } = await supabase
-          .from("schedule_shifts")
-          .upsert(upsertRows, { onConflict: "shift_date,employee_name,scheduled_start" });
-        if (upsertError) throw upsertError;
-        try {
-          await recalcEmployeeAttendanceForNames(supabase, upsertRows.map((r) => r.employee_name));
-        } catch {
-          // Keep import success even if attendance cache update fails.
-        }
-      }
-
-      const sortedDays = [...days].sort();
-      setScheduleState({
-        loading: false,
-        error: "",
-        summary: {
-          importedCount: upsertRows.length,
-          daysCovered: days.size,
-          employeesScheduled: employees.size,
-          skippedSystemCount,
-          dateRange:
-            sortedDays.length > 0
-              ? { start: sortedDays[0], end: sortedDays[sortedDays.length - 1] }
-              : null,
-        },
-      });
+      setScheduleState({ loading: false, error: "", summary: result.summary });
     } catch (error) {
       setScheduleState({
         loading: false,
@@ -1090,7 +965,9 @@ export default function ImportPage() {
         ) : null}
         {scheduleState.summary ? (
           <div className="mt-4 rounded-md bg-zinc-50 p-3 text-sm dark:bg-zinc-800/60">
-            <p>{scheduleState.summary.importedCount} shifts imported</p>
+            <p>{scheduleState.summary.importedCount} shifts processed</p>
+            <p>{scheduleState.summary.addedCount} added · {scheduleState.summary.updatedCount} updated · {scheduleState.summary.unchangedCount} already imported</p>
+            {scheduleState.summary.duplicateCount > 0 ? <p>{scheduleState.summary.duplicateCount} repeated CSV rows skipped</p> : null}
             <p>
               {scheduleState.summary.daysCovered} days covered
               {scheduleState.summary.dateRange
