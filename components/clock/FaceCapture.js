@@ -13,7 +13,7 @@ export default function FaceCapture({ actionLabel = "Take photo", onCaptured, on
 
   useEffect(() => {
     let cancelled = false, stream, timer;
-    const detectorPromise = createFaceDetector();
+    const detectorPromise = createFaceDetector().catch(() => null);
     async function start() {
       try {
         stream = await navigator.mediaDevices.getUserMedia({
@@ -34,6 +34,7 @@ export default function FaceCapture({ actionLabel = "Take photo", onCaptured, on
         if (cancelled) return;
         setReady(video.readyState >= 2 && video.videoWidth > 0);
         const detector = await detectorPromise;
+        if (!detector) return;
         const canvas = document.createElement("canvas");
         async function tick() {
           if (cancelled) return;

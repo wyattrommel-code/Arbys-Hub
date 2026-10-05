@@ -1,3 +1,4 @@
+import { OfflineReviewNotice } from "@/components/timecards/OfflineReview";
 import TimecardsBoard from "@/components/timecards/TimecardsBoard";
 
 export const metadata = {
@@ -5,5 +6,5 @@ export const metadata = {
 };
 
 export default function TimeClockTimecardsPage() {
-  return <TimecardsBoard />;
+  return <><OfflineReviewNotice /><TimecardsBoard /></>;
 }

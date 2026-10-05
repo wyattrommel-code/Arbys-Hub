@@ -9,6 +9,7 @@ export async function GET(request) {
   try {
     const url = new URL(request.url);
     const data = await loadTimecards(url.searchParams.get("from"), url.searchParams.get("to"));
+    if (data.offline_review_count > 0) return secureJson({ error: "Payroll export is on hold. Resolve the offline punches in this period first." }, { status: 409 });
     const grouped = groupTimecards(data.groups.flatMap((group) => group.punches));
     if (grouped.groups.some((group) => group.punches.some((punch) => !punch.payroll_ready))) {
       return secureJson({ error: "Payroll export is on hold. Resolve open punches and approve every red flag in this period." }, { status: 409 });

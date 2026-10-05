@@ -23,7 +23,7 @@ export async function proxy(request) {
     }
   }
   if (process.env.CLOCK_ONLY === "true") {
-    if (pathname === "/clock") return NextResponse.next();
+    if (["/clock", "/clock-sw.js", "/clock.webmanifest"].includes(pathname)) return NextResponse.next();
     if (pathname === "/") {
       const url = request.nextUrl.clone(); url.pathname = "/clock"; url.search = "";
       return NextResponse.rewrite(url);

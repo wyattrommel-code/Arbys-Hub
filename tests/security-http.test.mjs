@@ -1,3 +1,6 @@
+// offline-http coverage
+import { generateKeyPairSync, randomUUID } from "node:crypto";
+import { encryptOfflinePin } from "../lib/offline-clock.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -10,6 +13,9 @@ import { KIOSK_COOKIE_NAME } from "./test-fixtures.mjs";
 test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses", { timeout: 300000 }, async (t) => {
   const ids = { crew: "11111111-1111-4111-8111-111111111111", gm: "22222222-2222-4222-8222-222222222222", inactive: "33333333-3333-4333-8333-333333333333" };
   const calls = [];
+  const offlineReceipts=[];
+  const keyPair=generateKeyPairSync("rsa",{modulusLength:2048});
+  const offlineKey={public_jwk:keyPair.publicKey.export({format:"jwk"}),private_jwk:keyPair.privateKey.export({format:"jwk"})};
   let station = null;
   let managerActive = true;
   let storageFailure = false;
@@ -86,6 +92,32 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
       punch.worked_minutes=Math.round((Date.parse(punch.clock_out)-Date.parse(punch.clock_in))/60000)-punch.total_break_minutes;
       res.end(JSON.stringify(punch));return;
     }
+    if (url.pathname === '/rest/v1/clock_offline_keys') {
+      res.end(JSON.stringify([offlineKey]));return;
+    }
+    if (url.pathname === '/rest/v1/clock_offline_events') {
+      const wanted=url.searchParams.get('id')?.replace('eq.','');
+      let rows=offlineReceipts.filter(row=>(!wanted || row.id===wanted) && (!url.searchParams.has('status') || row.status===url.searchParams.get('status').replace('eq.','')) && (!url.searchParams.has('resolved_at') || !row.resolved_at));
+      for(const filter of url.searchParams.getAll('occurred_at')){
+        const dot=filter.indexOf('.'),op=filter.slice(0,dot),time=Date.parse(filter.slice(dot+1));
+        rows=rows.filter(row=>op==='gte'?Date.parse(row.event.occurred_at)>=time:Date.parse(row.event.occurred_at)<time);
+      }
+      res.setHeader('Content-Range',`0-${Math.max(0,rows.length-1)}/${rows.length}`);
+      res.end(JSON.stringify(rows));return;
+    }
+    if (url.pathname === '/rest/v1/rpc/hub_sync_offline_punch') {
+      let body='';for await(const part of req)body+=part;
+      const params=JSON.parse(body);
+      const receipt={id:params.p_event.id,status:params.p_issue?'review':'applied',device_hash:params.p_device,fingerprint:params.p_fingerprint,event:params.p_event,photo_url:params.p_photo,issue:params.p_issue,employee_id:params.p_event.employee_id};
+      offlineReceipts.push(receipt);res.end(JSON.stringify({id:receipt.id,status:receipt.status}));return;
+    }
+    if (url.pathname === '/rest/v1/rpc/hub_apply_offline_review') {
+      let body='';for await(const part of req)body+=part;const params=JSON.parse(body);
+      assert.equal(params.p_actor,ids.gm);assert.ok(params.p_note.length>3);
+      offlineReceipts.find(row=>row.id===params.p_id).resolved_at=new Date().toISOString();
+      res.end(JSON.stringify(punch));return;
+    }
+
     const idFilter = url.searchParams.get("id");
     const id = idFilter?.startsWith("eq.") ? idFilter.slice(3) : null;
     let data = [];
@@ -105,7 +137,7 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
   const origin = `http://localhost:${port}`;
   const secret = "http-test-only-secret-not-production";
   process.env.SESSION_SECRET = secret;
-  const app = spawn(process.execPath, ["node_modules/next/dist/bin/next", "dev", "--hostname", "localhost", "--port", String(port)], {
+  const app = spawn(process.execPath, ["node_modules/next/dist/bin/next", "dev", "--webpack", "--hostname", "localhost", "--port", String(port)], {
     cwd: process.cwd(), windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, NEXT_TELEMETRY_DISABLED: "1", NEXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${backend.address().port}`, NEXT_PUBLIC_SUPABASE_ANON_KEY: "fake-public-key", SUPABASE_SERVICE_ROLE_KEY: "fake-service-key", SESSION_SECRET: secret, VERCEL: "", CLOCK_ONLY: "false", CLOCK_GATEWAY_SECRET: gatewaySecret },
   });
@@ -226,7 +258,7 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
   const clockPort = findClockPort.address().port;
   await new Promise(resolve=>findClockPort.close(resolve));
   const clockOrigin = `http://localhost:${clockPort}`;
-  const clockApp = spawn(process.execPath,['node_modules/next/dist/bin/next','dev','--hostname','localhost','--port',String(clockPort)],{
+  const clockApp = spawn(process.execPath,['node_modules/next/dist/bin/next','dev','--webpack','--hostname','localhost','--port',String(clockPort)],{
     cwd:process.cwd(), windowsHide:true, stdio:['ignore','pipe','pipe'],
     env:{...process.env,NEXT_TELEMETRY_DISABLED:'1',CLOCK_ONLY:'true',HUB_BACKEND_URL:origin,CLOCK_GATEWAY_SECRET:gatewaySecret,
       SESSION_SECRET:'',NEXT_PUBLIC_SUPABASE_URL:'',NEXT_PUBLIC_SUPABASE_ANON_KEY:'',SUPABASE_SERVICE_ROLE_KEY:'',VERCEL:''},
@@ -269,6 +301,42 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
   assert.equal(new Set(rateKeys).size,2); // pairing attempts cannot consume the employee-PIN budget
   assert.deepEqual(await (await clockRequest('/api/clock/status',authorized)).json(),{paired:true,unlocked:true});
   assert.equal((await clockRequest('/api/clock/roster',authorized)).status,200);
+
+  assert.equal((await clockRequest('/api/clock/offline/bootstrap',gm)).status,401);
+  assert.equal((await request('/api/clock/offline/bootstrap',authorized)).status,401);
+  const prepared=await clockRequest('/api/clock/offline/bootstrap',authorized);
+  assert.equal(prepared.status,200,await prepared.clone().text());
+  const offlineSnapshot=(await prepared.json()).snapshot;
+  assert.ok(offlineSnapshot.lease);assert.equal(offlineSnapshot.public_key.d,undefined);
+  assert.ok(!JSON.stringify(offlineSnapshot).includes('private_jwk'));
+  const offlineTime=new Date(Date.now()-1000).toISOString();
+  const offlineEvent={id:randomUUID(),employee_id:ids.gm,kind:'clock_out',captured_at:offlineTime,occurred_at:offlineTime,reason:'',punch_id:punch.id,break_id:null,previous_id:null};
+  const offlineForm=async(event=offlineEvent,pin='5678',lease=offlineSnapshot.lease,photo=true)=>{
+    const form=new FormData();form.set('event',JSON.stringify(event));form.set('lease',lease);
+    form.set('sealed_pin',await encryptOfflinePin(offlineSnapshot.public_key,event,pin));form.set('face_detected','true');
+    if(photo)form.set('file',new Blob([new Uint8Array([255,216,255,0,255,217])],{type:'image/jpeg'}),'offline.jpg');return form;
+  };
+  assert.equal((await clockRequest('/api/clock/offline/sync',gm,'POST',await offlineForm())).status,401);
+  assert.equal((await clockRequest('/api/clock/offline/sync',authorized,'POST',await offlineForm(),'https://attacker.invalid')).status,403);
+  assert.equal((await clockRequest('/api/clock/offline/sync',authorized,'POST',await offlineForm(offlineEvent,'5678',offlineSnapshot.lease+'tamper'))).status,403);
+  assert.equal((await clockRequest('/api/clock/offline/sync',authorized,'POST',await offlineForm(offlineEvent,'5678',offlineSnapshot.lease,false))).status,400);
+  const form=await offlineForm();
+  let receipt=await clockRequest('/api/clock/offline/sync',authorized,'POST',form);
+  assert.equal(receipt.status,200,await receipt.clone().text());assert.equal((await receipt.json()).receipt.status,'applied');
+  receipt=await clockRequest('/api/clock/offline/sync',authorized,'POST',form);
+  assert.equal(receipt.status,200);assert.equal(offlineReceipts.length,1);
+  const invalidEvent={...offlineEvent,id:randomUUID()};
+  receipt=await clockRequest('/api/clock/offline/sync',authorized,'POST',await offlineForm(invalidEvent,'0000'));
+  assert.equal(receipt.status,200);assert.equal((await receipt.json()).receipt.status,'review');
+  assert.equal((await request('/api/timecards/offline',crew)).status,403);
+  assert.equal((await request('/api/timecards/offline',gm)).status,200);
+  assert.equal((await request('/api/timecards/offline',gm,'PATCH',{id:invalidEvent.id,note:'Reviewed'},'https://attacker.invalid')).status,403);
+  assert.equal((await request('/api/timecards/offline',crew,'PATCH',{id:invalidEvent.id,note:'Reviewed'})).status,403);
+  const today=new Date().toISOString().slice(0,10);
+  assert.equal((await request(`/api/timecards/export?from=${today}&to=${today}`,gm)).status,409);
+  assert.equal((await request('/api/timecards/offline',gm,'PATCH',{id:invalidEvent.id,note:'Photo and PIN entry verified',action:'apply'})).status,200);
+  assert.ok(offlineReceipts.find(row=>row.id===invalidEvent.id).resolved_at);
+
 
   const missed = {employee_id:ids.gm,pin:'0000',type:'forgot_clock_in',claimed_time:'2026-09-29T09:00',reason:'Missed while busy',punch_id:'',break_id:''};
   const jpeg = new Blob([new Uint8Array([255,216,255,0,255,217])],{type:'image/jpeg'});

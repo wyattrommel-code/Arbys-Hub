@@ -44,7 +44,7 @@ function Flags({ punch }) {
 
 function Corrections({ punch }) {
   return punch.corrections?.map((correction) => <p key={correction.id} className="mt-2 text-xs leading-relaxed">
-    <span className="font-medium">{CORRECTION_LABELS[correction.correction_type] || "Punch correction"}</span>
+    <span className="font-medium">{correction.source === "offline" ? "Offline " + correction.correction_type.replace("forgot_", "").replaceAll("_", " ") : CORRECTION_LABELS[correction.correction_type] || "Punch correction"}</span>
     {": "}{formatStoreDateTime(correction.claimed_time)} · {correction.reason}
     {correction.photo_url ? <a href={correction.photo_url} target="_blank" rel="noopener noreferrer" className="ml-2 font-semibold text-[#C8102E] underline dark:text-red-300">View correction photo</a> : null}
   </p>);

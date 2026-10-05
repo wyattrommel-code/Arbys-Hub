@@ -5,6 +5,7 @@ import EmployeeAvatar from "@/components/EmployeeAvatar";
 import FaceCapture from "@/components/clock/FaceCapture";
 import { createFaceDetector } from "@/lib/face-detect";
 import PinPad from "@/components/PinPad";
+import { clockFetch } from "@/lib/offline-clock-store";
 import { STORE_TIMEZONE } from "@/lib/constants";
 import { formatClock } from "@/lib/schedule";
 import { formatStoreTime, getStoreToday } from "@/lib/store-time";
@@ -85,10 +86,11 @@ export default function ClockKiosk() {
   const loadRoster = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);
     try {
-      const res = await fetch("/api/clock/roster");
+      const res = await clockFetch("/api/clock/roster");
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error || "Could not load roster.");
       setEmployees(data.employees || []);
+      window.dispatchEvent(new Event("clock-roster-updated"));
       setSyncedAt(data.synced_at || new Date().toISOString());
       if (!silent) setListError("");
     } catch (err) {
@@ -178,7 +180,7 @@ export default function ClockKiosk() {
         form.set("face_detected", faceDetected ? "true" : "false");
         if (photoBlob) form.set("file", photoBlob, "punch.jpg");
         const path = active.action === "clock_out" ? "/api/clock/out" : "/api/clock/in";
-        const res = await fetch(path, { method: "POST", body: form });
+        const res = await clockFetch(path, { method: "POST", body: form });
         const data = await res.json();
         if (!res.ok || !data.ok) {
           setError(data.error || "Could not save punch.");
@@ -220,7 +222,7 @@ export default function ClockKiosk() {
       setLoading(true);
       setError("");
       try {
-        const res = await fetch("/api/clock/identify", {
+        const res = await clockFetch("/api/clock/identify", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ pin: value, employee_id: employee.id }),
@@ -281,7 +283,7 @@ export default function ClockKiosk() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch(kind === "end" ? "/api/clock/break/end" : "/api/clock/break/start", {
+      const res = await clockFetch(kind === "end" ? "/api/clock/break/end" : "/api/clock/break/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pin, employee_id: selected.id }),
@@ -317,7 +319,7 @@ export default function ClockKiosk() {
         punch_id: session.openPunch?.id || "", break_id: session.openBreak?.id || "" }).forEach(([key, value]) => form.set(key, value));
       form.set("file", photoBlob, "correction.jpg");
       form.set("face_detected", faceDetected ? "true" : "false");
-      const res = await fetch("/api/clock/corrections", { method: "POST", body: form });
+      const res = await clockFetch("/api/clock/corrections", { method: "POST", body: form });
       const data = await res.json();
       if (!res.ok) {
         if (res.status === 401 || (res.status === 409 && /select your name again/i.test(data.error || ""))) { bounceToList(data.error); await loadRoster({ silent: true }); }
