@@ -1,3 +1,6 @@
+import { cookies } from 'next/headers';
+import { DEVICE_COOKIE, hashCredential } from '@/lib/security/clock-device';
+import { offlinePinVersion } from '@/lib/offline-clock-crypto';
 import { guardPinAttempt } from "@/lib/security/pin-guard";
 import { requireKiosk } from "@/lib/security/kiosk";
 import { secureJson } from "@/lib/security/http";
@@ -6,6 +9,7 @@ import {
   fetchClockEmployeeByPin,
   fetchOpenPunch,
   fetchRecentPunches,
+  fetchRecentClockOuts,
   fetchTodaysShiftsForEmployee,
   getAttendanceSettings,
   parsePin,
@@ -41,6 +45,8 @@ export async function POST(request) {
       return secureJson({ ok: false, error: "Invalid PIN" }, { status: 401 });
     }
 
+    const deviceHash = hashCredential((await cookies()).get(DEVICE_COOKIE).value);
+    const offlinePin = { version: offlinePinVersion(deviceHash, employee) };
     const [settings, openPunch, shifts, punches] = await Promise.all([
       getAttendanceSettings(supabase),
       fetchOpenPunch(supabase, employee.id),
@@ -53,6 +59,7 @@ export async function POST(request) {
       const openBreak = await fetchOpenBreak(supabase, punch.id);
       return secureJson({
         ok: true,
+        offlinePin,
         action: "clock_out",
         employee: serializeEmployee(employee),
         openPunch: {
@@ -71,12 +78,15 @@ export async function POST(request) {
 
     const shift = pickClockInShift(shifts, punches);
     const scheduled = Boolean(shift);
+    const clockOuts = await fetchRecentClockOuts(supabase, [employee.id]);
 
     return secureJson({
       ok: true,
+      offlinePin,
       action: "clock_in",
       employee: serializeEmployee(employee),
       openPunch: null,
+      last_clock_out: clockOuts.get(employee.id) || null,
       scheduled,
       shift: serializeShift(shift),
       needsAuthorization: !scheduled,

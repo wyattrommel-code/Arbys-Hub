@@ -17,3 +17,19 @@ test('camera captures the whole frame, caps upload size and rejects unready vide
   assert.deepEqual([canvas.width,canvas.height],[640,480]);
   await assert.rejects(captureJpegBlob({videoWidth:0,videoHeight:0,readyState:0}),/not ready/);
 });
+
+test('camera reuses one permission request, pauses between retakes and stops on release',async()=>{
+  const {createClockCamera}=await import('../lib/clock-camera.js');
+  let requests=0,idle,resolveStream;
+  const track={enabled:true,readyState:'live',stop(){this.readyState='ended';}};
+  const stream={getTracks:()=>[track],getVideoTracks:()=>[track]};
+  const camera=createClockCamera(()=>{requests++;return new Promise(resolve=>{resolveStream=resolve;});},callback=>{idle=callback;return 1;},()=>{idle=null;});
+  const first=camera.acquire();first.release();const second=camera.acquire();
+  await Promise.resolve();assert.equal(requests,1);resolveStream(stream);await first.ready;await second.ready;
+  assert.equal(track.enabled,true);second.release();assert.equal(track.enabled,false);assert.equal(track.readyState,'live');
+  const retake=camera.acquire();assert.equal(await retake.ready,stream);assert.equal(requests,1);assert.equal(track.enabled,true);
+  retake.release();idle();assert.equal(track.readyState,'ended');
+  const after=camera.acquire();await Promise.resolve();assert.equal(requests,2);
+  camera.close();const late={...track,readyState:'live'};resolveStream({getTracks:()=>[late],getVideoTracks:()=>[late]});
+  await assert.rejects(after.ready,/paused/);assert.equal(late.readyState,'ended');
+});

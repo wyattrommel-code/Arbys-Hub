@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { acquireClockCamera } from '@/lib/clock-camera';
 import { captureJpegBlob, createFaceDetector } from "@/lib/face-detect";
 
 export default function FaceCapture({ actionLabel = "Take photo", onCaptured, onCancel, busy = false }) {
@@ -9,18 +10,18 @@ export default function FaceCapture({ actionLabel = "Take photo", onCaptured, on
   const captureLock = useRef(false);
   const [cameraError, setCameraError] = useState("");
   const [ready, setReady] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   const [capturing, setCapturing] = useState(false);
 
   useEffect(() => {
     let cancelled = false, stream, timer;
+    setReady(false);setCameraError('');faceRef.current={found:false,at:0};
+    const camera=acquireClockCamera();
     const detectorPromise = createFaceDetector().catch(() => null);
     async function start() {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "user", width: { ideal: 960 }, height: { ideal: 720 },
-            resizeMode: "none", frameRate: { ideal: 24, max: 30 } }, audio: false,
-        });
-        if (cancelled) { stream.getTracks().forEach(track => track.stop()); return; }
+        stream = await camera.ready;
+        if (cancelled) return;
         const track = stream.getVideoTracks()[0];
         const zoom = track.getCapabilities?.().zoom;
         if (zoom && Number.isFinite(zoom.min)) {
@@ -56,15 +57,22 @@ export default function FaceCapture({ actionLabel = "Take photo", onCaptured, on
         }
         tick();
       } catch (err) {
-        if (!cancelled) setCameraError(err?.message || "Allow camera access and try again.");
+        if (!cancelled) setCameraError(err?.name==='NotAllowedError'
+          ? 'Camera access is blocked. In Safari, open the page menu → Website Settings → Camera → Allow, then try again.'
+          : err?.message || 'Camera unavailable. Try again.');
       }
     }
     start();
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
-      stream?.getTracks().forEach(track => track.stop());
+      camera.release();
     };
+  }, [attempt]);
+  useEffect(()=>{
+    const visible=()=>{if(document.visibilityState==='visible')setAttempt(value=>value+1);else setReady(false);};
+    document.addEventListener('visibilitychange',visible);
+    return ()=>document.removeEventListener('visibilitychange',visible);
   }, []);
 
   async function capture() {
@@ -86,6 +94,7 @@ export default function FaceCapture({ actionLabel = "Take photo", onCaptured, on
           playsInline muted autoPlay onLoadedData={() => setReady(true)} aria-label="Camera preview" />
       </div>
       {cameraError && <p className="mt-4 text-center text-base font-medium text-red-600" role="alert">{cameraError}</p>}
+      {cameraError && !ready && <button type="button" onClick={()=>setAttempt(value=>value+1)} className="mt-3 min-h-12 w-full rounded-xl border font-semibold">Try camera again</button>}
       <button type="button" disabled={locked || !ready} onClick={capture}
         className="mt-6 min-h-16 w-full rounded-2xl bg-[#C8102E] text-xl font-bold text-white disabled:opacity-40">
         {locked ? "Saving…" : actionLabel}

@@ -121,7 +121,9 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
     const idFilter = url.searchParams.get("id");
     const id = idFilter?.startsWith("eq.") ? idFilter.slice(3) : null;
     let data = [];
-    if (url.pathname === "/rest/v1/employees" && id) data = { id, first_name: "Synthetic", last_name: "User", is_active: id !== ids.inactive && (id !== ids.gm || managerActive), status: "active", store_id: "07462", role: id === ids.gm ? "gm" : "crew" };
+    if (url.pathname === "/rest/v1/employees" && id) data = { id, first_name: "Synthetic", last_name: "User", employee_code: "synthetic-hash", is_active: id !== ids.inactive && (id !== ids.gm || managerActive), status: "active", store_id: "07462", role: id === ids.gm ? "gm" : "crew" };
+    else if (url.pathname === "/rest/v1/employees" && url.searchParams.get('select') === 'id,employee_code') data = [{id:ids.gm,employee_code:'synthetic-hash'}];
+    else if (url.pathname === "/rest/v1/employees") data = [{id:ids.gm,first_name:'Synthetic',last_name:'Manager',is_active:true}];
     else if (url.pathname === "/rest/v1/employee_roles") data = [{ role_id: "r", employee_id: url.searchParams.get("employee_id")?.replace("eq.", ""), roles: { id: "r", name: "Test", access_tier: url.searchParams.get("employee_id") === `eq.${ids.gm}` ? "gm" : "crew", is_active: true } }];
     else if (url.pathname === "/rest/v1/schedule_weeks") data = [{ week_start_date: "2026-09-06" }];
     else if (url.pathname === "/rest/v1/time_punches") data = [punch];
@@ -307,7 +309,15 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
   const prepared=await clockRequest('/api/clock/offline/bootstrap',authorized);
   assert.equal(prepared.status,200,await prepared.clone().text());
   const offlineSnapshot=(await prepared.json()).snapshot;
-  assert.ok(offlineSnapshot.lease);assert.equal(offlineSnapshot.public_key.d,undefined);
+  const identified=await clockRequest('/api/clock/identify',authorized,'POST',{employee_id:ids.gm,pin:'5678'});
+  assert.equal(identified.status,200,await identified.clone().text());
+  const identity=await identified.json();
+  assert.ok(identity.offlinePin.version);
+  assert.equal(identity.offlinePin.version,offlineSnapshot.employees.find(row=>row.id===ids.gm).pin_version);
+  assert.ok(!JSON.stringify(identity).includes('synthetic-hash'));
+    assert.ok(!JSON.stringify(offlineSnapshot).includes('synthetic-hash'));
+    assert.equal((await clockRequest('/api/clock/identify',authorized,'POST',{employee_id:ids.gm,pin:'0000'})).status,401);
+    assert.ok(offlineSnapshot.lease);assert.equal(offlineSnapshot.public_key.d,undefined);
   assert.ok(!JSON.stringify(offlineSnapshot).includes('private_jwk'));
   const offlineTime=new Date(Date.now()-1000).toISOString();
   const offlineEvent={id:randomUUID(),employee_id:ids.gm,kind:'clock_out',captured_at:offlineTime,occurred_at:offlineTime,reason:'',punch_id:punch.id,break_id:null,previous_id:null};

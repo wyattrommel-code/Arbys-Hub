@@ -16,7 +16,10 @@ test('offline state follows queued order and correction choices',()=>{
   assert.deepEqual(offlineActions(projectRoster(snapshot,[])[0]),['clock_in','forgot_clock_in']);
   assert.equal(projectRoster(snapshot,queued.slice(0,1))[0].punch_id,`local:${first.id}`);
   assert.deepEqual(offlineActions(projectRoster(snapshot,queued.slice(0,2))[0]),['break_end','forgot_break_end']);
+  assert.equal(projectRoster(snapshot,queued.slice(0,2))[0].break_start,br.occurred_at);
   assert.equal(projectRoster(snapshot,queued.slice(0,3))[0].on_break,false);
+  assert.equal(projectRoster(snapshot,queued.slice(0,3))[0].break_start,null);
+  assert.equal(projectRoster(snapshot,queued)[0].last_clock_out,out.occurred_at);
   assert.equal(projectRoster(snapshot,queued.reverse())[0].clocked_in,false);
   assert.equal(projectRoster(snapshot,queued)[0].previous_id,out.id);
   const valid=makeEvent();valid.occurred_at=valid.captured_at;assert.equal(validateOfflineEvent(valid),valid);

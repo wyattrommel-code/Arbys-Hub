@@ -3,38 +3,41 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import ClockKiosk from './ClockKiosk';
 import KioskUnlock from './KioskUnlock';
 import OfflineClock from './OfflineClock';
+import { offlinePinReady } from '@/lib/offline-pin';
 import { canCapture } from '@/lib/offline-clock';
 import { clockFetch, disableOfflineCapture, readOfflineClock, syncOfflineClock } from '@/lib/offline-clock-store';
 
 export default function StationEntry() {
   const [status,setStatus]=useState(null), [error,setError]=useState(''), [code,setCode]=useState(''), [busy,setBusy]=useState(false);
   const [offline,setOffline]=useState(false), [state,setState]=useState({snapshot:null,events:[]});
-  const [offlineBusy,setOfflineBusy]=useState(false), [syncError,setSyncError]=useState(''), [shellReady,setShellReady]=useState(false);
-  const checking=useRef(false);
+  const [offlineBusy,setOfflineBusy]=useState(false), [syncError,setSyncError]=useState(''), [shellReady,setShellReady]=useState(false), [pinCacheError,setPinCacheError]=useState('');
+  const checking=useRef(false), checkAgain=useRef(false);
   const read=useCallback(async()=>{try{const current=await readOfflineClock();setState(current);return current;}catch(err){setSyncError(err.message);return null;}},[]);
   const check=useCallback(async()=>{
-    if(checking.current) return;
+    if(checking.current){checkAgain.current=true;return;}
     checking.current=true;
     try {
       const res=await clockFetch('/api/clock/status');
       if(!res.ok) throw new Error('Time clock connection unavailable.');
-      const next=await res.json();setStatus(next);setOffline(false);setError('');
-      if(!next.unlocked){await disableOfflineCapture();await read();return;}
-      try {await syncOfflineClock();setSyncError('');await read();}
+      const next=await res.json();setStatus(next);setError('');
+      if(!next.unlocked){setOffline(false);await disableOfflineCapture();await read();return;}
+      try {await syncOfflineClock();await read();setSyncError('');setOffline(false);}
       catch(err){setSyncError(err.message);if(err.status===401 || err.status===403){await disableOfflineCapture();}await read();}
     } catch(err){setOffline(true);setError(err.message);await read();}
-    finally{checking.current=false;}
+    finally{checking.current=false;if(checkAgain.current){checkAgain.current=false;check();}}
   },[read]);
   useEffect(()=>{
     if(navigator.onLine===false)setOffline(true);
     read();check();
     const timer=setInterval(check,30000);
+    const cacheFailed=event=>setPinCacheError(event.detail);
     const lost=()=>{setOffline(true);read();};
     const visible=()=>{if(document.visibilityState==='visible')check();};
     window.addEventListener('online',check);window.addEventListener('offline',lost);window.addEventListener('focus',check);
-    window.addEventListener('clock-network-failed',lost);window.addEventListener('clock-storage',read);window.addEventListener('clock-roster-updated',check);
+    window.addEventListener('clock-network-failed',lost);window.addEventListener('clock-storage',read);window.addEventListener('clock-punch-saved',check);
+    window.addEventListener('clock-pin-cache-failed',cacheFailed);
     document.addEventListener('visibilitychange',visible);
-    return ()=>{clearInterval(timer);window.removeEventListener('online',check);window.removeEventListener('offline',lost);window.removeEventListener('focus',check);window.removeEventListener('clock-network-failed',lost);window.removeEventListener('clock-storage',read);window.removeEventListener('clock-roster-updated',check);document.removeEventListener('visibilitychange',visible);};
+    return ()=>{window.removeEventListener('clock-pin-cache-failed',cacheFailed);clearInterval(timer);window.removeEventListener('online',check);window.removeEventListener('offline',lost);window.removeEventListener('focus',check);window.removeEventListener('clock-network-failed',lost);window.removeEventListener('clock-storage',read);window.removeEventListener('clock-punch-saved',check);document.removeEventListener('visibilitychange',visible);};
   },[check,read]);
   useEffect(()=>{
     // Only this dedicated clock page registers a worker. It caches the public shell, never APIs.
@@ -59,12 +62,17 @@ export default function StationEntry() {
     catch(err){setError(err.message);}finally{setBusy(false);}
   }
   const pending=state.events.filter(row=>!row.receipt).length;
-  const allowOffline=!!state.snapshot && (offline || pending>0 || offlineBusy);
+  const awaitingRefresh=state.events.length>0 && pending===0;
+  const pinReady=(state.snapshot?.employees || []).filter(employee=>offlinePinReady(state.snapshot,state.credentials,employee.id)).length;
+  const pinTotal=state.snapshot?.employees?.length || 0;
+  const allowOffline=!!state.snapshot && (offline || state.events.length>0 || offlineBusy);
   const available=status?.unlocked || (offline && state.snapshot);
   if(available) return <>
     <div role="status" className={`flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2 text-sm ${offline || pending || syncError ? 'bg-amber-100 text-amber-950' : 'bg-emerald-50 text-emerald-950'}`}>
-      <span>{offline?'Offline':pending?'Uploading saved punches':'Connected'} · {pending?`${pending} saved on this iPad` : canCapture(state.snapshot) && shellReady?'Ready for offline clocking':'Preparing offline clocking…'}{state.snapshot?.review_count>0?` · ${state.snapshot.review_count} need manager review in the Hub`:''}</span>
+      <span>{offline?'Offline':pending?'Uploading saved punches':awaitingRefresh?'Refreshing clock status':'Connected'} · {pending?`${pending} saved on this iPad` : canCapture(state.snapshot) && shellReady?pinReady===pinTotal && pinTotal>0?'Ready for offline clocking':`Offline PINs ready: ${pinReady}/${pinTotal}`:'Preparing offline clocking…'}{state.snapshot?.review_count>0?` · ${state.snapshot.review_count} need manager review in the Hub`:''}</span>
       <button onClick={check} className="min-h-9 px-2 font-semibold underline">Sync now</button>
+      {pinReady<pinTotal && !pending && <p className="w-full text-xs">Each employee needs one successful PIN entry while online on this iPad to prepare offline access.</p>}
+      {pinCacheError && <p role="alert" className="w-full text-xs">{pinCacheError}</p>}
       {syncError && <p className="w-full text-xs">{syncError}</p>}
     </div>
     {allowOffline?<OfflineClock state={state} onBusy={setOfflineBusy} onSaved={async()=>{await read();check();}}/>:<ClockKiosk/>}

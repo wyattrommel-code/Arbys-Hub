@@ -16,7 +16,7 @@
     "test:clock:build": "node --test tests/clock-build.test.mjs",
     "test:security:http": "node --import ./tests/resolve-local.mjs --test tests/security-http.test.mjs",
     "test:clock:corrections": "node --import ./tests/resolve-local.mjs --test tests/clock-corrections.test.mjs tests/camera.test.mjs",
-    "test:clock:offline": "node --import ./tests/resolve-local.mjs --test tests/offline-clock.test.mjs tests/offline-clock-store.test.mjs tests/offline-clock-worker.test.mjs"
+    "test:clock:offline": "node --import ./tests/resolve-local.mjs --test tests/offline-clock.test.mjs tests/offline-clock-store.test.mjs tests/offline-clock-worker.test.mjs tests/offline-pin.test.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

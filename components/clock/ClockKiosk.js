@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import EmployeeAvatar from "@/components/EmployeeAvatar";
 import FaceCapture from "@/components/clock/FaceCapture";
+import CorrectionContext from "@/components/clock/CorrectionContext";
 import { createFaceDetector } from "@/lib/face-detect";
 import PinPad from "@/components/PinPad";
-import { clockFetch } from "@/lib/offline-clock-store";
+import { clockFetch, rememberOnlinePin } from "@/lib/offline-clock-store";
 import { STORE_TIMEZONE } from "@/lib/constants";
 import { formatClock } from "@/lib/schedule";
 import { formatStoreTime, getStoreToday } from "@/lib/store-time";
@@ -90,7 +91,6 @@ export default function ClockKiosk() {
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error || "Could not load roster.");
       setEmployees(data.employees || []);
-      window.dispatchEvent(new Event("clock-roster-updated"));
       setSyncedAt(data.synced_at || new Date().toISOString());
       if (!silent) setListError("");
     } catch (err) {
@@ -102,6 +102,9 @@ export default function ClockKiosk() {
 
   useEffect(() => {
     loadRoster();
+    const synced=()=>loadRoster({silent:true});
+    window.addEventListener('clock-sync-complete',synced);
+    return ()=>window.removeEventListener('clock-sync-complete',synced);
   }, [loadRoster]);
 
   useEffect(() => {
@@ -200,6 +203,7 @@ export default function ClockKiosk() {
         });
         setStep("done");
         await loadRoster({ silent: true });
+        window.dispatchEvent(new Event("clock-punch-saved"));
       } catch {
         setError("Could not save punch. Try again.");
         if (needsPhotoFor(active)) setStep("photo");
@@ -231,6 +235,12 @@ export default function ClockKiosk() {
         if (!res.ok || !data.ok) {
           bounceToList(data.error || "Invalid PIN");
           return;
+        }
+        try {
+          await rememberOnlinePin(employee.id,value,data.offlinePin?.version);
+          window.dispatchEvent(new CustomEvent('clock-pin-cache-failed',{detail:''}));
+        } catch {
+          window.dispatchEvent(new CustomEvent('clock-pin-cache-failed',{detail:'Online clocking works, but this PIN could not be prepared for offline use. Keep the iPad connected and try again.'}));
         }
         setSession(data);
         setStep("actions");
@@ -302,6 +312,7 @@ export default function ClockKiosk() {
       });
       setStep("done");
       await loadRoster({ silent: true });
+      window.dispatchEvent(new Event("clock-punch-saved"));
     } catch {
       setError("Could not save break. Try again.");
     } finally {
@@ -328,6 +339,7 @@ export default function ClockKiosk() {
       }
       setResult(data); setPin(""); setStep("correction_done");
       await loadRoster({ silent: true });
+      window.dispatchEvent(new Event("clock-punch-saved"));
     } catch { bounceToList("Connection interrupted. Select your name again to check your status before retrying."); }
     finally { setLoading(false); }
   }
@@ -579,6 +591,7 @@ export default function ClockKiosk() {
             <form onSubmit={event => { event.preventDefault(); setError(""); setStep("correction_photo"); }} className="mx-auto w-full max-w-lg">
               <PunchHeader employee={selected} clockedIn={clockedIn} onBreak={onBreak} />
               <h2 className="mt-5 text-center text-2xl font-bold">{CORRECTION_LABELS[correction.type]}</h2>
+              <CorrectionContext type={correction.type} clockIn={session?.openPunch?.clock_in} breakStart={session?.openBreak?.break_start} lastClockOut={session?.last_clock_out} />
               <p className="mt-3 text-center">Your status updates immediately. A GM or assistant manager must review the corrected timecard.</p>
               <label className="mt-5 block font-semibold">Actual date and time (restaurant time)
                 <input type="datetime-local" required value={correction.claimed_time} max={toStoreDateTimeLocal(new Date().toISOString()).slice(0,16)} onChange={e => setCorrection({ ...correction, claimed_time: e.target.value })} className="mt-2 min-h-14 w-full rounded-xl border border-zinc-300 p-3 dark:bg-zinc-900" />
