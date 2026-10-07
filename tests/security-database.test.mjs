@@ -38,6 +38,7 @@ test("security cutover preserves records and enforces database access", async (t
   `);
   const migration = await readFile(new URL("../supabase/migrations/20260908210505_secure_hub_data_access.sql", import.meta.url), "utf8");
   await db.exec(migration);
+  await db.exec(await readFile(new URL('../supabase/migrations/20261007214117_clock_employee_pin_lookup.sql', import.meta.url), 'utf8'));
   const value = async (sql, params = []) => (await db.query(sql, params)).rows[0]?.value;
   assert.equal(await value("select count(*)::int as value from public.employees"), 2);
   assert.equal(await value("select count(*)::int as value from public.employee_wages"), 1);
@@ -51,18 +52,34 @@ test("security cutover preserves records and enforces database access", async (t
     }
     assert.equal(await value("select count(*)::int as value from storage.objects"), 0);
     await assert.rejects(db.exec("insert into storage.objects values (4,'profile-photos')"), /row-level security/);
+    await assert.rejects(db.exec("select public.hub_verify_employee_pin('1234','07462','11111111-1111-4111-8111-111111111111')"), /permission denied/);
     await db.exec("reset role");
   }
 
   await db.exec("set role service_role");
+  const verify = (pin, store='07462', id='11111111-1111-4111-8111-111111111111') => value('select public.hub_verify_employee_pin($1,$2,$3) as value', [pin,store,id]);
+  assert.equal(await verify('1234'), true);
+  assert.equal(await verify('5678'), false, 'Another employee PIN must not pass');
+  assert.equal(await verify('1234','other'), false);
+  assert.equal(await verify('1234',null), false);
+  assert.equal(await verify('1234','07462',null), false);
+  assert.equal(await verify('1234','07462','99999999-9999-4999-8999-999999999999'), false);
+  assert.equal(await verify(null), false);
+  assert.equal(await verify('12345'), false);
   assert.equal(await value("select public.hub_employee_by_pin('1234','07462') as value"), "11111111-1111-4111-8111-111111111111");
   assert.equal(await value("select public.hub_employee_by_pin('0000','07462') as value"), null);
   assert.equal(await value("select public.hub_employee_by_pin('1234','other') as value"), null);
   await assert.rejects(db.exec("insert into public.employees(store_id,employee_code) values ('07462','1234')"), /already in use/);
   await db.exec("update public.employees set employee_code='9012' where first_name='Synthetic' and last_name='Crew'");
+  assert.equal(await verify('1234'), false, 'A changed PIN immediately invalidates the old PIN');
+  assert.equal(await verify('9012'), true);
+  await db.exec("update public.employees set status='terminated' where last_name='Crew'");
+  assert.equal(await verify('9012'), false);
+  await db.exec("update public.employees set status='active' where last_name='Crew'");
   assert.equal(await value("select public.hub_employee_by_pin('1234','07462') as value"), null);
   assert.equal(await value("select public.hub_employee_by_pin('9012','07462') as value"), "11111111-1111-4111-8111-111111111111");
   await db.exec("update public.employees set is_active=false where last_name='Crew'");
+  assert.equal(await verify('9012'), false);
   assert.equal(await value("select public.hub_employee_by_pin('9012','07462') as value"), null);
   assert.equal(await value("select count(*)::int as value from storage.objects"), 3);
 

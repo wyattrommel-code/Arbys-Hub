@@ -28,7 +28,7 @@ export async function POST(request) {
     if (!settings.use_break_punches) {
       return secureJson({ ok: false, error: "Break punches are turned off." }, { status: 409 });
     }
-    const employee = await fetchClockEmployeeByPin(supabase, pin);
+    const employee = await fetchClockEmployeeByPin(supabase, pin, employeeId);
     if (!employee || employee.id !== employeeId) {
       return secureJson({ ok: false, error: "Invalid PIN" }, { status: 401 });
     }

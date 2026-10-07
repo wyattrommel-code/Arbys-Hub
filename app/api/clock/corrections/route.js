@@ -31,7 +31,7 @@ export async function POST(request) {
   }
   try {
     const db = getSupabaseServer();
-    const employee = await fetchClockEmployeeByPin(db, body.pin);
+    const employee = await fetchClockEmployeeByPin(db, body.pin, body.employee_id);
     if (!employee || employee.id !== body.employee_id) return secureJson({ error: 'Invalid PIN' }, { status: 401 });
     if (!photo || typeof photo === 'string' || photo.type !== 'image/jpeg' || photo.size < 4 || photo.size > 3 * 1024 * 1024) {
       return secureJson({ error: 'Take a new photo before saving this correction.' }, { status: 400 });

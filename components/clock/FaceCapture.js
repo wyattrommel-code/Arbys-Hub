@@ -22,13 +22,6 @@ export default function FaceCapture({ actionLabel = "Take photo", onCaptured, on
       try {
         stream = await camera.ready;
         if (cancelled) return;
-        const track = stream.getVideoTracks()[0];
-        const zoom = track.getCapabilities?.().zoom;
-        if (zoom && Number.isFinite(zoom.min)) {
-          // Browser-controlled zoom only; do not crop the camera's native frame.
-          try { await track.applyConstraints({ advanced: [{ zoom: zoom.min }] }); } catch { /* optional */ }
-        }
-        if (cancelled) return;
         const video = videoRef.current;
         video.srcObject = stream;
         await video.play();
@@ -80,8 +73,9 @@ export default function FaceCapture({ actionLabel = "Take photo", onCaptured, on
     captureLock.current = true; setCapturing(true); setCameraError("");
     try {
       const face = faceRef.current;
+      const faceDetected = face.found && performance.now() - face.at < 1500;
       const blob = await captureJpegBlob(videoRef.current);
-      await onCaptured(blob, face.found && performance.now() - face.at < 1500);
+      await onCaptured(blob, faceDetected);
     } catch (err) {
       setCameraError(err?.message || "Could not capture photo. Try again.");
     } finally { captureLock.current = false; setCapturing(false); }

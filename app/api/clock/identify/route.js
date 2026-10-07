@@ -40,18 +40,19 @@ export async function POST(request) {
 
     const supabase = getSupabaseServer();
 
-    const employee = await attachEffectiveAccess(supabase, await fetchClockEmployeeByPin(supabase, pin));
+    const employee = await fetchClockEmployeeByPin(supabase, pin, employeeId);
     if (!employee || employee.id !== employeeId) {
       return secureJson({ ok: false, error: "Invalid PIN" }, { status: 401 });
     }
 
     const deviceHash = hashCredential((await cookies()).get(DEVICE_COOKIE).value);
     const offlinePin = { version: offlinePinVersion(deviceHash, employee) };
-    const [settings, openPunch, shifts, punches] = await Promise.all([
+    const [settings, openPunch, shifts, punches, clockOuts] = await Promise.all([
       getAttendanceSettings(supabase),
       fetchOpenPunch(supabase, employee.id),
       fetchTodaysShiftsForEmployee(supabase, employee),
       fetchRecentPunches(supabase, employee.id),
+      fetchRecentClockOuts(supabase, [employee.id]),
     ]);
 
     if (openPunch) {
@@ -78,7 +79,7 @@ export async function POST(request) {
 
     const shift = pickClockInShift(shifts, punches);
     const scheduled = Boolean(shift);
-    const clockOuts = await fetchRecentClockOuts(supabase, [employee.id]);
+    const access = scheduled ? employee : await attachEffectiveAccess(supabase, employee);
 
     return secureJson({
       ok: true,
@@ -90,7 +91,7 @@ export async function POST(request) {
       scheduled,
       shift: serializeShift(shift),
       needsAuthorization: !scheduled,
-      canSelfAuthorize: canAuthorizeUnscheduled(employee),
+      canSelfAuthorize: !scheduled && canAuthorizeUnscheduled(access),
       settings: publicSettings(settings),
       message: scheduled
         ? null

@@ -37,7 +37,7 @@ export async function POST(request) {
     try { credentials=decryptOfflinePin((await offlineKeys(db)).private_jwk,form.get('sealed_pin'),event); }
     catch { issue='The saved PIN could not be verified.'; }
     if(credentials) {
-      employee=await fetchClockEmployeeByPin(db,credentials.pin);
+      employee=await fetchClockEmployeeByPin(db,credentials.pin,event.employee_id);
       if(!employee || employee.id!==event.employee_id) issue='The employee PIN did not match. Verify the photo and employee before entering this time.';
       else if(baseKind(event.kind)==='clock_in' && !event.kind.startsWith('forgot_')) {
         const at=new Date(event.occurred_at);

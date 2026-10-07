@@ -16,6 +16,9 @@ test('offline PIN checks fail closed, persist throttling and invalidate changed 
   await saveOfflineSnapshot(snapshot);
   await assert.rejects(verifyOfflineEmployeePin(id,'1234'),/once while.*online/);
   await rememberOnlinePin(id,'1234','device-employee-v1');
+  const originalRecord=(await readOfflineClock()).credentials[id];
+  await rememberOnlinePin(id,'1234','device-employee-v1');
+  assert.deepEqual((await readOfflineClock()).credentials[id],originalRecord,'Same verified PIN version reuses the original salted verifier');
   assert.equal(offlinePinReady(snapshot,(await readOfflineClock()).credentials,id),true);
   await assert.rejects(verifyOfflineEmployeePin(id,'9999'),/Incorrect PIN/);
   await assert.rejects(enqueueOfflinePunch(item(),{}),/PIN check expired/);
@@ -27,6 +30,7 @@ test('offline PIN checks fail closed, persist throttling and invalidate changed 
   await assert.rejects(enqueueOfflinePunch(item(),proof),/PIN check expired/);
   await assert.rejects(verifyOfflineEmployeePin(id,'1234'),/once while.*online/);
   await rememberOnlinePin(id,'5678','device-employee-v2');
+  assert.notEqual((await readOfflineClock()).credentials[id].salt,originalRecord.salt,'Changed PIN version gets a new verifier');
   const wrong=await Promise.allSettled(Array.from({length:7},()=>verifyOfflineEmployeePin(id,'1234')));
   assert.equal(wrong.filter(result=>/Incorrect PIN/.test(result.reason?.message)).length,5);
   assert.equal(wrong.filter(result=>/Too many/.test(result.reason?.message)).length,2);

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import EmployeeAvatar from "@/components/EmployeeAvatar";
 import FaceCapture from "@/components/clock/FaceCapture";
+import CameraWarmup from "@/components/clock/CameraWarmup";
 import CorrectionContext from "@/components/clock/CorrectionContext";
 import { createFaceDetector } from "@/lib/face-detect";
 import PinPad from "@/components/PinPad";
@@ -58,9 +59,21 @@ function firstLetter(name) {
   return /[A-Z]/.test(ch) ? ch : "#";
 }
 
-export default function ClockKiosk() {
+// Only the time display redraws each second, not the roster/PIN/camera screen.
+function LiveClock() {
   const [clock, setClock] = useState("");
   const [today, setToday] = useState("");
+  useEffect(() => {
+    const update = () => { setClock(nowLabel()); setToday(getStoreToday()); };
+    update();
+    const id = window.setInterval(update, 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  return <><p className="mt-2 text-lg tabular-nums text-zinc-600 dark:text-zinc-300">{clock || "\u00a0"}</p>
+    <p className="text-sm text-zinc-400">{today || "\u00a0"}</p></>;
+}
+
+export default function ClockKiosk() {
   const [step, setStep] = useState("list");
   const [employees, setEmployees] = useState([]);
   const [syncedAt, setSyncedAt] = useState("");
@@ -78,10 +91,6 @@ export default function ClockKiosk() {
 
   useEffect(() => {
     createFaceDetector().catch(() => {});
-    setClock(nowLabel());
-    setToday(getStoreToday());
-    const id = window.setInterval(() => setClock(nowLabel()), 1000);
-    return () => window.clearInterval(id);
   }, []);
 
   const loadRoster = useCallback(async ({ silent = false } = {}) => {
@@ -236,12 +245,13 @@ export default function ClockKiosk() {
           bounceToList(data.error || "Invalid PIN");
           return;
         }
-        try {
-          await rememberOnlinePin(employee.id,value,data.offlinePin?.version);
+        // The online PIN is already verified. Preparing offline use should not
+        // hold up the action buttons or camera, especially on an older iPad.
+        rememberOnlinePin(employee.id,value,data.offlinePin?.version).then(() => {
           window.dispatchEvent(new CustomEvent('clock-pin-cache-failed',{detail:''}));
-        } catch {
+        }).catch(() => {
           window.dispatchEvent(new CustomEvent('clock-pin-cache-failed',{detail:'Online clocking works, but this PIN could not be prepared for offline use. Keep the iPad connected and try again.'}));
-        }
+        });
         setSession(data);
         setStep("actions");
       } catch {
@@ -365,11 +375,11 @@ export default function ClockKiosk() {
 
   return (
     <section className="relative flex h-dvh min-h-0 w-full flex-col overflow-hidden">
+      <CameraWarmup active={sheetOpen && step !== 'done' && step !== 'correction_done'} />
       <header className="shrink-0 px-4 pb-3 pt-5 text-center">
         <p className="text-sm font-semibold uppercase tracking-widest text-[#C8102E]">Arby&apos;s Hub</p>
         <h1 className="mt-1 text-3xl font-bold text-zinc-900 dark:text-zinc-50">Time Clock</h1>
-        <p className="mt-2 text-lg tabular-nums text-zinc-600 dark:text-zinc-300">{clock || "\u00a0"}</p>
-        <p className="text-sm text-zinc-400">{today || "\u00a0"}</p>
+        <LiveClock />
         {syncedAt ? (
           <p className="mt-1 text-xs text-zinc-400">Synced at {syncedLabel(syncedAt)}</p>
         ) : null}

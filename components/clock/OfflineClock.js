@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import PinPad from '@/components/PinPad';
 import FaceCapture from './FaceCapture';
+import CameraWarmup from './CameraWarmup';
 import CorrectionContext from './CorrectionContext';
 import { OFFLINE_LABELS, baseKind, canCapture, captureTime, encryptOfflinePin, offlineActions, projectRoster } from '@/lib/offline-clock';
 import { offlinePinReady } from '@/lib/offline-pin';
@@ -55,6 +56,7 @@ export default function OfflineClock({ state, onBusy, onSaved }) {
   }
   const button='min-h-12 rounded-xl border border-zinc-300 bg-white px-4 py-3 font-semibold text-zinc-900 disabled:opacity-40';
   return <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-4 sm:px-6">
+    <CameraWarmup active={step!=='list' && step!=='done'} />
     {step==='list' ? <>
       <div className="mx-auto mb-4 w-full max-w-4xl"><h1 className="text-2xl font-bold">Store time clock</h1>
         <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">Your PIN is checked on this iPad before a punch or photo can be saved.</p>

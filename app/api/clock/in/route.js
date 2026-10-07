@@ -35,24 +35,23 @@ export async function POST(request) {
     }
 
     const supabase = getSupabaseServer();
-    const employee = await attachEffectiveAccess(supabase, await fetchClockEmployeeByPin(supabase, pin));
+    const employee = await fetchClockEmployeeByPin(supabase, pin, employeeId);
     if (!employee || employee.id !== employeeId) {
       return secureJson({ ok: false, error: "Invalid PIN" }, { status: 401 });
     }
 
-    const openPunch = await fetchOpenPunch(supabase, employee.id);
+    const [openPunch, settings, shifts, punches] = await Promise.all([
+      fetchOpenPunch(supabase, employee.id),
+      getAttendanceSettings(supabase),
+      fetchTodaysShiftsForEmployee(supabase, employee),
+      fetchRecentPunches(supabase, employee.id),
+    ]);
     if (openPunch) {
       return secureJson(
         { ok: false, error: "Already clocked in. Clock out first." },
         { status: 409 }
       );
     }
-
-    const [settings, shifts, punches] = await Promise.all([
-      getAttendanceSettings(supabase),
-      fetchTodaysShiftsForEmployee(supabase, employee),
-      fetchRecentPunches(supabase, employee.id),
-    ]);
 
     const shift = pickClockInShift(shifts, punches);
     let unscheduled = !shift;

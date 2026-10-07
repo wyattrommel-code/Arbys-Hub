@@ -31,12 +31,14 @@ export async function POST(request) {
     }
 
     const supabase = getSupabaseServer();
-    const employee = await fetchClockEmployeeByPin(supabase, pin);
+    const employee = await fetchClockEmployeeByPin(supabase, pin, employeeId);
     if (!employee || employee.id !== employeeId) {
       return secureJson({ ok: false, error: "Invalid PIN" }, { status: 401 });
     }
 
-    const openPunch = await fetchOpenPunch(supabase, employee.id);
+    const [openPunch, settings] = await Promise.all([
+      fetchOpenPunch(supabase, employee.id), getAttendanceSettings(supabase),
+    ]);
     if (!openPunch) {
       return secureJson({ ok: false, error: "No open punch to clock out." }, { status: 409 });
     }
@@ -46,8 +48,6 @@ export async function POST(request) {
         { status: 409 }
       );
     }
-
-    const settings = await getAttendanceSettings(supabase);
 
     let photoUrl = null;
     if (settings.require_photo_on_clock_out) {

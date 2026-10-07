@@ -58,6 +58,11 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
       let body = ''; for await (const part of req) body += part;
       res.end(JSON.stringify(JSON.parse(body).p_pin === '5678' ? ids.gm : null)); return;
     }
+    if (url.pathname === '/rest/v1/rpc/hub_verify_employee_pin') {
+      let body = ''; for await (const part of req) body += part;
+      const params=JSON.parse(body);
+      res.end(JSON.stringify(params.p_pin === '5678' && params.p_employee_id === ids.gm && params.p_store_id === '07462')); return;
+    }
     if (url.pathname === '/rest/v1/rpc/hub_pair_clock_station') {
       let body = ''; for await (const part of req) body += part;
       const params = JSON.parse(body);
