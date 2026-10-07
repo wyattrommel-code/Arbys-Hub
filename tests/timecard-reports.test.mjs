@@ -59,18 +59,19 @@ test('detail export contains each break once and safely quotes names', () => {
       { start:'2026-09-14T20:00:00Z', end:'2026-09-14T20:15:00Z', minutes:15 }] });
   const report = buildTimecardReport([p], '2026-09-14', '2026-09-14');
   const csv = buildTimecardReportCsv(report, 'punches');
-  assert.match(csv, /Break 1 Start,Break 1 End,Break 1 Minutes,Break 2 Start,Break 2 End,Break 2 Minutes/);
+  assert.match(csv, /Person,Date,Clock In,Clock Out,Unpaid Breaks,Regular Hours,Overtime Hours,Total Hours/);
   assert.match(csv, /"Doe, ""Jamie"""/);
-  assert.match(csv, /2026-09-14 12:00:00,2026-09-14 12:30:00,30/);
-  assert.match(csv, /7.50,0.00,7.50,2,0.75,45/);
+  assert.match(csv, /12:00 PM - 12:30 PM \(30 min\); 2:00 PM - 2:15 PM \(15 min\)/);
+  assert.match(csv, /7.50,0.00,7.50/);
+  assert.doesNotMatch(csv, /Punch ID|Period Start|Break 1|2026-09-14T/);
   assert.equal(report.totals.break_count, 2);
 });
 test('summary neutralizes spreadsheet formulas and contains a period total', () => {
   const report = buildTimecardReport([card('p', '2026-09-14', 60, { employee_name: '=HYPERLINK("x")' })], '2026-09-14', '2026-09-14');
   const csv = buildTimecardReportCsv(report, 'summary');
-  assert.ok(csv.startsWith('\uFEFFEmployee,'));
+  assert.ok(csv.startsWith('\uFEFFPerson,'));
   assert.match(csv, /"'=HYPERLINK/);
-  assert.match(csv, /PERIOD TOTAL,1,0,1.00,0.00,1.00/);
+  assert.match(csv, /PERIOD TOTAL,1.00,0.00,1.00,0.00/);
 });
 test('historical rates apply by shift date; missing is not a zero-dollar rate', () => {
   const cards = [card('p1', '2026-09-14', 60), card('p2', '2026-09-15', 60)];
@@ -78,10 +79,38 @@ test('historical rates apply by shift date; missing is not a zero-dollar rate', 
     { id:'2', employee_id:'a', hourly_rate:12, effective_date:'2026-09-15' }];
   const report = buildTimecardReport(cards, '2026-09-14', '2026-09-15', { wages });
   assert.equal(report.totals.regular_pay_cents, 2200);
-  assert.match(buildTimecardReportCsv(report, 'summary'), /Estimated Regular Pay/);
-  assert.match(buildTimecardReportCsv(report, 'summary'), /22.00,0.00,22.00/);
-  assert.match(buildTimecardReportCsv(buildTimecardReport(cards, '2026-09-14', '2026-09-15', { wages: [] }), 'summary'), /Rate missing/);
-  assert.doesNotMatch(buildTimecardReportCsv(buildTimecardReport(cards, '2026-09-14', '2026-09-15'), 'summary'), /Pay|Rate missing/);
+  assert.match(buildTimecardReportCsv(report, 'summary'), /Regular Pay,Overtime Pay,Total Pay/);
+  assert.match(buildTimecardReportCsv(report, 'summary'), /\$22.00,\$0.00,\$22.00/);
+  assert.match(buildTimecardReportCsv(buildTimecardReport(cards, '2026-09-14', '2026-09-15', { wages: [] }), 'summary'), /No rate set/);
+  assert.doesNotMatch(buildTimecardReportCsv(buildTimecardReport(cards, '2026-09-14', '2026-09-15'), 'summary'), /Regular Pay|No rate set/);
+});
+test('imported shifts before wage history use the initial rate and disclose the estimate', () => {
+  const cards = [card('old', '2026-09-14', 240), card('later', '2026-09-22', 120)];
+  const wages = [{ id:'initial', employee_id:'a', hourly_rate:12, effective_date:'2026-09-20' },
+    { id:'raise', employee_id:'a', hourly_rate:15, effective_date:'2026-09-21' }];
+  const employees = [{id:'a', first_name:'Lyndi', last_name:'Bradford'}];
+  const report = buildTimecardReport(cards, '2026-09-13', '2026-09-26', {wages, employees, wageAsOf:'2026-10-07'});
+  assert.equal(report.totals.regular_pay_cents, 7800);
+  assert.equal(report.totals.missing_rate_count, 0);
+  assert.equal(report.totals.estimated_rate_count, 1);
+  const csv = buildTimecardReportCsv(report, 'summary');
+  assert.match(csv, /"Bradford, Lyndi",6.00,0.00,6.00,0.00,\$78.00,\$0.00,\$78.00/);
+  assert.match(csv, /PERIOD TOTAL,6.00,0.00,6.00,0.00,\$78.00,\$0.00,\$78.00/);
+  assert.match(csv, /earlier shift\(s\) use the first saved wage/);
+  const futureOnly = buildTimecardReport(cards, '2026-09-13', '2026-09-26', {wages:[{...wages[0],effective_date:'2027-01-01'}],wageAsOf:'2026-10-07'});
+  assert.equal(futureOnly.totals.missing_rate_count, 2);
+});
+test('missing wages keep the incomplete total distinct from known labor cost', () => {
+  const cards = [card('a', '2026-09-14', 60), card('b', '2026-09-14', 60, {employee_id:'b'})];
+  const wages = [{id:'w',employee_id:'a',hourly_rate:12,effective_date:'2026-01-01'}];
+  const csv = buildTimecardReportCsv(buildTimecardReport(cards,'2026-09-14','2026-09-14',{wages}),'summary');
+  assert.match(csv, /PERIOD TOTAL,2.00,0.00,2.00,0.00,No rate set,No rate set,No rate set/);
+  assert.match(csv, /KNOWN LABOR COST \(excludes shifts with no rate\),,,,,\$12.00,\$0.00,\$12.00/);
+});
+test('readable punch times preserve seconds and show the date when a shift ends overnight', () => {
+  const p=card('night','2026-09-19',120,{clock_in:'2026-09-20T05:00:17Z',clock_out:'2026-09-20T07:00:17Z'});
+  const csv=buildTimecardReportCsv(buildTimecardReport([p],'2026-09-19','2026-09-19'),'punches');
+  assert.match(csv,/11:00:17 PM,"Sep 20, 2026 1:00:17 AM"/);
 });
 test('overtime pay uses time-and-a-half without rounding hours first', () => {
   const cards = [0,1,2,3,4].map((n) => card(`p${n}`, `2026-09-${13+n}`, 481));
@@ -91,6 +120,6 @@ test('overtime pay uses time-and-a-half without rounding hours first', () => {
   assert.equal(report.totals.overtime_pay_cents, 188);
 });
 test('empty ranges export headers and zero totals; impossible dates are rejected', () => {
-  assert.match(buildTimecardReportCsv(buildTimecardReport([], '2026-09-13', '2026-09-19'), 'summary'), /PERIOD TOTAL,0,0,0.00/);
+  assert.match(buildTimecardReportCsv(buildTimecardReport([], '2026-09-13', '2026-09-19'), 'summary'), /PERIOD TOTAL,0.00,0.00,0.00,0.00/);
   for (const range of [['2026-02-30','2026-03-01'], ['2026-10-01','2026-09-01'], ['', '2026-09-01'], ['2026-9-1','2026-09-30']]) assert.throws(() => validateReportRange(...range));
 });

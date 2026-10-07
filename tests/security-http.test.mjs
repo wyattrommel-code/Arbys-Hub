@@ -123,7 +123,9 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
     let data = [];
     if (url.pathname === "/rest/v1/employees" && id) data = { id, first_name: "Synthetic", last_name: "User", employee_code: "synthetic-hash", is_active: id !== ids.inactive && (id !== ids.gm || managerActive), status: "active", store_id: "07462", role: id === ids.gm ? "gm" : "crew" };
     else if (url.pathname === "/rest/v1/employees" && url.searchParams.get('select') === 'id,employee_code') data = [{id:ids.gm,employee_code:'synthetic-hash'}];
+    else if (url.pathname === "/rest/v1/employees" && url.searchParams.get('id')?.startsWith('in.')) data = [{id:ids.crew,first_name:'Synthetic',last_name:'Crew',is_active:true}];
     else if (url.pathname === "/rest/v1/employees") data = [{id:ids.gm,first_name:'Synthetic',last_name:'Manager',is_active:true}];
+    else if (url.pathname === "/rest/v1/employee_wages") data = [{id:'wage',employee_id:ids.crew,hourly_rate:12,effective_date:'2026-09-10'}];
     else if (url.pathname === "/rest/v1/employee_roles") data = [{ role_id: "r", employee_id: url.searchParams.get("employee_id")?.replace("eq.", ""), roles: { id: "r", name: "Test", access_tier: url.searchParams.get("employee_id") === `eq.${ids.gm}` ? "gm" : "crew", is_active: true } }];
     else if (url.pathname === "/rest/v1/schedule_weeks") data = [{ week_start_date: "2026-09-06" }];
     else if (url.pathname === "/rest/v1/time_punches") data = [punch];
@@ -181,6 +183,8 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
   assert.equal((await request("/api/data/timecard_approvals", gm, "POST", {})).status, 403);
   let cards = await (await request("/api/timecards" + range, gm)).json();
   assert.equal(cards.pending_count, 1, JSON.stringify(cards));
+  assert.equal(cards.labor_report.totals.regular_pay_cents, 7200);
+  assert.equal(cards.labor_report.totals.estimated_rate_count, 1);
   assert.equal((await request("/api/timecards/export" + range, gm)).status, 409);
   for (const type of ['punches', 'summary']) {
     const path = '/api/timecards/export' + range + '&type=' + type;
@@ -202,9 +206,12 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
     assert.match(response.headers.get('content-disposition'), /attachment.*\.csv/);
     const csv = await response.text();
     assert.match(csv, /Regular Hours,Overtime Hours,Total Hours/);
-    assert.match(csv, /Synthetic Crew/);
+    assert.match(csv, /Crew, Synthetic/);
     assert.ok(!csv.includes('fake-service-key'));
-    if (type === 'summary') assert.match(csv, /Estimated Regular Pay/);
+    if (type === 'summary') {
+      assert.match(csv, /Regular Pay,Overtime Pay,Total Pay/);
+      assert.match(csv, /PERIOD TOTAL,6.00,0.00,6.00,0.00,\$72.00,\$0.00,\$72.00/);
+    }
   }
   offlineReceipts.push({ id: randomUUID(), status: 'review', event: { occurred_at: '2026-09-09T22:00:00Z' } });
   for (const type of ['payroll', 'punches', 'summary']) {

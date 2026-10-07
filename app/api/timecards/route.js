@@ -7,7 +7,7 @@ export async function GET(request) {
   if (error) return error;
   try {
     const url = new URL(request.url);
-    const data = await loadTimecards(url.searchParams.get("from"), url.searchParams.get("to"), null, { includeLabor: true });
+    const data = await loadTimecards(url.searchParams.get("from"), url.searchParams.get("to"), null, { includeLabor: true, includePay: isGm(employee.role) });
     const { punches: _punches, ...reportSummary } = data.labor_report;
     return secureJson({ ...data, labor_report: reportSummary, can_edit: canEditPunches(employee.role), can_export_pay: isGm(employee.role) });
   } catch (err) {

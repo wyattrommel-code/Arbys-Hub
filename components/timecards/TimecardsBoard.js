@@ -7,8 +7,7 @@ import PunchEditor from "@/components/timecards/PunchEditor";
 import { CORRECTION_LABELS } from "@/lib/clock-corrections";
 import { addDaysISO, formatStoreDateTime, getStoreToday, toStoreDateTimeLocal } from "@/lib/store-time";
 import { weekStartSunday } from "@/lib/schedule";
-import { payrollFilename } from "@/lib/timecards";
-import { timecardReportFilename } from "@/lib/timecard-reports";
+import { formatLaborMoney, timecardReportFilename } from "@/lib/timecard-reports";
 import { matchesPunchReview, payPeriodFor } from "@/lib/timecard-review";
 import styles from "./TimecardsBoard.module.css";
 
@@ -191,8 +190,15 @@ export default function TimecardsBoard() {
   }), [allPunches, selectedPerson, search, reviewFilter, sort]);
   const visibleGroups = grouped.groups.filter((group) => (!selectedPerson || String(group.key) === selectedPerson) && group.name.toLowerCase().includes(search.trim().toLowerCase()));
   const ready = validRange && !loading && payload?.from === from && payload?.to === to;
-  const exportBlocked = payload?.payroll_blocked || (exportType !== "payroll" && payload?.labor_report?.blocked);
+  const exportBlocked = payload?.payroll_blocked || payload?.labor_report?.blocked;
   const canEdit = Boolean(payload?.can_edit);
+  const showPay = Boolean(payload?.can_export_pay);
+  const visiblePay = visibleGroups.reduce((sum, group) => {
+    for (const key of Object.keys(sum)) sum[key] += group.labor?.[key] || 0;
+    return sum;
+  }, { regular_pay_cents: 0, overtime_pay_cents: 0, missing_rate_count: 0 });
+  const payAmounts = (labor) => !labor || labor.missing_rate_count ? ["No rate set", "No rate set", "No rate set"] :
+    [labor.regular_pay_cents, labor.overtime_pay_cents, labor.regular_pay_cents + labor.overtime_pay_cents].map(formatLaborMoney);
   const personIndex = grouped.groups.findIndex((group) => String(group.key) === selectedPerson);
 
   function changePreset(value) {
@@ -271,7 +277,7 @@ export default function TimecardsBoard() {
     try {
       const res = await fetch(`/api/timecards/export?from=${from}&to=${to}&type=${exportType}`);
       if (!res.ok) throw new Error((await res.json()).error || "Could not export payroll.");
-      downloadCsv(exportType === "payroll" ? payrollFilename(from, to) : timecardReportFilename(exportType, from, to), await res.text());
+      downloadCsv(timecardReportFilename(exportType, from, to), await res.text());
     } catch (err) { setError(err.message); }
     finally { setExporting(false); }
   }
@@ -290,7 +296,7 @@ export default function TimecardsBoard() {
       <div className="flex flex-wrap items-center gap-2">
       <label className="sr-only" htmlFor="timecard-export-type">Export report</label>
       <select id="timecard-export-type" value={exportType} onChange={(event) => setExportType(event.target.value)} className={fieldClass} disabled={exporting}>
-        <option value="punches">Total punches</option><option value="summary">Employee totals</option><option value="payroll">Original payroll format</option>
+        <option value="punches">Employee punches</option><option value="summary">Labor report</option>
       </select>
       <button type="button" disabled={!ready || exportBlocked || exporting} onClick={exportCsv}
         className="inline-flex h-9 items-center gap-2 rounded-md bg-[#C8102E] px-3 text-xs font-semibold text-white hover:bg-[#a90e27] disabled:opacity-40">
@@ -299,7 +305,7 @@ export default function TimecardsBoard() {
       </div>
     </div>
 
-    {exportType === "summary" && payload?.can_export_pay ? <p className="mb-3 text-xs text-zinc-500">Employee totals CSV includes estimated regular, overtime, and total pay using wage history effective on each shift date.</p> : null}
+    {exportType === "summary" && showPay ? <p className="mb-3 text-xs text-zinc-500">Labor report includes regular pay, overtime pay, and total labor cost.</p> : null}
 
     <div className="mb-4 flex flex-wrap items-end gap-2">
       <label className="grid gap-1 text-[11px] font-medium text-zinc-500">Pay period
@@ -327,7 +333,7 @@ export default function TimecardsBoard() {
     <section className="rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900" aria-label="Timecard records">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
         <div className="flex gap-1" aria-label="Timecard view">
-          {[["punches", "Punches"], ["totals", "Employee totals"]].map(([value, label]) => <button key={value} type="button" aria-pressed={view === value} onClick={() => setView(value)}
+          {[["punches", "Employee punches"], ["totals", "Labor report"]].map(([value, label]) => <button key={value} type="button" aria-pressed={view === value} onClick={() => setView(value)}
             className={"rounded-md px-3 py-2 text-xs font-semibold " + (view === value ? "bg-[#C8102E]/10 text-[#C8102E] dark:text-red-300" : "text-zinc-500 hover:bg-zinc-50 dark:hover:bg-zinc-800")}>{label}</button>)}
         </div>
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500" aria-live="polite">
@@ -389,26 +395,35 @@ export default function TimecardsBoard() {
         </table>
         {!visiblePunches.length ? <div className="px-4 py-12 text-center text-sm text-zinc-500"><p>{allPunches.length ? "No punches match these filters." : "No punches in this date range."}</p>
           {allPunches.length ? <button type="button" onClick={() => { setPerson(""); setReviewFilter("all"); setSearch(""); }} className="mt-2 font-semibold text-[#C8102E]">Clear filters</button> : null}</div> : null}
-      </> : <div className={styles.totalsScroll} tabIndex={0} role="region" aria-label="Employee hour totals"><table className={styles.totalsTable}>
-        <caption className="sr-only">Employee totals for the selected date range</caption>
-        <thead><tr><th scope="col">Person</th>{["Regular", "Overtime", "Total hours", "Unpaid breaks", "Cleared", "Pending"].map((label) => <th key={label} scope="col" className={styles.numeric}>{label}</th>)}</tr></thead>
+      </> : <><div className="border-b border-zinc-200 px-4 py-3 text-xs dark:border-zinc-800">
+        {showPay ? <><p className="font-semibold">{visiblePay.missing_rate_count ? "Known labor cost" : "Total labor cost"}: {formatLaborMoney(visiblePay.regular_pay_cents + visiblePay.overtime_pay_cents)}</p>
+          <p className="mt-1 text-zinc-500">Estimated gross wages including overtime. Excludes employer taxes and benefits.
+            {payload?.labor_report?.totals?.estimated_rate_count ? " Shifts before Hub wage history use the first saved wage." : ""}
+            {visiblePay.missing_rate_count ? ` Excludes ${visiblePay.missing_rate_count} shift(s) with no wage set.` : ""}</p></> : <p className="text-zinc-500">Hours after unpaid breaks. Pay amounts are available to the GM.</p>}
+      </div><div className={styles.totalsScroll} tabIndex={0} role="region" aria-label="Labor report"><table className={styles.totalsTable}>
+        <caption className="sr-only">Labor report for the selected date range</caption>
+        <thead><tr><th scope="col">Person</th>{["Regular", "Overtime", "Total hours", "Unpaid breaks", ...(showPay ? ["Regular pay", "Overtime pay", "Total pay"] : []), "Cleared", "Pending"].map((label) => <th key={label} scope="col" className={styles.numeric}>{label}</th>)}</tr></thead>
         <tbody>{visibleGroups.map((group) => <tr key={group.key}>
           <td><button type="button" onClick={() => { setPerson(String(group.key)); setReviewFilter("all"); setView("punches"); }} className="flex items-center gap-2 text-left font-medium hover:text-[#C8102E]"><EmployeeAvatar name={group.name} src={group.profile_photo_url} size="sm" /><span>{group.name}<span className="block text-[11px] font-normal text-zinc-500">{group.punches.length} punches{group.openCount ? " · " + group.openCount + " open" : ""}</span></span></button></td>
           <td className={styles.numeric}>{group.labor ? (group.labor.regular_minutes / 60).toFixed(2) : "—"}</td>
           <td className={styles.numeric}>{group.labor ? (group.labor.overtime_minutes / 60).toFixed(2) : "—"}</td>
           <td className={styles.numeric + " font-semibold"}>{group.totalDisplay}</td>
           <td className={styles.numeric}>{group.labor ? <>{(group.labor.break_minutes / 60).toFixed(2)}<span className="block text-[11px] text-zinc-500">{group.labor.break_count} breaks</span></> : "—"}</td>
+          {showPay ? payAmounts(group.labor).map((value, index) => <td key={index} className={styles.numeric}>{value}</td>) : null}
           <td className={styles.numeric + " text-green-800 dark:text-green-300"}>{group.approvedDisplay}</td><td className={styles.numeric + " text-red-800 dark:text-red-300"}>{group.pendingDisplay}</td>
         </tr>)}</tbody>
-        <tfoot><tr><th scope="row">{selectedPerson || search ? "Filtered total" : "Period total"} (hrs)</th>{["regular_minutes", "overtime_minutes", "totalMinutes", "break_minutes", "approvedMinutes", "pendingMinutes"].map((key) => <td key={key} className={styles.numeric + " font-semibold"}>{(visibleGroups.reduce((sum, group) => sum + (group[key] ?? group.labor?.[key] ?? 0), 0) / 60).toFixed(2)}</td>)}</tr></tfoot>
-      </table>{!visibleGroups.length ? <p className="px-4 py-10 text-center text-sm text-zinc-500">No employees in this date range match these filters.</p> : null}</div>}
+        <tfoot><tr><th scope="row">{selectedPerson || search ? "Filtered total" : "Period total"}</th>{["regular_minutes", "overtime_minutes", "totalMinutes", "break_minutes"].map((key) => <td key={key} className={styles.numeric + " font-semibold"}>{(visibleGroups.reduce((sum, group) => sum + (group[key] ?? group.labor?.[key] ?? 0), 0) / 60).toFixed(2)}</td>)}
+          {showPay ? payAmounts(visiblePay).map((value, index) => <td key={index} className={styles.numeric + " font-semibold"}>{value}</td>) : null}
+          {["approvedMinutes", "pendingMinutes"].map((key) => <td key={key} className={styles.numeric + " font-semibold"}>{(visibleGroups.reduce((sum, group) => sum + group[key], 0) / 60).toFixed(2)}</td>)}
+        </tr></tfoot>
+      </table>{!visibleGroups.length ? <p className="px-4 py-10 text-center text-sm text-zinc-500">No employees in this date range match these filters.</p> : null}</div></>}
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-zinc-200 px-4 py-2 text-[11px] text-zinc-500 dark:border-zinc-800">
         <span>{dateLabel(from)} – {dateLabel(to)}</span><span>Export includes all employees in this date range.</span>
       </div>
     </section>
 
     <details className="mt-3 text-xs text-zinc-500 dark:text-zinc-400"><summary className="w-fit cursor-pointer rounded py-1">How hours are calculated</summary>
-      <p className="mt-1 max-w-3xl leading-relaxed">Punch timestamps stay exact. Paid hours are paid minutes ÷ 60, shown to two decimals. The two new CSV reports also show two decimals; the original payroll format keeps unrounded hours.
+      <p className="mt-1 max-w-3xl leading-relaxed">Punch timestamps stay exact. Paid hours are paid minutes ÷ 60, shown to two decimals in both reports.
         {payload?.use_break_punches ? " Actual unpaid breaks are subtracted." : payload?.subtract_scheduled_break ? " Scheduled unpaid breaks are subtracted." : " No break deduction is applied."}
         {" "}Overtime starts after 40 paid hours in each Sunday–Saturday workweek, in restaurant time. Earlier hours in the workweek count even for a custom range. Overnight shifts crossing Sunday are split between weeks. Reports select whole shifts by clock-in date. Recorded totals include closed punches awaiting approval. Cleared totals include only payroll-ready hours. Open punches have no hours calculated yet. Export stays on hold until all punches used in the report are closed and cleared.</p>
     </details>
