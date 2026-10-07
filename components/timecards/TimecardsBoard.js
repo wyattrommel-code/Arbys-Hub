@@ -8,6 +8,7 @@ import { CORRECTION_LABELS } from "@/lib/clock-corrections";
 import { addDaysISO, formatStoreDateTime, getStoreToday, toStoreDateTimeLocal } from "@/lib/store-time";
 import { weekStartSunday } from "@/lib/schedule";
 import { payrollFilename } from "@/lib/timecards";
+import { timecardReportFilename } from "@/lib/timecard-reports";
 import { matchesPunchReview, payPeriodFor } from "@/lib/timecard-review";
 import styles from "./TimecardsBoard.module.css";
 
@@ -127,6 +128,7 @@ export default function TimecardsBoard() {
   const [editing, setEditing] = useState(null);
   const [approving, setApproving] = useState(null);
   const [exporting, setExporting] = useState(false);
+  const [exportType, setExportType] = useState("punches");
   const [person, setPerson] = useState("");
   const [search, setSearch] = useState("");
   const [reviewFilter, setReviewFilter] = useState("all");
@@ -189,6 +191,7 @@ export default function TimecardsBoard() {
   }), [allPunches, selectedPerson, search, reviewFilter, sort]);
   const visibleGroups = grouped.groups.filter((group) => (!selectedPerson || String(group.key) === selectedPerson) && group.name.toLowerCase().includes(search.trim().toLowerCase()));
   const ready = validRange && !loading && payload?.from === from && payload?.to === to;
+  const exportBlocked = payload?.payroll_blocked || (exportType !== "payroll" && payload?.labor_report?.blocked);
   const canEdit = Boolean(payload?.can_edit);
   const personIndex = grouped.groups.findIndex((group) => String(group.key) === selectedPerson);
 
@@ -263,12 +266,12 @@ export default function TimecardsBoard() {
   }
 
   async function exportCsv() {
-    if (!ready || payload.payroll_blocked || exporting) return;
+    if (!ready || exportBlocked || exporting) return;
     setExporting(true); setError("");
     try {
-      const res = await fetch(`/api/timecards/export?from=${from}&to=${to}`);
+      const res = await fetch(`/api/timecards/export?from=${from}&to=${to}&type=${exportType}`);
       if (!res.ok) throw new Error((await res.json()).error || "Could not export payroll.");
-      downloadCsv(payrollFilename(from, to), await res.text());
+      downloadCsv(exportType === "payroll" ? payrollFilename(from, to) : timecardReportFilename(exportType, from, to), await res.text());
     } catch (err) { setError(err.message); }
     finally { setExporting(false); }
   }
@@ -284,11 +287,19 @@ export default function TimecardsBoard() {
   return <div className={styles.board + " w-full min-w-0 flex-1 px-4 py-4 sm:px-6"}>
     <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
       <div><h2 className="text-xl font-semibold">Timecards</h2><p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">Review punches and hours for payroll.</p></div>
-      <button type="button" disabled={!ready || payload?.payroll_blocked || exporting} onClick={exportCsv}
+      <div className="flex flex-wrap items-center gap-2">
+      <label className="sr-only" htmlFor="timecard-export-type">Export report</label>
+      <select id="timecard-export-type" value={exportType} onChange={(event) => setExportType(event.target.value)} className={fieldClass} disabled={exporting}>
+        <option value="punches">Total punches</option><option value="summary">Employee totals</option><option value="payroll">Original payroll format</option>
+      </select>
+      <button type="button" disabled={!ready || exportBlocked || exporting} onClick={exportCsv}
         className="inline-flex h-9 items-center gap-2 rounded-md bg-[#C8102E] px-3 text-xs font-semibold text-white hover:bg-[#a90e27] disabled:opacity-40">
-        <Download size={15} />{exporting ? "Exporting…" : "Export payroll CSV"}
+        <Download size={15} />{exporting ? "Exporting…" : "Export CSV"}
       </button>
+      </div>
     </div>
+
+    {exportType === "summary" && payload?.can_export_pay ? <p className="mb-3 text-xs text-zinc-500">Employee totals CSV includes estimated regular, overtime, and total pay using wage history effective on each shift date.</p> : null}
 
     <div className="mb-4 flex flex-wrap items-end gap-2">
       <label className="grid gap-1 text-[11px] font-medium text-zinc-500">Pay period
@@ -343,6 +354,7 @@ export default function TimecardsBoard() {
         <p className="ml-auto text-xs tabular-nums text-zinc-500" role="status">{ready ? view === "punches" ? visiblePunches.length + " of " + allPunches.length + " punches" : visibleGroups.length + " employees" : ""}</p>
       </div>
 
+      {ready && payload.labor_report?.context_pending_count > 0 ? <p role="alert" className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900">Overtime export on hold: {payload.labor_report.context_pending_count} earlier punches in these workweeks need review. Select the full workweek to resolve them.</p> : null}
       {ready && payload.payroll_blocked ? <div className="flex flex-wrap items-center justify-between gap-2 border-b border-red-200 bg-red-50/70 px-4 py-2 text-xs text-red-900 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200">
         <span><strong>Payroll on hold</strong> · {payload.pending_count} flagged · {payload.open_count || 0} open. Close and approve before exporting.</span>
         <button type="button" onClick={() => { setView("punches"); setReviewFilter(payload.pending_count ? "pending" : "open"); setPerson(""); setSearch(""); }} className="font-semibold underline underline-offset-2">Review punches</button>
@@ -377,24 +389,28 @@ export default function TimecardsBoard() {
         </table>
         {!visiblePunches.length ? <div className="px-4 py-12 text-center text-sm text-zinc-500"><p>{allPunches.length ? "No punches match these filters." : "No punches in this date range."}</p>
           {allPunches.length ? <button type="button" onClick={() => { setPerson(""); setReviewFilter("all"); setSearch(""); }} className="mt-2 font-semibold text-[#C8102E]">Clear filters</button> : null}</div> : null}
-      </> : <table className={styles.totalsTable}>
+      </> : <div className={styles.totalsScroll} tabIndex={0} role="region" aria-label="Employee hour totals"><table className={styles.totalsTable}>
         <caption className="sr-only">Employee totals for the selected date range</caption>
-        <thead><tr><th scope="col">Person</th><th scope="col" className={styles.numeric}>Recorded</th><th scope="col" className={styles.numeric}>Cleared</th><th scope="col" className={styles.numeric}>Pending</th></tr></thead>
+        <thead><tr><th scope="col">Person</th>{["Regular", "Overtime", "Total hours", "Unpaid breaks", "Cleared", "Pending"].map((label) => <th key={label} scope="col" className={styles.numeric}>{label}</th>)}</tr></thead>
         <tbody>{visibleGroups.map((group) => <tr key={group.key}>
           <td><button type="button" onClick={() => { setPerson(String(group.key)); setReviewFilter("all"); setView("punches"); }} className="flex items-center gap-2 text-left font-medium hover:text-[#C8102E]"><EmployeeAvatar name={group.name} src={group.profile_photo_url} size="sm" /><span>{group.name}<span className="block text-[11px] font-normal text-zinc-500">{group.punches.length} punches{group.openCount ? " · " + group.openCount + " open" : ""}</span></span></button></td>
-          <td className={styles.numeric + " font-semibold"}>{group.totalDisplay}</td><td className={styles.numeric + " text-green-800 dark:text-green-300"}>{group.approvedDisplay}</td><td className={styles.numeric + " text-red-800 dark:text-red-300"}>{group.pendingDisplay}</td>
+          <td className={styles.numeric}>{group.labor ? (group.labor.regular_minutes / 60).toFixed(2) : "—"}</td>
+          <td className={styles.numeric}>{group.labor ? (group.labor.overtime_minutes / 60).toFixed(2) : "—"}</td>
+          <td className={styles.numeric + " font-semibold"}>{group.totalDisplay}</td>
+          <td className={styles.numeric}>{group.labor ? <>{(group.labor.break_minutes / 60).toFixed(2)}<span className="block text-[11px] text-zinc-500">{group.labor.break_count} breaks</span></> : "—"}</td>
+          <td className={styles.numeric + " text-green-800 dark:text-green-300"}>{group.approvedDisplay}</td><td className={styles.numeric + " text-red-800 dark:text-red-300"}>{group.pendingDisplay}</td>
         </tr>)}</tbody>
-        <tfoot><tr><th scope="row">{selectedPerson || search ? "Filtered total" : "Period total"} (hrs)</th>{["totalMinutes", "approvedMinutes", "pendingMinutes"].map((key) => <td key={key} className={styles.numeric + " font-semibold"}>{(visibleGroups.reduce((sum, group) => sum + (group[key] || 0), 0) / 60).toFixed(2)}</td>)}</tr></tfoot>
-      </table>}
+        <tfoot><tr><th scope="row">{selectedPerson || search ? "Filtered total" : "Period total"} (hrs)</th>{["regular_minutes", "overtime_minutes", "totalMinutes", "break_minutes", "approvedMinutes", "pendingMinutes"].map((key) => <td key={key} className={styles.numeric + " font-semibold"}>{(visibleGroups.reduce((sum, group) => sum + (group[key] ?? group.labor?.[key] ?? 0), 0) / 60).toFixed(2)}</td>)}</tr></tfoot>
+      </table>{!visibleGroups.length ? <p className="px-4 py-10 text-center text-sm text-zinc-500">No employees in this date range match these filters.</p> : null}</div>}
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-zinc-200 px-4 py-2 text-[11px] text-zinc-500 dark:border-zinc-800">
         <span>{dateLabel(from)} – {dateLabel(to)}</span><span>Export includes all employees in this date range.</span>
       </div>
     </section>
 
     <details className="mt-3 text-xs text-zinc-500 dark:text-zinc-400"><summary className="w-fit cursor-pointer rounded py-1">How hours are calculated</summary>
-      <p className="mt-1 max-w-3xl leading-relaxed">Punch timestamps stay exact. Paid hours are paid minutes ÷ 60, shown to two decimals; CSV hours are unrounded.
+      <p className="mt-1 max-w-3xl leading-relaxed">Punch timestamps stay exact. Paid hours are paid minutes ÷ 60, shown to two decimals. The two new CSV reports also show two decimals; the original payroll format keeps unrounded hours.
         {payload?.use_break_punches ? " Actual unpaid breaks are subtracted." : payload?.subtract_scheduled_break ? " Scheduled unpaid breaks are subtracted." : " No break deduction is applied."}
-        {" "}Recorded totals include closed punches awaiting approval. Cleared totals include only payroll-ready hours. Open punches have no hours calculated yet. Export stays on hold until all punches are closed and cleared.</p>
+        {" "}Overtime starts after 40 paid hours in each Sunday–Saturday workweek, in restaurant time. Earlier hours in the workweek count even for a custom range. Overnight shifts crossing Sunday are split between weeks. Reports select whole shifts by clock-in date. Recorded totals include closed punches awaiting approval. Cleared totals include only payroll-ready hours. Open punches have no hours calculated yet. Export stays on hold until all punches used in the report are closed and cleared.</p>
     </details>
     {!canEdit && payload ? <p className="mt-2 text-xs text-zinc-500">Read-only access. A GM or assistant manager can correct punches.</p> : null}
 

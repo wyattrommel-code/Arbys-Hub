@@ -182,6 +182,12 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
   let cards = await (await request("/api/timecards" + range, gm)).json();
   assert.equal(cards.pending_count, 1, JSON.stringify(cards));
   assert.equal((await request("/api/timecards/export" + range, gm)).status, 409);
+  for (const type of ['punches', 'summary']) {
+    const path = '/api/timecards/export' + range + '&type=' + type;
+    assert.equal((await request(path)).status, 401);
+    assert.equal((await request(path, crew)).status, 403);
+    assert.equal((await request(path, gm)).status, 409);
+  }
   const version = cards.groups[0].punches[0].review_version;
   assert.equal((await request(approvePath, gm, "POST", { version: "stale", note: "Reviewed" })).status, 409);
   assert.equal((await request(approvePath, gm, "POST", { version, note: "" })).status, 400);
@@ -189,6 +195,26 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
   assert.equal(approvals[0].approved_by, ids.gm);
   assert.equal(approvals[0].reviewed_snapshot.minutes, 360);
   assert.equal((await request("/api/timecards/export" + range, gm)).status, 200);
+  for (const type of ['punches', 'summary']) {
+    const response = await request('/api/timecards/export' + range + '&type=' + type, gm);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.match(response.headers.get('content-disposition'), /attachment.*\.csv/);
+    const csv = await response.text();
+    assert.match(csv, /Regular Hours,Overtime Hours,Total Hours/);
+    assert.match(csv, /Synthetic Crew/);
+    assert.ok(!csv.includes('fake-service-key'));
+    if (type === 'summary') assert.match(csv, /Estimated Regular Pay/);
+  }
+  offlineReceipts.push({ id: randomUUID(), status: 'review', event: { occurred_at: '2026-09-09T22:00:00Z' } });
+  for (const type of ['payroll', 'punches', 'summary']) {
+    const response = await request('/api/timecards/export' + range + '&type=' + type, gm);
+    assert.equal(response.status, 409);
+    assert.match((await response.json()).error, /Resolve the offline punches/);
+  }
+  offlineReceipts.pop();
+  assert.equal((await request('/api/timecards/export' + range + '&type=bad', gm)).status, 400);
+  assert.equal((await request('/api/timecards/export?from=2026-02-30&to=2026-03-01&type=summary', gm)).status, 400);
   const editPath=`/api/timecards/${punch.id}`;
   const originalPunch={...punch};
   let editInput={clock_in:'2026-09-09T10:00',clock_out:'2026-09-09T16:00',breaks:[{start:'2026-09-09T12:00',end:'2026-09-09T12:30'}],note:'Correct missed break',version:cards.groups[0].punches[0].edit_version};
