@@ -1090,7 +1090,7 @@ export default function ScheduleBuilder() {
                   return (
                     <tr key={rowKey(emp)} className="align-top">
                       <th className="sticky left-0 z-10 border-b border-zinc-100 bg-white px-2 py-px text-left font-semibold dark:border-zinc-800 dark:bg-zinc-900">
-                        <span className="block truncate leading-[22px]" title={emp.fullName}>{emp.fullName}</span>
+                        <span className="block truncate leading-[34px]" title={emp.fullName}>{emp.fullName}</span>
                       </th>
                       {dates.map((date) => {
                         const cellKey = `${rowKey(emp)}|${date}`;
@@ -1106,11 +1106,11 @@ export default function ScheduleBuilder() {
                               if (e.target.closest("[data-shift-card]")) return;
                               openCreate(emp, date);
                             }}
-                            className={`h-[25px] cursor-pointer border-b border-r border-zinc-100 p-px dark:border-zinc-800 ${
+                            className={`h-[38px] cursor-pointer border-b border-r border-zinc-100 p-px dark:border-zinc-800 ${
                               active ? "bg-[#C8102E]/10" : "hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
                             }`}
                           >
-                            <div className="flex min-h-[22px] min-w-0 flex-col gap-px">
+                            <div className="flex min-h-[34px] min-w-0 flex-col gap-px">
                               {cellShifts.map((shift) => {
                                 const color = roleColor(catalogRoles, shift.role);
                                 const warns = warningsFor(shift, emp);
@@ -1139,7 +1139,7 @@ export default function ScheduleBuilder() {
                                       }
                                       openEdit(shift);
                                     }}
-                                    className={`relative flex h-[22px] w-full min-w-0 shrink-0 items-center gap-1 rounded px-1 text-left text-[11px] leading-4 shadow-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#C8102E] ${
+                                    className={`relative flex h-[34px] w-full min-w-0 shrink-0 items-center gap-1 rounded px-1 text-left text-[11px] leading-4 shadow-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#C8102E] ${
                                       copyDragId === shift.id ? "cursor-copy ring-2 ring-white ring-offset-1 ring-offset-[#C8102E]" : ""
                                     }`}
                                     style={{ background: color, color: contrastText(color), printColorAdjust: "exact" }}
@@ -1170,7 +1170,7 @@ export default function ScheduleBuilder() {
                           </td>
                         );
                       })}
-                      <td className="border-b border-zinc-100 px-1 py-px font-semibold leading-[22px] tabular-nums dark:border-zinc-800">
+                      <td className="border-b border-zinc-100 px-1 py-px font-semibold leading-[34px] tabular-nums dark:border-zinc-800">
                         {formatHours(hours)}
                         {overtime ? (
                           <span className="ml-1" title="Over 40 hours this week">
