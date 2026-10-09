@@ -7,4 +7,5 @@ coverage
 .env*
 !.env.example
 
-out
+# Only exclude generated output at the repository root, not app/api/clock/out.
+/out/

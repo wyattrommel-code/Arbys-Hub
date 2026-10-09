@@ -6,7 +6,7 @@
     "test:brink": "node --import ./tests/resolve-local.mjs --test tests/brink.test.mjs tests/brink-storage.test.mjs tests/brink-sync.test.mjs tests/brink-employees.test.mjs tests/brink-definitions.test.mjs",
     "test:timecards": "node --import ./tests/resolve-local.mjs --test tests/timecard-review.test.mjs tests/timecard-edit.test.mjs tests/timecard-reports.test.mjs",
     "dev": "next dev",
-    "build": "next build",
+    "build": "node scripts/check-clock-routes.mjs && next build",
     "start": "next start",
     "lint": "eslint",
     "cogs:import": "node scripts/import-mclane-cogs.mjs",
