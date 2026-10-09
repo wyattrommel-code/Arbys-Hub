@@ -1089,17 +1089,8 @@ export default function ScheduleBuilder() {
                   const overtime = hours > 40;
                   return (
                     <tr key={rowKey(emp)} className="align-top">
-                      <th className="sticky left-0 z-10 border-b border-zinc-100 bg-white px-2 py-1 text-left font-semibold dark:border-zinc-800 dark:bg-zinc-900">
-                        <span className="block truncate leading-4" title={emp.fullName}>{emp.fullName}</span>
-                        <span className="block truncate text-[10px] font-normal uppercase leading-3 tracking-wide text-zinc-500">
-                          {emp.isUnassigned
-                            ? "Open"
-                            : emp.role === "gm"
-                              ? "Manager"
-                              : emp.is_shift_lead || emp.role === "shift_lead"
-                                ? "Shift lead"
-                                : "Crew"}
-                        </span>
+                      <th className="sticky left-0 z-10 border-b border-zinc-100 bg-white px-2 py-px text-left font-semibold dark:border-zinc-800 dark:bg-zinc-900">
+                        <span className="block truncate leading-[22px]" title={emp.fullName}>{emp.fullName}</span>
                       </th>
                       {dates.map((date) => {
                         const cellKey = `${rowKey(emp)}|${date}`;
@@ -1115,11 +1106,11 @@ export default function ScheduleBuilder() {
                               if (e.target.closest("[data-shift-card]")) return;
                               openCreate(emp, date);
                             }}
-                            className={`h-[41px] cursor-pointer border-b border-r border-zinc-100 p-0.5 dark:border-zinc-800 ${
+                            className={`h-[25px] cursor-pointer border-b border-r border-zinc-100 p-px dark:border-zinc-800 ${
                               active ? "bg-[#C8102E]/10" : "hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
                             }`}
                           >
-                            <div className="flex min-h-9 min-w-0 flex-col gap-1">
+                            <div className="flex min-h-[22px] min-w-0 flex-col gap-px">
                               {cellShifts.map((shift) => {
                                 const color = roleColor(catalogRoles, shift.role);
                                 const warns = warningsFor(shift, emp);
@@ -1148,7 +1139,7 @@ export default function ScheduleBuilder() {
                                       }
                                       openEdit(shift);
                                     }}
-                                    className={`relative h-9 w-full min-w-0 shrink-0 rounded px-1.5 py-0.5 text-left shadow-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#C8102E] ${
+                                    className={`relative flex h-[22px] w-full min-w-0 shrink-0 items-center gap-1 rounded px-1 text-left text-[11px] leading-4 shadow-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#C8102E] ${
                                       copyDragId === shift.id ? "cursor-copy ring-2 ring-white ring-offset-1 ring-offset-[#C8102E]" : ""
                                     }`}
                                     style={{ background: color, color: contrastText(color), printColorAdjust: "exact" }}
@@ -1160,16 +1151,13 @@ export default function ScheduleBuilder() {
                                       ].filter(Boolean).join(" · ")
                                     }
                                   >
-                                    <span className="flex min-w-0 items-center justify-between gap-1 leading-4">
-                                      <span className="min-w-0 truncate font-semibold">
-                                        {formatClock(shift.scheduled_start)}–{formatClock(shift.scheduled_end)}
-                                      </span>
-                                      {warns.length ? <span className="shrink-0" aria-label={warns.join(". ")}>⚠️</span> : null}
+                                    <span className="shrink-0 whitespace-nowrap font-semibold tabular-nums">
+                                      {formatClock(shift.scheduled_start)}–{formatClock(shift.scheduled_end)}
                                     </span>
-                                    <span className="block truncate text-[10px] font-semibold leading-3">
+                                    <span className="min-w-0 flex-1 truncate font-semibold">
                                       {shift.role || "No role"}
-                                      {shift.station ? <span className="font-normal opacity-90"> · {shift.station}</span> : null}
                                     </span>
+                                    {warns.length ? <span className="shrink-0" aria-label={warns.join(". ")}>⚠️</span> : null}
                                     {copyDragId === shift.id ? (
                                       <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-white text-[10px] font-bold text-[#C8102E]">
                                         +
@@ -1182,7 +1170,7 @@ export default function ScheduleBuilder() {
                           </td>
                         );
                       })}
-                      <td className="border-b border-zinc-100 px-1 py-1 font-semibold tabular-nums dark:border-zinc-800">
+                      <td className="border-b border-zinc-100 px-1 py-px font-semibold leading-[22px] tabular-nums dark:border-zinc-800">
                         {formatHours(hours)}
                         {overtime ? (
                           <span className="ml-1" title="Over 40 hours this week">
