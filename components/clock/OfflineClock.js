@@ -4,6 +4,7 @@ import PinPad from '@/components/PinPad';
 import FaceCapture from './FaceCapture';
 import CameraWarmup from './CameraWarmup';
 import CorrectionContext from './CorrectionContext';
+import ClockScheduleNotice from './ClockScheduleNotice';
 import { OFFLINE_LABELS, baseKind, canCapture, captureTime, encryptOfflinePin, offlineActions, projectRoster } from '@/lib/offline-clock';
 import { offlinePinReady } from '@/lib/offline-pin';
 import { enqueueOfflinePunch, verifyOfflineEmployeePin } from '@/lib/offline-clock-store';
@@ -73,7 +74,10 @@ export default function OfflineClock({ state, onBusy, onSaved }) {
       {step!=='done' && <div className="mb-4 flex items-center justify-between gap-3"><h2 className="text-xl font-semibold">{selected?.name}</h2><button onClick={reset} disabled={busy} className="min-h-11 px-3 underline">Cancel</button></div>}
       {error && <p role="alert" className="mb-4 rounded-lg bg-red-100 p-3 text-red-900">{error}</p>}
       {step==='pin' && <><PinPad pin={pin} onChange={value=>{if(!busy)setPin(value);}} subtitle="Enter your PIN" /><button disabled={busy || pin.length!==4} onClick={checkPin} className={`${button} mt-4 w-full`}>{busy?'Checking PIN…':'Continue'}</button></>}
-      {step==='actions' && <div className="grid gap-3">{offlineActions(selected,snapshot.settings).map(value=><button key={value} onClick={()=>action(value)} className={button}>{OFFLINE_LABELS[value]}</button>)}</div>}
+      {step==='actions' && <div className="grid gap-3">{offlineActions(selected,snapshot.settings).map(value=><div key={value}>
+        <button onClick={()=>action(value)} className={`${button} w-full`}>{OFFLINE_LABELS[value]}</button>
+        {!value.startsWith('forgot_') && value!=='clock_in' && <ClockScheduleNotice action={value} context={selected.clock_schedule} settings={snapshot.settings} offline clockOffset={snapshot.clock_offset_ms || 0} />}
+      </div>)}</div>}
       {step==='authorization' && <div className="space-y-4"><h3 className="text-lg font-semibold">Clock in</h3><p className="text-sm">If you are working outside your scheduled shift, have a manager enter their PIN. Scheduled shifts can continue.</p>
         <label className="block text-sm font-medium">Manager PIN (unscheduled work only)<input type="password" inputMode="numeric" autoComplete="off" maxLength={4} value={managerPin} onChange={e=>setManagerPin(e.target.value.replace(/\D/g,''))} className="mt-2 block w-full rounded-lg border p-3" /></label>
         <button disabled={managerPin.length>0 && managerPin.length!==4} className={`${button} w-full`} onClick={()=>setStep('photo')}>Continue to photo</button></div>}
@@ -82,7 +86,10 @@ export default function OfflineClock({ state, onBusy, onSaved }) {
         <label className="block text-sm font-medium">Actual time (restaurant time)<input type="datetime-local" required value={claimed} max={toStoreDateTimeLocal(captureTime(snapshot))} onChange={e=>setClaimed(e.target.value)} className="mt-2 block w-full rounded-lg border p-3" /></label>
         <label className="block text-sm font-medium">Reason<textarea required minLength={3} maxLength={1000} value={reason} onChange={e=>setReason(e.target.value)} className="mt-2 block w-full rounded-lg border p-3" /></label>
         <button className={`${button} w-full`}>Continue to photo</button></form>}
-      {step==='photo' && <FaceCapture actionLabel={`Save ${baseKind(kind).replaceAll('_',' ')} on iPad`} onCaptured={save} onCancel={()=>setStep('actions')} busy={busy} />}
+      {step==='photo' && <>
+        <ClockScheduleNotice action={kind} context={selected.clock_schedule} settings={snapshot.settings} offline clockOffset={snapshot.clock_offset_ms || 0} />
+        <FaceCapture actionLabel={`Save ${baseKind(kind).replaceAll('_',' ')} on iPad`} onCaptured={save} onCancel={()=>setStep('actions')} busy={busy} />
+      </>}
       {step==='done' && <div className="py-12 text-center"><h2 className="text-3xl font-bold">Saved on this iPad</h2><p className="mt-4 text-lg">{done?.name} · {done?.label}</p><p className="mt-2">{formatStoreDateTime(done?.time)}</p><p className="mt-4 text-sm">Your PIN was checked. Uploads automatically when connected, using the time shown above.</p><button onClick={reset} className={`${button} mt-6 w-full`}>Done</button></div>}
     </div>}
   </div>;

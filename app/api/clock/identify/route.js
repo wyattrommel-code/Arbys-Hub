@@ -8,6 +8,7 @@ import {
   canAuthorizeUnscheduled,
   fetchClockEmployeeByPin,
   fetchOpenPunch,
+  fetchPunchSchedules,
   fetchRecentPunches,
   fetchRecentClockOuts,
   fetchTodaysShiftsForEmployee,
@@ -47,17 +48,17 @@ export async function POST(request) {
 
     const deviceHash = hashCredential((await cookies()).get(DEVICE_COOKIE).value);
     const offlinePin = { version: offlinePinVersion(deviceHash, employee) };
-    const [settings, openPunch, shifts, punches, clockOuts] = await Promise.all([
+    const [settings, openPunch] = await Promise.all([
       getAttendanceSettings(supabase),
       fetchOpenPunch(supabase, employee.id),
-      fetchTodaysShiftsForEmployee(supabase, employee),
-      fetchRecentPunches(supabase, employee.id),
-      fetchRecentClockOuts(supabase, [employee.id]),
     ]);
 
     if (openPunch) {
       const punch = await healOrphanOnBreak(supabase, openPunch);
-      const openBreak = await fetchOpenBreak(supabase, punch.id);
+      const [openBreak, schedules] = await Promise.all([
+        fetchOpenBreak(supabase, punch.id),
+        fetchPunchSchedules(supabase, [punch]),
+      ]);
       return secureJson({
         ok: true,
         offlinePin,
@@ -73,10 +74,16 @@ export async function POST(request) {
         scheduled: !openPunch.unscheduled,
         shift: null,
         needsAuthorization: false,
+        clock_schedule: schedules.get(punch.id),
         settings: publicSettings(settings),
       });
     }
 
+    const [shifts, punches, clockOuts] = await Promise.all([
+      fetchTodaysShiftsForEmployee(supabase, employee),
+      fetchRecentPunches(supabase, employee.id),
+      fetchRecentClockOuts(supabase, [employee.id]),
+    ]);
     const shift = pickClockInShift(shifts, punches);
     const scheduled = Boolean(shift);
     const access = scheduled ? employee : await attachEffectiveAccess(supabase, employee);

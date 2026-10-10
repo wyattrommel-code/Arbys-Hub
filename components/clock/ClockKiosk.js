@@ -5,6 +5,7 @@ import EmployeeAvatar from "@/components/EmployeeAvatar";
 import FaceCapture from "@/components/clock/FaceCapture";
 import CameraWarmup from "@/components/clock/CameraWarmup";
 import CorrectionContext from "@/components/clock/CorrectionContext";
+import ClockScheduleNotice from "@/components/clock/ClockScheduleNotice";
 import { createFaceDetector } from "@/lib/face-detect";
 import PinPad from "@/components/PinPad";
 import { clockFetch, rememberOnlinePin } from "@/lib/offline-clock-store";
@@ -183,7 +184,7 @@ export default function ClockKiosk() {
         const form = new FormData();
         form.set("pin", pinValue ?? pin);
         form.set("employee_id", person.id);
-        if (active.needsAuthorization) {
+        if (active.action === "clock_in" && active.needsAuthorization) {
           form.set(
             "manager_pin",
             managerPinValue || (active.canSelfAuthorize ? pinValue ?? pin : managerPin)
@@ -200,7 +201,7 @@ export default function ClockKiosk() {
           else if (needsPhotoFor(active)) setStep("photo");
           else if (active.action === "clock_out" && active.settings?.use_break_punches) {
             setStep("actions");
-          } else if (active.needsAuthorization && !active.canSelfAuthorize) setStep("unscheduled");
+          } else if (active.action === "clock_in" && active.needsAuthorization && !active.canSelfAuthorize) setStep("unscheduled");
           else setStep("actions");
           return;
         }
@@ -578,14 +579,21 @@ export default function ClockKiosk() {
               <PunchHeader employee={selected} clockedIn={clockedIn} onBreak={onBreak} />
               {error && <p role="alert" className="mt-4 text-center text-red-700">{error}</p>}
               {onBreak ? (
-                <button disabled={loading} onClick={() => submitBreak("end")} className="mt-6 min-h-16 rounded-2xl bg-amber-500 text-xl font-bold text-white disabled:opacity-40">End Break</button>
+                <>
+                  <button disabled={loading} onClick={() => submitBreak("end")} className="mt-6 min-h-16 rounded-2xl bg-amber-500 text-xl font-bold text-white disabled:opacity-40">End Break</button>
+                  <ClockScheduleNotice action="break_end" context={session.clock_schedule} settings={session.settings} />
+                </>
               ) : (
                 <>
-                  {clockedIn && session.settings?.use_break_punches && <button disabled={loading} onClick={() => submitBreak("start")} className="mt-6 min-h-16 rounded-2xl bg-amber-500 text-xl font-bold text-white disabled:opacity-40">Start Break</button>}
+                  {clockedIn && session.settings?.use_break_punches && <>
+                    <button disabled={loading} onClick={() => submitBreak("start")} className="mt-6 min-h-16 rounded-2xl bg-amber-500 text-xl font-bold text-white disabled:opacity-40">Start Break</button>
+                    <ClockScheduleNotice action="break_start" context={session.clock_schedule} settings={session.settings} />
+                  </>}
                   <button disabled={loading} onClick={() => {
                     if (!clockedIn && session.needsAuthorization && !session.canSelfAuthorize) setStep("unscheduled");
                     else beginPunch();
                   }} className="mt-3 min-h-16 rounded-2xl bg-[#C8102E] text-xl font-bold text-white disabled:opacity-40">{clockedIn ? "Clock Out" : "Clock In"}</button>
+                  {clockedIn && <ClockScheduleNotice action="clock_out" context={session.clock_schedule} settings={session.settings} />}
                 </>
               )}
               <p className="mt-8 text-center font-semibold">Missed a punch?</p>
@@ -637,6 +645,7 @@ export default function ClockKiosk() {
           {step === "photo" && session ? (
             <>
               <PunchHeader employee={selected || session.employee} clockedIn={clockedIn} />
+              {clockedIn && <ClockScheduleNotice action="clock_out" context={session.clock_schedule} settings={session.settings} />}
               {error ? (
                 <p className="mb-3 text-center text-base font-medium text-red-600" role="alert">
                   {error}
