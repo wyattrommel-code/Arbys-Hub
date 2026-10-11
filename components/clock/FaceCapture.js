@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { acquireClockCamera } from '@/lib/clock-camera';
 import { captureJpegBlob, createFaceDetector } from "@/lib/face-detect";
-import { createFaceCaptureGate, faceBracketPath, isFreshFace } from '@/lib/face-capture';
+import { createFaceCaptureGate, createStableFaceTracker, faceBracketPath, isFreshFace } from '@/lib/face-capture';
 
 export default function FaceCapture({ actionLabel = "Take photo", onCaptured, onCancel, busy = false }) {
   const videoRef = useRef(null);
@@ -15,6 +15,7 @@ export default function FaceCapture({ actionLabel = "Take photo", onCaptured, on
   const [ready, setReady] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [capturing, setCapturing] = useState(false);
+  const [manualFallback, setManualFallback] = useState(false);
   const [faces, setFaces] = useState([]);
   const [frameSize, setFrameSize] = useState({ width: 640, height: 480 });
 
@@ -30,17 +31,30 @@ export default function FaceCapture({ actionLabel = "Take photo", onCaptured, on
       await onCaptured(blob, faceDetected);
     } catch (err) {
       if (generation === generationRef.current) setCameraError(err?.message || "Could not capture photo. Try again.");
-    } finally { captureGate.finish(); setCapturing(false); }
+    } finally {
+      captureGate.finish();
+      if (generation === generationRef.current) { setCapturing(false); setManualFallback(true); }
+    }
   }, [busy, ready, onCaptured, captureGate]);
 
   useEffect(() => { captureRef.current = capture; }, [capture]);
 
   useEffect(() => {
-    let cancelled = false, timer;
+    let cancelled = false, timer, fallbackTimer, detector, retries = 1;
+    const stableFace = createStableFaceTracker();
     generationRef.current = {};
-    setReady(false); setCameraError(''); setFaces([]); faceRef.current = { boxes: [], at: 0 };
+    setReady(false); setCapturing(false); setManualFallback(false); setCameraError(''); setFaces([]); faceRef.current = { boxes: [], at: 0 };
     const camera = acquireClockCamera();
     const detectorPromise = createFaceDetector().catch(() => null);
+    async function loadDetector(promise) {
+      detector = await promise;
+      const available = detector && !detector.closed && await detector.ready.catch(() => false);
+      if (cancelled) return false;
+      if (available) return true;
+      setManualFallback(true);
+      if (detector?.type !== 'unavailable' && retries-- > 0) return loadDetector(createFaceDetector().catch(() => null));
+      return false;
+    }
     async function start() {
       try {
         const stream = await camera.ready;
@@ -51,14 +65,20 @@ export default function FaceCapture({ actionLabel = "Take photo", onCaptured, on
         if (cancelled) return;
         setReady(video.readyState >= 2 && video.videoWidth > 0);
         setFrameSize({ width: video.videoWidth || 640, height: video.videoHeight || 480 });
-        const detector = await detectorPromise;
-        // The camera and manual button are already ready while the worker loads.
-        if (!detector || !await detector.ready || cancelled) return;
+        // Capture is automatic by default. Keep an escape hatch for a slow or
+        // unavailable detector, and for an explicit retry after a failed save.
+        fallbackTimer = window.setTimeout(() => setManualFallback(true), 5000);
+        if (!await loadDetector(detectorPromise)) return;
         const canvas = document.createElement("canvas");
         const ctx = canvas.getContext("2d");
-        if (!ctx) return;
+        if (!ctx) { setManualFallback(true); return; }
         async function tick() {
           if (cancelled || document.visibilityState !== 'visible') return;
+          if (detector.closed) {
+            faceRef.current = { boxes: [], at: 0 }; setFaces([]); stableFace.reset();
+            setManualFallback(true);
+            if (retries-- <= 0 || !await loadDetector(createFaceDetector().catch(() => null))) return;
+          }
           if (!captureGate.inFlight && video.readyState >= 2 && video.videoWidth > 0) {
             const scale = Math.min(1, 320 / Math.max(video.videoWidth, video.videoHeight));
             canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
@@ -72,9 +92,9 @@ export default function FaceCapture({ actionLabel = "Take photo", onCaptured, on
             const face = { boxes, at };
             faceRef.current = isFreshFace(face, performance.now()) ? face : { boxes: [], at: 0 };
             setFaces(faceRef.current.boxes);
-            if (faceRef.current.boxes.length) void captureRef.current?.(true);
+            if (stableFace.update(faceRef.current, performance.now())) void captureRef.current?.(true);
           }
-          if (!cancelled) timer = window.setTimeout(tick, 200);
+          if (!cancelled) timer = window.setTimeout(tick, 150);
         }
         void tick();
       } catch (err) {
@@ -88,6 +108,7 @@ export default function FaceCapture({ actionLabel = "Take photo", onCaptured, on
       cancelled = true;
       generationRef.current = null;
       window.clearTimeout(timer);
+      window.clearTimeout(fallbackTimer);
       camera.release();
     };
   }, [attempt, captureGate]);
@@ -122,10 +143,10 @@ export default function FaceCapture({ actionLabel = "Take photo", onCaptured, on
       </div>
       {cameraError && <p className="mt-4 text-center text-base font-medium text-red-600" role="alert">{cameraError}</p>}
       {cameraError && !ready && <button type="button" onClick={() => setAttempt(value => value + 1)} className="mt-3 min-h-12 w-full rounded-xl border font-semibold">Try camera again</button>}
-      <button type="button" disabled={locked || !ready} onClick={() => capture(false)}
+      {(manualFallback || locked) && <button type="button" disabled={locked || !ready} onClick={() => capture(false)}
         className="mt-6 min-h-16 w-full rounded-2xl bg-[#C8102E] text-xl font-bold text-white disabled:opacity-40">
         {locked ? "Saving…" : actionLabel}
-      </button>
+      </button>}
       <button type="button" disabled={locked} onClick={onCancel}
         className="mt-3 min-h-12 w-full rounded-2xl border border-zinc-300 text-base font-semibold dark:border-zinc-700">Cancel</button>
     </div>

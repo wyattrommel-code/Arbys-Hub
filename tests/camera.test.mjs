@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { captureJpegBlob } from '../lib/face-detect.js';
+import { captureJpegBlob, createDetectorCache } from '../lib/face-detect.js';
 import { createWorkerDetector } from '../lib/face-detect-worker-client.js';
 
 test('camera captures the whole frame, caps upload size and rejects unready video', async t => {
@@ -108,4 +108,73 @@ test('stale or absent faces never authorize automatic capture or face metadata',
   assert.equal(isFreshFace({boxes,at:100},1100),false);
   assert.equal(isFreshFace({boxes,at:200},100),false);
   assert.equal(isFreshFace({boxes:[],at:100},150),false);
+});
+
+test('automatic capture requires a full, steady face across fresh frames', async () => {
+  const { createStableFaceTracker } = await import('../lib/face-capture.js');
+  const tracker = createStableFaceTracker();
+  const box = { x: 0.3, y: 0.2, width: 0.3, height: 0.4 };
+  const sample = (at, boxes = [box], now = at + 20) => tracker.update({ boxes, at }, now);
+  assert.equal(sample(100), false, 'Never capture on the first detection');
+  assert.equal(sample(280), false);
+  assert.equal(sample(460, [{ ...box, x: 0.31 }]), true, 'Small natural movement is fine');
+  assert.equal(sample(640, []), false, 'Losing the face resets the hold');
+  assert.equal(sample(820), false);
+  assert.equal(sample(1000), false);
+  assert.equal(sample(1180, [{ ...box, x: 0.6 }]), false, 'Moving to another face resets the hold');
+  for (const invalid of [{ ...box, x: 0 }, { ...box, y: 0.8 }, { ...box, width: 0.05 }, { ...box, height: 0.05 }]) {
+    tracker.reset();
+    for (const at of [100, 300, 500, 700]) assert.equal(sample(at, [invalid]), false, 'Clipped and distant faces cannot trigger');
+  }
+  tracker.reset(); sample(100); sample(300);
+  assert.equal(sample(500, [box], 1600), false, 'Slow inference cannot approve an old frame');
+  assert.equal(sample(1700), false);
+  assert.equal(sample(1900), false);
+  assert.equal(sample(2100), true);
+  assert.equal(sample(3200), false, 'A long gap requires a new steady sequence');
+  tracker.reset(); sample(100); sample(300);
+  assert.equal(sample(300), false, 'Repeated replies are not new observations');
+});
+
+test('detector cache shares warm-up but recovers from failed startup and later worker failure', async () => {
+  let calls = 0;
+  const detectors = [
+    { ready: Promise.resolve(false), closed: true },
+    { ready: Promise.resolve(true), closed: false },
+    { ready: Promise.resolve(true), closed: false },
+  ];
+  const get = createDetectorCache(() => detectors[calls++]);
+  const first = get();
+  assert.equal(get(), first, 'Concurrent warm-up requests share a worker');
+  assert.equal(await (await first).ready, false);
+  const recovered = await get();
+  assert.equal(recovered, detectors[1]);
+  assert.equal(await get(), recovered);
+  recovered.closed = true;
+  assert.equal(await get(), detectors[2]);
+  assert.equal(calls, 3);
+
+  let attempts = 0;
+  const retry = createDetectorCache(() => { if (!attempts++) throw new Error('Startup failed'); return recovered; });
+  await assert.rejects(retry(), /Startup failed/);
+  assert.equal(await retry(), recovered);
+});
+
+test('slow first inference can warm up without disabling subsequent automatic detection', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let request, stopped = false;
+  const worker = { postMessage(message) { request = message; }, terminate() { stopped = true; } };
+  const detector = createWorkerDetector(worker, async () => ({ close() {} }));
+  t.after(() => detector.close());
+  worker.onmessage({ data: { type: 'ready' } });
+  const first = detector.detect({}); await Promise.resolve();
+  t.mock.timers.tick(3000);
+  assert.equal(detector.closed, false, 'Initial WASM setup gets time to finish');
+  worker.onmessage({ data: { type: 'result', id: request.id, boxes: [] } });
+  await first;
+  const stalled = detector.detect({}); await Promise.resolve();
+  t.mock.timers.tick(2000);
+  assert.deepEqual(await stalled, []);
+  assert.equal(detector.closed, true, 'A stalled warmed worker is released for recovery');
+  assert.equal(stopped, true);
 });

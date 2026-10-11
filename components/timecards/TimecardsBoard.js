@@ -25,11 +25,13 @@ function Flags({ punch }) {
   const flags = [];
   if (punch.pending_approval) flags.push(["Needs review", "red"]);
   else if (punch.approval) flags.push(["Approved", "green"]);
-  if (punch.on_break) flags.push(["On break", "amber"]);
-  else if (punch.open) flags.push(["Open", "amber"]);
-  if (punch.unscheduled) flags.push(["Unscheduled", "purple"]);
-  if ((punch.clock_in_photo_url && !punch.face_detected_in) || (punch.clock_out_photo_url && !punch.face_detected_out)) flags.push(["No face detected", "red"]);
-  if (punch.edited) flags.push(["Edited", "gray"]);
+  if (!punch.approval || punch.pending_approval) {
+    if (punch.on_break) flags.push(["On break", "amber"]);
+    else if (punch.open) flags.push(["Open", "amber"]);
+    if (punch.unscheduled) flags.push(["Unscheduled", "purple"]);
+    if ((punch.clock_in_photo_url && !punch.face_detected_in) || (punch.clock_out_photo_url && !punch.face_detected_out)) flags.push(["No face detected", "red"]);
+    if (punch.edited) flags.push(["Edited", "gray"]);
+  }
   const colors = {
     green: "bg-green-50 text-green-800 dark:bg-green-950 dark:text-green-200",
     red: "bg-red-50 text-red-800 dark:bg-red-950 dark:text-red-200",
@@ -67,6 +69,7 @@ function PunchTime({ punch, direction, onOpen }) {
 }
 
 function PunchDetails({ punch }) {
+  const approved = Boolean(punch.approval && !punch.pending_approval);
   return <div className="grid gap-4 text-xs sm:grid-cols-3">
     <div><p className="mb-1 font-semibold">Scheduled shift</p><p className="text-zinc-600 dark:text-zinc-400">{punch.scheduled_label}</p>
       {punch.authorized_by ? <p className="mt-1">Authorized by {punch.authorized_by}</p> : null}</div>
@@ -79,9 +82,10 @@ function PunchDetails({ punch }) {
     <div><p className="mb-1 font-semibold">Paid time</p>
       <p>{punch.open ? "Clock out to calculate paid time." : (punch.worked_minutes ?? 0) + " paid minutes ÷ 60 = " + punch.worked_hours_display + " hours"}</p>
       {!punch.payroll_ready ? <p className="mt-1 font-medium text-red-700 dark:text-red-300">Not yet cleared for payroll.</p> : null}
-      {punch.review_flags?.length ? <ul className="mt-2 list-inside list-disc">{punch.review_flags.map((flag) => <li key={flag}>{flag}</li>)}</ul> : null}
-      {punch.approval ? <div className="mt-2 text-green-800 dark:text-green-300"><p>Approved by {punch.approval.approved_by_name} · {formatStoreDateTime(punch.approval.approved_at)}</p><p>{punch.approval.note}</p></div> : null}
-      <Corrections punch={punch} />
+      {approved ? <p className="mt-2 font-medium text-green-800 dark:text-green-300">Approved</p> : <>
+        {punch.review_flags?.length ? <ul className="mt-2 list-inside list-disc">{punch.review_flags.map((flag) => <li key={flag}>{flag}</li>)}</ul> : null}
+        <Corrections punch={punch} />
+      </>}
     </div>
   </div>;
 }
