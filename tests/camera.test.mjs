@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { captureJpegBlob, createDetectorCache } from '../lib/face-detect.js';
+import { captureJpegBlob, createDetectorCache, createDetectorWithFallback } from '../lib/face-detect.js';
 import { createWorkerDetector } from '../lib/face-detect-worker-client.js';
 import { loadFaceAsset } from '../lib/face-detect-assets.js';
 
@@ -200,4 +200,28 @@ test('public face detector assets load from their cache after the internet drops
   assert.equal(await (await loadFaceAsset(url)).text(), 'online fallback');
   globalThis.fetch = async () => new Response('failed', { status: 503 });
   await assert.rejects(loadFaceAsset(url), /Could not load/);
+});
+
+test('face detection falls back when worker startup is unsupported, rejected, or times out', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const browser = { type: 'browser', ready: Promise.resolve(true) };
+  let browserStarts = 0;
+  const fallback = () => { browserStarts++; return browser; };
+  const healthy = { ready: Promise.resolve(true), closed: false };
+  assert.equal(await createDetectorWithFallback(() => healthy, fallback), healthy);
+  assert.equal(browserStarts, 0, 'Working workers stay off the UI thread');
+  assert.equal(await createDetectorWithFallback(null, fallback), browser);
+  assert.equal(await createDetectorWithFallback(() => { throw new Error('Worker unsupported'); }, fallback), browser);
+  let closed = 0;
+  assert.equal(await createDetectorWithFallback(() => ({ ready: Promise.resolve(false), close() { closed++; } }), fallback), browser);
+  assert.equal(closed, 1);
+  assert.equal(await createDetectorWithFallback(() => ({ ready: Promise.reject(new Error('Canvas unsupported')), close() { closed++; } }), fallback), browser);
+  assert.equal(closed, 2);
+  const worker = createWorkerDetector({ terminate() { closed++; } }, async () => ({ close() {} }));
+  const pending = createDetectorWithFallback(() => worker, fallback);
+  await Promise.resolve(); t.mock.timers.tick(15000);
+  assert.equal(await pending, browser);
+  assert.equal(closed, 3, 'Timed-out worker is released before fallback');
+  await assert.rejects(createDetectorWithFallback(null, () => { throw new Error('No detector'); }), /No detector/,
+    'If both paths fail, never return fake face detections or enable capture');
 });
