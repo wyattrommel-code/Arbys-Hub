@@ -177,7 +177,7 @@ export default function ClockKiosk() {
     }) => {
       const active = sess || session;
       const person = selected;
-      if (!active || !person) return;
+      if (!active || !person) return false;
       setLoading(true);
       setError("");
       try {
@@ -203,7 +203,7 @@ export default function ClockKiosk() {
             setStep("actions");
           } else if (active.action === "clock_in" && active.needsAuthorization && !active.canSelfAuthorize) setStep("unscheduled");
           else setStep("actions");
-          return;
+          return false;
         }
         setResult({
           action: active.action,
@@ -214,12 +214,14 @@ export default function ClockKiosk() {
         setStep("done");
         await loadRoster({ silent: true });
         window.dispatchEvent(new Event("clock-punch-saved"));
+        return true;
       } catch {
         setError("Could not save punch. Try again.");
         if (needsPhotoFor(active)) setStep("photo");
         else if (active.action === "clock_out" && active.settings?.use_break_punches) {
           setStep("actions");
         } else setStep("actions");
+        return false;
       } finally {
         setLoading(false);
       }
@@ -333,7 +335,7 @@ export default function ClockKiosk() {
 
 
   async function submitCorrection(photoBlob, faceDetected) {
-    if (loading) return;
+    if (loading) return false;
     setLoading(true); setError("");
     try {
       const form = new FormData();
@@ -346,12 +348,13 @@ export default function ClockKiosk() {
       if (!res.ok) {
         if (res.status === 401 || (res.status === 409 && /select your name again/i.test(data.error || ""))) { bounceToList(data.error); await loadRoster({ silent: true }); }
         else setError(data.error || "Could not save missed time.");
-        return;
+        return false;
       }
       setResult(data); setPin(""); setStep("correction_done");
       await loadRoster({ silent: true });
       window.dispatchEvent(new Event("clock-punch-saved"));
-    } catch { bounceToList("Connection interrupted. Select your name again to check your status before retrying."); }
+      return true;
+    } catch { bounceToList("Connection interrupted. Select your name again to check your status before retrying."); return false; }
     finally { setLoading(false); }
   }
 
@@ -628,7 +631,7 @@ export default function ClockKiosk() {
             <>
               <PunchHeader employee={selected} clockedIn={clockedIn} onBreak={onBreak} />
               {error && <p role="alert" className="mt-3 text-center text-red-700">{error}</p>}
-              <FaceCapture busy={loading} actionLabel="Capture & save missed time" onCaptured={submitCorrection}
+              <FaceCapture busy={loading} actionLabel="Save missed time" onConfirm={submitCorrection}
                 onCancel={() => { setError(""); setStep("correction"); }} />
             </>
           ) : null}
@@ -653,10 +656,10 @@ export default function ClockKiosk() {
               ) : null}
               <FaceCapture
                 actionLabel={
-                  session.action === "clock_out" ? "Capture & clock out" : "Capture & clock in"
+                  session.action === "clock_out" ? "Clock out" : "Clock in"
                 }
                 busy={loading}
-                onCaptured={(blob, faceDetected = true) =>
+                onConfirm={(blob, faceDetected) =>
                   submitPunch({
                     sess: session,
                     pinValue: pin,

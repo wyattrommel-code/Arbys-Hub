@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { captureJpegBlob, createDetectorCache } from '../lib/face-detect.js';
 import { createWorkerDetector } from '../lib/face-detect-worker-client.js';
+import { loadFaceAsset } from '../lib/face-detect-assets.js';
 
 test('camera captures the whole frame, caps upload size and rejects unready video', async t => {
   const original=globalThis.document; t.after(()=>{globalThis.document=original;});
@@ -177,4 +178,26 @@ test('slow first inference can warm up without disabling subsequent automatic de
   assert.deepEqual(await stalled, []);
   assert.equal(detector.closed, true, 'A stalled warmed worker is released for recovery');
   assert.equal(stopped, true);
+});
+
+test('public face detector assets load from their cache after the internet drops', async t => {
+  const originalCaches = globalThis.caches, originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.caches = originalCaches; globalThis.fetch = originalFetch; });
+  const stored = new Map(); let requests = 0;
+  globalThis.caches = { open: async name => {
+    assert.equal(name, 'arbys-clock-face-assets-v1');
+    return { match: async url => stored.get(url)?.clone(), put: async (url, response) => stored.set(url, response) };
+  } };
+  globalThis.fetch = async (_url, options) => { requests++; assert.equal(options.credentials, 'omit'); return new Response('public detector file'); };
+  const url = 'https://cdn.example.test/face.wasm';
+  assert.equal(await (await loadFaceAsset(url)).text(), 'public detector file');
+  globalThis.fetch = async () => { throw new Error('Offline'); };
+  assert.equal(await (await loadFaceAsset(url)).text(), 'public detector file');
+  assert.equal(requests, 1);
+  await assert.rejects(loadFaceAsset('https://cdn.example.test/not-prepared.wasm'), /Offline/);
+  globalThis.caches = { open: async () => { throw new Error('Storage unavailable'); } };
+  globalThis.fetch = async () => new Response('online fallback');
+  assert.equal(await (await loadFaceAsset(url)).text(), 'online fallback');
+  globalThis.fetch = async () => new Response('failed', { status: 503 });
+  await assert.rejects(loadFaceAsset(url), /Could not load/);
 });

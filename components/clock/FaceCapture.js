@@ -5,45 +5,51 @@ import { acquireClockCamera } from '@/lib/clock-camera';
 import { captureJpegBlob, createFaceDetector } from "@/lib/face-detect";
 import { createFaceCaptureGate, createStableFaceTracker, faceBracketPath, isFreshFace } from '@/lib/face-capture';
 
-export default function FaceCapture({ actionLabel = "Take photo", onCaptured, onCancel, busy = false }) {
+export default function FaceCapture({ actionLabel = "Clock in", onConfirm, onCancel, busy = false }) {
   const videoRef = useRef(null);
   const faceRef = useRef({ boxes: [], at: 0 });
   const captureRef = useRef(null);
-  const generationRef = useRef(null);
-  const [captureGate] = useState(createFaceCaptureGate);
+  const sessionRef = useRef(null);
+  const submittingRef = useRef(false);
   const [cameraError, setCameraError] = useState("");
   const [ready, setReady] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [capturing, setCapturing] = useState(false);
-  const [manualFallback, setManualFallback] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [photo, setPhoto] = useState(null);
   const [faces, setFaces] = useState([]);
   const [frameSize, setFrameSize] = useState({ width: 640, height: 480 });
 
-  const capture = useCallback(async (automatic = false) => {
-    const faceDetected = isFreshFace(faceRef.current, performance.now());
-    if (automatic && !faceDetected) return;
-    if (!captureGate.start({ automatic, ready, busy, visible: document.visibilityState === 'visible' })) return;
-    const generation = generationRef.current;
+  const capture = useCallback(async () => {
+    const session = sessionRef.current;
+    if (!session || photo || !isFreshFace(faceRef.current, performance.now())) return;
+    if (!session.gate.start({ automatic: true, ready, busy, visible: document.visibilityState === 'visible' })) return;
     setCapturing(true); setCameraError("");
     try {
       const blob = await captureJpegBlob(videoRef.current);
-      if (generation !== generationRef.current || document.visibilityState !== 'visible') return;
-      await onCaptured(blob, faceDetected);
+      if (session !== sessionRef.current || document.visibilityState !== 'visible') return;
+      if (!blob?.size) throw new Error('Could not capture photo. Try camera again.');
+      // Preparing a photo never saves a punch. The action button does that.
+      setPhoto({ blob, url: URL.createObjectURL(blob) });
     } catch (err) {
-      if (generation === generationRef.current) setCameraError(err?.message || "Could not capture photo. Try again.");
+      if (session === sessionRef.current) setCameraError(err?.message || "Could not capture photo. Try camera again.");
     } finally {
-      captureGate.finish();
-      if (generation === generationRef.current) { setCapturing(false); setManualFallback(true); }
+      session.gate.finish();
+      if (session === sessionRef.current) setCapturing(false);
     }
-  }, [busy, ready, onCaptured, captureGate]);
+  }, [busy, ready, photo]);
 
   useEffect(() => { captureRef.current = capture; }, [capture]);
+  useEffect(() => () => { if (photo) URL.revokeObjectURL(photo.url); }, [photo]);
 
   useEffect(() => {
-    let cancelled = false, timer, fallbackTimer, detector, retries = 1;
+    if (photo || document.visibilityState !== 'visible') return;
+    let cancelled = false, timer, detector, retries = 1;
+    const session = { gate: createFaceCaptureGate() };
     const stableFace = createStableFaceTracker();
-    generationRef.current = {};
-    setReady(false); setCapturing(false); setManualFallback(false); setCameraError(''); setFaces([]); faceRef.current = { boxes: [], at: 0 };
+    sessionRef.current = session;
+    setReady(false); setCapturing(false); setCameraError(''); setFaces([]); faceRef.current = { boxes: [], at: 0 };
     const camera = acquireClockCamera();
     const detectorPromise = createFaceDetector().catch(() => null);
     async function loadDetector(promise) {
@@ -51,8 +57,8 @@ export default function FaceCapture({ actionLabel = "Take photo", onCaptured, on
       const available = detector && !detector.closed && await detector.ready.catch(() => false);
       if (cancelled) return false;
       if (available) return true;
-      setManualFallback(true);
       if (detector?.type !== 'unavailable' && retries-- > 0) return loadDetector(createFaceDetector().catch(() => null));
+      setCameraError('Automatic photos are unavailable. Try camera again.');
       return false;
     }
     async function start() {
@@ -65,21 +71,18 @@ export default function FaceCapture({ actionLabel = "Take photo", onCaptured, on
         if (cancelled) return;
         setReady(video.readyState >= 2 && video.videoWidth > 0);
         setFrameSize({ width: video.videoWidth || 640, height: video.videoHeight || 480 });
-        // Capture is automatic by default. Keep an escape hatch for a slow or
-        // unavailable detector, and for an explicit retry after a failed save.
-        fallbackTimer = window.setTimeout(() => setManualFallback(true), 5000);
         if (!await loadDetector(detectorPromise)) return;
         const canvas = document.createElement("canvas");
         const ctx = canvas.getContext("2d");
-        if (!ctx) { setManualFallback(true); return; }
+        if (!ctx) throw new Error('Could not prepare automatic photos. Try camera again.');
         async function tick() {
           if (cancelled || document.visibilityState !== 'visible') return;
           if (detector.closed) {
             faceRef.current = { boxes: [], at: 0 }; setFaces([]); stableFace.reset();
-            setManualFallback(true);
-            if (retries-- <= 0 || !await loadDetector(createFaceDetector().catch(() => null))) return;
+            if (retries-- <= 0) { setCameraError('Automatic photos stopped. Try camera again.'); return; }
+            if (!await loadDetector(createFaceDetector().catch(() => null))) return;
           }
-          if (!captureGate.inFlight && video.readyState >= 2 && video.videoWidth > 0) {
+          if (!session.gate.inFlight && video.readyState >= 2 && video.videoWidth > 0) {
             const scale = Math.min(1, 320 / Math.max(video.videoWidth, video.videoHeight));
             canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
             canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
@@ -87,12 +90,12 @@ export default function FaceCapture({ actionLabel = "Take photo", onCaptured, on
             const at = performance.now();
             let boxes = [];
             try { boxes = await detector.detect(canvas); }
-            catch { /* Manual photo capture remains available without detection. */ }
+            catch { detector.close(); }
             if (cancelled || document.visibilityState !== 'visible') return;
             const face = { boxes, at };
             faceRef.current = isFreshFace(face, performance.now()) ? face : { boxes: [], at: 0 };
             setFaces(faceRef.current.boxes);
-            if (stableFace.update(faceRef.current, performance.now())) void captureRef.current?.(true);
+            if (stableFace.update(faceRef.current, performance.now())) void captureRef.current?.();
           }
           if (!cancelled) timer = window.setTimeout(tick, 150);
         }
@@ -106,34 +109,46 @@ export default function FaceCapture({ actionLabel = "Take photo", onCaptured, on
     void start();
     return () => {
       cancelled = true;
-      generationRef.current = null;
+      sessionRef.current = null;
       window.clearTimeout(timer);
-      window.clearTimeout(fallbackTimer);
       camera.release();
     };
-  }, [attempt, captureGate]);
+  }, [attempt, photo]);
 
   useEffect(() => {
     const visible = () => {
       if (document.visibilityState === 'visible') setAttempt(value => value + 1);
       else {
-        generationRef.current = null;
+        sessionRef.current = null;
         faceRef.current = { boxes: [], at: 0 };
         setFaces([]); setReady(false);
+        if (!submittingRef.current) setPhoto(null);
       }
     };
     document.addEventListener('visibilitychange', visible);
     return () => document.removeEventListener('visibilitychange', visible);
   }, []);
 
-  const locked = busy || capturing;
+  async function confirm() {
+    if (!photo || busy || capturing || submittingRef.current || submitted || document.visibilityState !== 'visible') return;
+    submittingRef.current = true; setSubmitting(true); setCameraError('');
+    try {
+      const saved = await onConfirm(photo.blob, true);
+      if (saved !== false) setSubmitted(true);
+    } catch (err) {
+      setCameraError(err?.message || 'Could not save punch. Try again.');
+    } finally { submittingRef.current = false; setSubmitting(false); }
+  }
+
+  const locked = busy || capturing || submitting || submitted;
   return (
     <div className="flex flex-col items-center">
       <div className="relative w-full overflow-hidden rounded-2xl bg-black">
-        <video ref={videoRef} className="h-[min(52vh,420px)] w-full object-contain" style={{ transform: "scaleX(-1)" }}
+        {photo ? <img src={photo.url} alt="Captured photo" className="h-[min(52vh,420px)] w-full object-contain" style={{ transform: 'scaleX(-1)' }} />
+          : <video ref={videoRef} className="h-[min(52vh,420px)] w-full object-contain" style={{ transform: "scaleX(-1)" }}
           playsInline muted autoPlay onLoadedData={() => setReady(true)}
           onResize={event => setFrameSize({ width: event.currentTarget.videoWidth, height: event.currentTarget.videoHeight })}
-          aria-label="Camera preview" />
+          aria-label="Camera preview" />}
         <svg aria-hidden="true" className="pointer-events-none absolute inset-0 h-full w-full"
           viewBox={'0 0 ' + frameSize.width + ' ' + frameSize.height} preserveAspectRatio="xMidYMid meet"
           style={{ transform: "scaleX(-1)", filter: "drop-shadow(0 1px 2px rgb(0 0 0 / 65%))" }}>
@@ -142,11 +157,13 @@ export default function FaceCapture({ actionLabel = "Take photo", onCaptured, on
         </svg>
       </div>
       {cameraError && <p className="mt-4 text-center text-base font-medium text-red-600" role="alert">{cameraError}</p>}
-      {cameraError && !ready && <button type="button" onClick={() => setAttempt(value => value + 1)} className="mt-3 min-h-12 w-full rounded-xl border font-semibold">Try camera again</button>}
-      {(manualFallback || locked) && <button type="button" disabled={locked || !ready} onClick={() => capture(false)}
-        className="mt-6 min-h-16 w-full rounded-2xl bg-[#C8102E] text-xl font-bold text-white disabled:opacity-40">
-        {locked ? "Saving…" : actionLabel}
-      </button>}
+      {cameraError && !photo && <button type="button" disabled={locked} onClick={() => setAttempt(value => value + 1)} className="mt-3 min-h-12 w-full rounded-xl border font-semibold">Try camera again</button>}
+      <button type="button" disabled={locked || !photo} onClick={confirm}
+        className="mt-6 min-h-16 w-full rounded-2xl bg-[#C8102E] text-xl font-bold text-white disabled:cursor-not-allowed disabled:bg-zinc-300 disabled:text-zinc-500 dark:disabled:bg-zinc-700 dark:disabled:text-zinc-400">
+        {actionLabel}
+      </button>
+      {photo && <button type="button" disabled={locked} onClick={() => setPhoto(null)}
+        className="mt-3 min-h-12 w-full rounded-2xl border border-zinc-300 text-base font-semibold dark:border-zinc-700">Retake photo</button>}
       <button type="button" disabled={locked} onClick={onCancel}
         className="mt-3 min-h-12 w-full rounded-2xl border border-zinc-300 text-base font-semibold dark:border-zinc-700">Cancel</button>
     </div>

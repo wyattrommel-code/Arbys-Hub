@@ -39,7 +39,7 @@ export default function OfflineClock({ state, onBusy, onSaved }) {
     setStep(value.startsWith('forgot_') ? 'correction' : value==='clock_in' ? 'authorization' : 'photo');
   }
   async function save(photo,face){
-    if(saving.current) return;
+    if(saving.current) return false;
     saving.current=true;setBusy(true);setError('');
     try {
       const captured=captureTime(snapshot), occurred=kind.startsWith('forgot_') ? parseCorrectionTime(claimed) : captured;
@@ -52,7 +52,8 @@ export default function OfflineClock({ state, onBusy, onSaved }) {
       pinProof.current=null;
       setDone({name:selected.name,label:OFFLINE_LABELS[kind],time:occurred});setPin('');setManagerPin('');setStep('done');
       await onSaved();
-    } catch(err){setError(err.message);}
+      return true;
+    } catch(err){setError(err.message);return false;}
     finally{saving.current=false;setBusy(false);}
   }
   const button='min-h-12 rounded-xl border border-zinc-300 bg-white px-4 py-3 font-semibold text-zinc-900 disabled:opacity-40';
@@ -88,7 +89,7 @@ export default function OfflineClock({ state, onBusy, onSaved }) {
         <button className={`${button} w-full`}>Continue to photo</button></form>}
       {step==='photo' && <>
         <ClockScheduleNotice action={kind} context={selected.clock_schedule} settings={snapshot.settings} offline clockOffset={snapshot.clock_offset_ms || 0} />
-        <FaceCapture actionLabel={`Save ${baseKind(kind).replaceAll('_',' ')} on iPad`} onCaptured={save} onCancel={()=>setStep('actions')} busy={busy} />
+        <FaceCapture actionLabel={kind.startsWith('forgot_') ? 'Save missed time' : OFFLINE_LABELS[baseKind(kind)]} onConfirm={save} onCancel={()=>setStep('actions')} busy={busy} />
       </>}
       {step==='done' && <div className="py-12 text-center"><h2 className="text-3xl font-bold">Saved on this iPad</h2><p className="mt-4 text-lg">{done?.name} · {done?.label}</p><p className="mt-2">{formatStoreDateTime(done?.time)}</p><p className="mt-4 text-sm">Your PIN was checked. Uploads automatically when connected, using the time shown above.</p><button onClick={reset} className={`${button} mt-6 w-full`}>Done</button></div>}
     </div>}
