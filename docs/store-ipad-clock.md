@@ -1,16 +1,18 @@
 # Dedicated store iPad time clock
 
-Decision: use two Vercel projects from this repository. The Hub is the backend and manager app; the clock project serves only clock-in/out, breaks, manager unlock, and device pairing. Existing timecards, manager approvals, payroll export, employee PINs and private photo storage remain in the Hub. No Google Play app is required for the iPad.
+Decision: use two Vercel projects from this repository. The Hub is the backend and manager app; the clock project serves only clock-in/out, breaks, and device pairing. Existing timecards, manager approvals, payroll export, employee PINs and private photo storage remain in the Hub. No Google Play app is required for the iPad.
 
 ## Authorization
 
 The GM signs into the Hub and opens Settings → Store iPad. A one-use, 80-bit pairing code expires after ten minutes. Enter it on the store iPad in the exact browser/Home Screen app that will be used every day. The backend stores only credential hashes. Pairing replaces the one active browser for store 07462; revoking also cancels pending codes. The browser receives a host-only HttpOnly, Secure, SameSite=Strict credential valid for 180 days. Clear website data or switch browser containers and the GM must pair again.
 
-After pairing, a shift lead or manager unlocks the station for eight hours with the existing scoped kiosk cookie. Every roster, punch, break and kiosk profile-photo request checks the active device plus the unlocker's live employee status and role. Knowing a PIN, possessing a Hub login, or opening the link on a phone does not enroll a device. GM-only pairing controls recheck live authorization. Registration actions are recorded in a private append-only event table.
+After pairing, the iPad opens straight to the clock, including after closing and reopening the same browser. There is no separate manager unlock or eight-hour station session. Every roster, punch, break, offline bootstrap/sync and kiosk profile-photo request still checks the active registered device through the clock gateway. Employees still need their own valid PIN and required photo; clocking in outside a scheduled shift still requires the existing manager authorization. Knowing a PIN, possessing a Hub login, or opening the link on a phone does not enroll a device. GM-only pairing controls recheck live authorization. Registration actions are recorded in a private append-only event table.
+
+The status response retains `unlocked: paired` and `/api/clock/unlock` remains a device-only compatibility check for cached clients; neither creates a manager session. Deploy the Hub authorization change before the matching clock UI. Existing device credentials remain valid, and replacing or revoking the device still blocks it.
 
 This enrolls a browser; it is not hardware attestation or a geofence. Keep pairing codes private and the authorized iPad at the restaurant. A GM can intentionally enroll another browser. Physical restrictions such as Guided Access or supervised device management complement this application control.
 
-The clock server has no database or Hub session-signing key. A fixed, narrow gateway forwards only allowed clock endpoints and profile photos to the Hub over HTTPS. It strips Hub login cookies and all caller authorization headers. Its shared server secret is required in addition to the registered device and shift unlock. Mutations require same-origin requests; responses and private photos are never cached. There is no offline punch queue: a punch needs a successful server response.
+The clock server has no database or Hub session-signing key. A fixed, narrow gateway forwards only allowed clock endpoints and profile photos to the Hub over HTTPS. It strips Hub login cookies and all caller authorization headers. Its shared server secret is required in addition to the registered device. Mutations require same-origin requests; responses and private photos are never cached. Offline preparation and the durable punch queue are documented in [offline-clock.md](offline-clock.md).
 
 ## Framework security
 
@@ -37,7 +39,7 @@ Do not import Hub environment variables into the clock project. In particular do
 
 1. Apply `20260928201406_registered_clock_station.sql` to the Hub database after staging verification. It adds private device and audit tables plus a service-only atomic pairing function; it does not alter payroll, employee or punch records.
 2. Create/configure the clock Vercel project and both sets of environment variables. Deploy a tested clock build, then the matching Hub build during a planned clock transition. This Hub release disables the old `/clock` punch interface and rejects every unpaired station immediately; employees must use the newly paired iPad before clocking again.
-3. In the Hub, GM → Settings → Store iPad → Create pairing code. Enter it on the physical store iPad. Then a manager unlocks for the shift. Configure the iPad to remain on that site and allow its camera.
+3. For initial setup, in the Hub, GM → Settings → Store iPad → Create pairing code. Enter it on the physical store iPad. The clock is then available without another unlock. Configure the iPad to remain on that site and allow its camera.
 4. On a personal phone, verify the clock displays pairing and cannot show the roster or punch, even using a manager PIN. Verify a same-origin direct Hub clock API request is denied. Confirm the iPad's authorized flow, using synthetic staging employees for end-to-end punches before release.
 5. Verify replacement/revocation and the first real timecard under the restaurant's normal process. The SQL event log is available to server administrators; it contains no PIN, code or cookie secrets.
 
@@ -45,9 +47,13 @@ Before release: confirm the actual Vercel projects/production commit, sign in to
 
 The PAR/Brink sandbox remains only the sales integration's test environment. Device enrollment and time punches do not depend on sandbox sales, timers, or sales cutover settings.
 
+## Paired-device access validation (October 13, 2026)
+
+Eight synthetic clock-action, station-enrollment, offline-queue, and two-site HTTP tests passed. They cover opening with only the device credential (including an expired old kiosk cookie), PIN-free compatibility checks that issue no session, manager deactivation without locking the whole station, inactive/wrong employee PIN denial, gateway isolation, device replacement/revocation, durable offline sync, and separate unscheduled clock-in approval. The local browser preview also reopened directly to the roster without a manager session. Production iPad acceptance follows publication; no live punches were created during validation.
+
 ## Recovery
 
-If the iPad is lost or misused, revoke it in Hub settings; this invalidates its credential at the next backend check, including any attempt to submit a punch. A page may show stale UI until its next status poll (at most one minute), but actions still reauthorize. Pair the replacement and unlock again. If pairing succeeds but its HTTP response is lost, issue another code and repeat pairing. Never bypass device checks to restore a station.
+If the iPad is lost or misused, revoke it in Hub settings; this invalidates its credential at the next backend check, including any attempt to submit a punch. A page may show stale UI until its next status poll (at most 30 seconds while active), but actions still reauthorize. Pair the replacement browser. If pairing succeeds but its HTTP response is lost, issue another code and repeat pairing. Never bypass device checks to restore a station.
 
 Keep the private database migration if reverting UI code. Rolling the Hub back to a pre-registration build also restores the old manager-PIN-only authorization behavior, so treat that as a security-impacting rollback, not a safe fix.
 

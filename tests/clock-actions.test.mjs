@@ -4,26 +4,26 @@ import { registerHooks } from 'node:module';
 
 // Run the real route handlers with a synthetic data layer. No live timecards.
 const employee = { id: '11111111-1111-4111-8111-111111111111', name: 'Synthetic Crew' };
-let openPunch, photo, writes, scheduleReads;
-const settings = { require_photo_on_clock_out: true, use_break_punches: true };
+let openPunch, photo, writes, scheduleReads, scheduleUnavailable;
+const settings = { require_face_on_clock_in: true, require_photo_on_clock_out: true, use_break_punches: true };
 const unavailable = () => { scheduleReads++; throw new Error('Schedule is unavailable'); };
 const clock = {
   CLOCK_STORE_ID: 'payson',
   parsePin: value => /^\d{4}$/.test(value) ? value : null,
-  fetchClockEmployeeByPin: async (_db, pin, id) => pin === '1234' && id === employee.id ? employee : null,
+  fetchClockEmployeeByPin: async (_db, pin, id) => pin === '1234' && id === employee.id ? employee : !id && pin === '5678' ? { id: 'manager', name: 'Synthetic Manager', role: 'gm' } : null,
   fetchOpenPunch: async () => openPunch,
   getAttendanceSettings: async () => settings,
   publicSettings: value => value,
   serializeEmployee: value => value,
   serializeShift: value => value,
   fetchPunchSchedules: async () => new Map([[openPunch.id, { unavailable: true }]]),
-  fetchTodaysShiftsForEmployee: unavailable,
-  fetchRecentPunches: unavailable,
+  fetchTodaysShiftsForEmployee: () => scheduleUnavailable ? unavailable() : [],
+  fetchRecentPunches: () => scheduleUnavailable ? unavailable() : [],
   fetchRecentClockOuts: unavailable,
-  canAuthorizeUnscheduled: () => false,
+  canAuthorizeUnscheduled: value => value.role === 'gm',
   pickClockInShift: () => null,
   clockEmployeeName: () => employee.name,
-  readPhotoFromRequest: async request => { const body = await request.json(); return { pin: body.pin, employeeId: body.employee_id, photo, faceDetected: true }; },
+  readPhotoFromRequest: async request => { const body = await request.json(); return { pin: body.pin, managerPin: body.manager_pin, employeeId: body.employee_id, photo, faceDetected: true }; },
   uploadPunchPhoto: async () => 'https://synthetic.invalid/photo.jpg',
   computePaidWorkedMinutes: () => 480,
 };
@@ -62,14 +62,30 @@ registerHooks({
   },
 });
 const identify = (await import('../app/api/clock/identify/route.js')).POST;
+const clockIn = (await import('../app/api/clock/in/route.js')).POST;
 const clockOut = (await import('../app/api/clock/out/route.js')).POST;
 const startBreak = (await import('../app/api/clock/break/start/route.js')).POST;
 const endBreak = (await import('../app/api/clock/break/end/route.js')).POST;
-const request = (pin = '1234') => new Request('https://synthetic.invalid/api/clock', { method: 'POST', body: JSON.stringify({ pin, employee_id: employee.id }) });
+const request = (pin = '1234', manager_pin = '') => new Request('https://synthetic.invalid/api/clock', { method: 'POST', body: JSON.stringify({ pin, employee_id: employee.id, manager_pin }) });
 function reset() {
   openPunch = { id: 'punch', employee_id: employee.id, clock_in: '2026-10-08T16:00:00Z', status: 'open', unscheduled: true };
-  photo = new Blob(['synthetic photo']); writes = []; scheduleReads = 0;
+  photo = new Blob(['synthetic photo']); writes = []; scheduleReads = 0; scheduleUnavailable = true;
 }
+
+test('opening the station does not authorize unscheduled clock-ins', async () => {
+  reset(); openPunch = null; scheduleUnavailable = false;
+  for (const managerPin of ['', '0000', '1234']) {
+    const response = await clockIn(request('1234', managerPin));
+    assert.equal(response.status, 403);
+    assert.equal(writes.length, 0);
+  }
+  assert.equal((await clockIn(request('0000', '5678'))).status, 401);
+  photo = null;
+  const approved = await clockIn(request('1234', '5678'));
+  assert.equal(approved.status, 400);
+  assert.match((await approved.json()).error, /Photo is required/); // approval passed; photo is still mandatory
+  assert.equal(writes.length, 0);
+});
 
 test('an open unscheduled or overnight shift reaches actions even when schedule/history reads fail', async () => {
   reset();

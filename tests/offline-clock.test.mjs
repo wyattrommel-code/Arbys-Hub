@@ -5,6 +5,8 @@ import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 import { validateOfflineEvent, projectRoster, offlineActions, canCapture, encryptOfflinePin } from '../lib/offline-clock.js';
 import { signOfflineLease, verifyOfflineLease, decryptOfflinePin } from '../lib/offline-clock-crypto.js';
+import { timecardReview } from '../lib/timecard-approval.js';
+import { serializeTimecardPunch } from '../lib/timecards.js';
 const employee='11111111-1111-4111-8111-111111111111', device='a'.repeat(64);
 const at=minutes=>new Date(Math.floor(Date.now()/1000)*1000-minutes*60000).toISOString();
 const makeEvent=(kind='clock_in',extra={})=>({id:randomUUID(),employee_id:employee,kind,captured_at:at(1),occurred_at:at(1),reason:'',punch_id:null,break_id:null,previous_id:null,...extra});
@@ -80,6 +82,12 @@ test('offline sync applies original times once, preserves photos and sends confl
   const audits=(await db.query('select * from punch_corrections order by claimed_time')).rows;
   assert.equal(audits.length,4);assert.ok(audits.every(row=>row.source==='offline' && row.photo_url===photo));
   assert.equal(Date.parse(audits[0].photo_captured_at),Date.parse(first.captured_at));
+  const receipts=(await db.query('select id,punch_id,employee_id,status,issue,event,photo_url,occurred_at,captured_at from clock_offline_events where punch_id=$1 order by id',[closed.punch.id])).rows;
+  const breakRows=(await db.query('select * from break_punches where time_punch_id=$1',[closed.punch.id])).rows;
+  const card={...serializeTimecardPunch(closed.punch,null,{breaks:breakRows}),corrections:audits};
+  const payrollReview=timecardReview(card,null,{},[],receipts);
+  assert.deepEqual(payrollReview.review_flags,['Unscheduled shift']); // Keep the real exception, not an offline-only flag.
+  assert.equal(payrollReview.pending_approval,true);
   const conflict=makeEvent('clock_in',{occurred_at:at(200),captured_at:at(200)});
   assert.equal((await call(conflict)).status,'review');assert.equal(await count('time_punches'),1);
   const invalid=makeEvent();assert.equal((await call(invalid,'PIN did not match')).status,'review');

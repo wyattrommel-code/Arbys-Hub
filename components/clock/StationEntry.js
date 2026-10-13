@@ -1,7 +1,6 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import ClockKiosk from './ClockKiosk';
-import KioskUnlock from './KioskUnlock';
 import OfflineClock from './OfflineClock';
 import { offlinePinReady } from '@/lib/offline-pin';
 import { canCapture } from '@/lib/offline-clock';
@@ -20,7 +19,7 @@ export default function StationEntry() {
       const res=await clockFetch('/api/clock/status');
       if(!res.ok) throw new Error('Time clock connection unavailable.');
       const next=await res.json();setStatus(next);setError('');
-      if(!next.unlocked){setOffline(false);await disableOfflineCapture();await read();return;}
+      if(!next.paired){setOffline(false);await disableOfflineCapture();await read();return;}
       try {await syncOfflineClock();await read();setSyncError('');setOffline(false);}
       catch(err){setSyncError(err.message);if(err.status===401 || err.status===403){await disableOfflineCapture();}await read();}
     } catch(err){setOffline(true);setError(err.message);await read();}
@@ -66,7 +65,7 @@ export default function StationEntry() {
   const pinReady=(state.snapshot?.employees || []).filter(employee=>offlinePinReady(state.snapshot,state.credentials,employee.id)).length;
   const pinTotal=state.snapshot?.employees?.length || 0;
   const allowOffline=!!state.snapshot && (offline || state.events.length>0 || offlineBusy);
-  const available=status?.unlocked || (offline && state.snapshot);
+  const available=status?.paired || (offline && state.snapshot);
   if(available) return <>
     <div role="status" className={`flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2 text-sm ${offline || pending || syncError ? 'bg-amber-100 text-amber-950' : 'bg-emerald-50 text-emerald-950'}`}>
       <span>{offline?'Offline':pending?'Uploading saved punches':awaitingRefresh?'Refreshing clock status':'Connected'} · {pending?`${pending} saved on this iPad` : canCapture(state.snapshot) && shellReady?pinReady===pinTotal && pinTotal>0?'Ready for offline clocking':`Offline PINs ready: ${pinReady}/${pinTotal}`:'Preparing offline clocking…'}{state.snapshot?.review_count>0?` · ${state.snapshot.review_count} need manager review in the Hub`:''}</span>
@@ -77,8 +76,7 @@ export default function StationEntry() {
     </div>
     {allowOffline?<OfflineClock state={state} onBusy={setOfflineBusy} onSaved={async()=>{await read();check();}}/>:<ClockKiosk/>}
   </>;
-  if(status?.paired) return <><KioskUnlock/>{pending>0 && <p role="status" className="p-4 text-center">{pending} punches are saved on this iPad. Unlock to upload them.</p>}</>;
-  if(!status || offline) return <div className="m-auto space-y-4 p-6 text-center"><h1 className="text-xl font-semibold">Store time clock</h1><p role="status">{error || 'Connecting…'}</p><p className="text-sm">{pending?`${pending} punches are still saved on this iPad.`:'Connect and unlock this iPad once to prepare offline clocking.'}</p>{error&&<button onClick={check} className="rounded bg-red-700 px-5 py-3 text-white">Try again</button>}</div>;
+  if(!status || offline) return <div className="m-auto space-y-4 p-6 text-center"><h1 className="text-xl font-semibold">Store time clock</h1><p role="status">{error || 'Connecting…'}</p><p className="text-sm">{pending?`${pending} punches are still saved on this iPad.`:'Connect this paired iPad once to prepare offline clocking.'}</p>{error&&<button onClick={check} className="rounded bg-red-700 px-5 py-3 text-white">Try again</button>}</div>;
   return <form onSubmit={pair} className="m-auto w-full max-w-md space-y-5 rounded-xl border bg-white p-6 text-zinc-900">
     <h1 className="text-2xl font-semibold">Pair the store iPad</h1><p>Ask your GM to enter a pairing code from Hub Settings → Store iPad.</p>
     {pending>0 && <p role="alert">{pending} saved punches remain here. Ask your manager to recover them before changing this iPad’s pairing.</p>}

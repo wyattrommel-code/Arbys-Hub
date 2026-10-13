@@ -1,456 +1,137 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { employeeFullName, fetchEmployees } from "@/lib/employees";
-import { addDaysISO, getStoreToday } from "@/lib/store-time";
-import { getSupabase } from "@/lib/supabase";
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { addDaysISO, getStoreToday } from '@/lib/store-time';
+import { formatLongDate } from '@/lib/schedule';
+import { ATTENDANCE_LABELS } from '@/lib/attendance-records';
+import { payPeriodFor } from '@/lib/timecard-review';
+import AttendanceExport from './AttendanceExport';
+import styles from './AttendanceBoard.module.css';
 
-const WINDOWS = [30, 60, 90];
-const MANUAL_TYPES = [
-  { value: "call_out", label: "Call-out" },
-  { value: "no_show", label: "No show" },
-  { value: "late", label: "Late" },
-  { value: "left_early", label: "Left early" },
-  { value: "unscheduled", label: "Unscheduled" },
-  { value: "clock_in_early", label: "Clocked in early" },
-];
-
-function typeBadge(type) {
-  if (type === "late" || type === "no_show") return "bg-red-100 text-red-800";
-  if (type === "call_out") return "bg-amber-100 text-amber-900";
-  if (type === "unscheduled") return "bg-purple-100 text-purple-800";
-  if (type === "left_early" || type === "early_out") return "bg-orange-100 text-orange-900";
-  if (type === "clock_in_early") return "bg-blue-100 text-blue-800";
-  return "bg-zinc-100 text-zinc-700";
+const METRICS = [['late', 'Late'], ['call_out', 'Call-outs'], ['no_show', 'No-shows'], ['left_early', 'Left early']];
+const initials = name => name.split(/\s+/).map(word => word[0]).slice(0, 2).join('');
+async function request(url, options) {
+  const response = await fetch(url, { cache: 'no-store', ...options });
+  const data = await response.json();
+  if (!response.ok || !data.ok) throw new Error(data.error || 'Could not load attendance.');
+  return data;
 }
 
-function minutesLabel(event) {
-  const n = Number(event.minutes_delta);
-  if (!Number.isFinite(n) || n === 0) return "—";
-  if (event.event_type === "late") return `${n} min late`;
-  if (event.event_type === "clock_in_early" || event.event_type === "left_early" || event.event_type === "early_out") {
-    return `${n} min early`;
-  }
-  return `${n} min`;
+function NoteEditor({ note, onSave, busy }) {
+  const [value, setValue] = useState(note.note || '');
+  return <details className={styles.note}>
+    <summary>{note.note || 'Add manager note'}<span>{note.label}</span></summary>
+    <form onSubmit={event => { event.preventDefault(); onSave(value); }}>
+      <label>Manager note<textarea value={value} onChange={event => setValue(event.target.value)} rows={2} maxLength={2000} /></label>
+      <button type="submit" disabled={busy || value === (note.note || '')}>Save note</button>
+    </form>
+  </details>;
 }
 
 export default function AttendanceBoard() {
   const today = getStoreToday();
-  const [from, setFrom] = useState(() => addDaysISO(today, -13));
-  const [to, setTo] = useState(today);
-  const [employeeId, setEmployeeId] = useState("");
-  const [events, setEvents] = useState([]);
-  const [employees, setEmployees] = useState([]);
+  const [range, setRange] = useState(() => ({ from: addDaysISO(today, -29), to: today }));
+  const [custom, setCustom] = useState(range);
+  const [period, setPeriod] = useState('30');
+  const [report, setReport] = useState(null);
+  const [employeeId, setEmployeeId] = useState('');
+  const [search, setSearch] = useState('');
+  const [view, setView] = useState('all');
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [windowDays, setWindowDays] = useState(30);
-  const [rollup, setRollup] = useState([]);
-  const [saving, setSaving] = useState(false);
-  const [noteDrafts, setNoteDrafts] = useState({});
-  const [manual, setManual] = useState({
-    employee_id: "",
-    event_date: today,
-    event_type: "call_out",
-    note: "",
-  });
-
-  useEffect(() => {
-    fetchEmployees(getSupabase(), { select: "id, first_name, last_name, is_active" })
-      .then((rows) => setEmployees(rows || []))
-      .catch(() => setEmployees([]));
-  }, []);
-
-  const loadEvents = useCallback(async () => {
-    setLoading(true);
-    setError("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+  const [manualOpen, setManualOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [manual, setManual] = useState({ event_date: today, event_type: 'call_out', note: '' });
+  const sequence = useRef(0);
+  const load = useCallback(async () => {
+    const current = ++sequence.current;
+    setLoading(true); setError('');
     try {
-      const params = new URLSearchParams({ from, to });
-      if (employeeId) params.set("employee_id", employeeId);
-      const res = await fetch(`/api/attendance/events?${params}`);
-      const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error || "Could not load attendance.");
-      setEvents(data.events || []);
+      const data = await request(`/api/attendance/events?${new URLSearchParams(range)}`);
+      if (current === sequence.current) setReport(data);
     } catch (err) {
-      setError(err.message || "Could not load attendance.");
-      setEvents([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [from, to, employeeId]);
-
-  const loadRollup = useCallback(async () => {
-    const start = addDaysISO(getStoreToday(), -(windowDays - 1));
-    const end = getStoreToday();
-    try {
-      const res = await fetch(`/api/attendance/events?from=${start}&to=${end}`);
-      const data = await res.json();
-      if (!res.ok || !data.ok) return;
-      const map = new Map();
-      for (const event of data.events || []) {
-        const key = event.employee_id || event.employee_name;
-        if (!key) continue;
-        if (!map.has(key)) {
-          map.set(key, {
-            key,
-            name: event.employee_name || "Unknown",
-            late: 0,
-            no_show: 0,
-            call_out: 0,
-            unscheduled: 0,
-          });
-        }
-        const row = map.get(key);
-        if (event.event_type === "late") row.late += 1;
-        if (event.event_type === "no_show") row.no_show += 1;
-        if (event.event_type === "call_out") row.call_out += 1;
-        if (event.event_type === "unscheduled") row.unscheduled += 1;
-      }
-      setRollup(
-        [...map.values()].sort(
-          (a, b) => b.late + b.no_show + b.call_out + b.unscheduled - (a.late + a.no_show + a.call_out + a.unscheduled)
-        )
-      );
-    } catch {
-      setRollup([]);
-    }
-  }, [windowDays]);
-
-  useEffect(() => {
-    loadEvents();
-  }, [loadEvents]);
-
-  useEffect(() => {
-    loadRollup();
-  }, [loadRollup]);
-
-  async function rescan() {
-    setSaving(true);
-    setError("");
-    try {
-      const res = await fetch("/api/attendance/rescan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ from, to }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error || "Re-scan failed.");
-      await Promise.all([loadEvents(), loadRollup()]);
-    } catch (err) {
-      setError(err.message || "Re-scan failed.");
-    } finally {
-      setSaving(false);
-    }
+      if (current === sequence.current) { setError(err.message); setReport(null); }
+    } finally { if (current === sequence.current) setLoading(false); }
+  }, [range]);
+  useEffect(() => { load(); return () => { sequence.current += 1; }; }, [load]);
+  const people = useMemo(() => (report?.employees || []).filter(person => person.name.toLowerCase().includes(search.trim().toLowerCase())), [report, search]);
+  const selected = people.find(person => person.id === employeeId) || people[0];
+  const history = selected?.records.filter(record => view === 'all' || record.flags.length || record.ambiguous || record.status === 'Needs matching') || [];
+  const serverToday = report?.today || today;
+  function choosePeriod(value) {
+    setPeriod(value); setMessage('');
+    if (value === 'custom') { setCustom({ from: range.from, to: range.to > serverToday ? serverToday : range.to }); return; }
+    if (value === 'payperiod') { setRange(payPeriodFor(serverToday)); return; }
+    setRange({ from: addDaysISO(serverToday, -(Number(value) - 1)), to: serverToday });
   }
-
+  function movePayPeriod(direction) {
+    setRange(payPeriodFor(addDaysISO(range.from, direction * 14))); setMessage('');
+  }
+  async function mutate(url, body, method, success) {
+    setBusy(true); setError(''); setMessage('');
+    try {
+      await request(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      await load(); setMessage(success); return true;
+    } catch (err) { setError(err.message); return false; }
+    finally { setBusy(false); }
+  }
   async function addManual(event) {
     event.preventDefault();
-    if (!manual.employee_id || !manual.event_date) return;
-    setSaving(true);
-    setError("");
-    try {
-      const emp = employees.find((row) => row.id === manual.employee_id);
-      const res = await fetch("/api/attendance/events", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...manual,
-          employee_name: emp ? employeeFullName(emp) : "",
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error || "Could not add event.");
-      setManual((s) => ({ ...s, note: "" }));
-      await Promise.all([loadEvents(), loadRollup()]);
-    } catch (err) {
-      setError(err.message || "Could not add event.");
-    } finally {
-      setSaving(false);
+    if (!selected || selected.id.startsWith('unmatched:')) return;
+    if (await mutate('/api/attendance/events', { ...manual, employee_id: selected.id, employee_name: selected.name }, 'POST', 'Attendance entry saved.')) {
+      setManualOpen(false); setManual(previous => ({ ...previous, note: '' }));
     }
   }
-
-  async function saveNote(id) {
-    const note = noteDrafts[id];
-    if (note == null) return;
-    setSaving(true);
-    try {
-      const res = await fetch(`/api/attendance/events/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ note }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error || "Could not save note.");
-      setNoteDrafts((s) => {
-        const next = { ...s };
-        delete next[id];
-        return next;
-      });
-      await loadEvents();
-    } catch (err) {
-      setError(err.message || "Could not save note.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  const chronic = useMemo(
-    () => rollup.filter((row) => row.late >= 3 || row.no_show >= 2 || row.unscheduled >= 2),
-    [rollup]
-  );
-
-  return (
-    <div className="mx-auto flex w-full max-w-[1440px] flex-1 flex-col gap-3 px-3 py-3 sm:px-4">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Attendance flags</h2>
-          <p className="text-sm text-zinc-500">Review attendance against the published schedule.</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <a
-            href="/timeclock/timecards"
-            className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-semibold"
-          >
-            Timecards
-          </a>
-          <button
-            type="button"
-            onClick={rescan}
-            disabled={saving}
-            className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-semibold disabled:opacity-50"
-          >
-            {saving ? "Working…" : "Re-scan range"}
-          </button>
-        </div>
-      </div>
-
-      {error ? (
-        <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800" role="alert">
-          {error}
-        </p>
-      ) : null}
-
-      <details className="rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
-        <summary className="cursor-pointer text-sm font-semibold">Attendance patterns <span className="ml-2 text-xs font-normal text-zinc-500">{chronic.length ? `${chronic.length} employees to review` : "30 / 60 / 90 days"}</span></summary>
-        <div className="mt-2 flex flex-wrap gap-2">
-          {WINDOWS.map((days) => (
-            <button
-              key={days}
-              type="button"
-              onClick={() => setWindowDays(days)}
-              className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                windowDays === days ? "bg-[#C8102E] text-white" : "border border-zinc-300 text-zinc-700"
-              }`}
-            >
-              Last {days} days
-            </button>
-          ))}
-        </div>
-        {chronic.length ? (
-          <p className="mt-3 text-sm text-red-700">
-            Watch: {chronic.map((row) => `${row.name} (${row.late} late / ${row.no_show} no-show)`).join(" · ")}
-          </p>
-        ) : (
-          <p className="mt-3 text-sm text-zinc-500">No chronic patterns in this window.</p>
-        )}
-        <div className="mt-3 overflow-x-auto">
-          <table className="min-w-[560px] w-full text-left text-sm">
-            <thead className="bg-zinc-50 text-xs uppercase text-zinc-500 dark:bg-zinc-800">
-              <tr>
-                <th className="px-2 py-2">Employee</th>
-                <th className="px-2 py-2">Late</th>
-                <th className="px-2 py-2">No-show</th>
-                <th className="px-2 py-2">Call-out</th>
-                <th className="px-2 py-2">Unscheduled</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rollup.slice(0, 12).map((row) => (
-                <tr key={row.key} className="border-t border-zinc-100 dark:border-zinc-800">
-                  <td className="px-2 py-2 font-medium">{row.name}</td>
-                  <td className="px-2 py-2">{row.late}</td>
-                  <td className="px-2 py-2">{row.no_show}</td>
-                  <td className="px-2 py-2">{row.call_out}</td>
-                  <td className="px-2 py-2">{row.unscheduled}</td>
-                </tr>
-              ))}
-              {rollup.length === 0 ? (
-                <tr>
-                  <td className="px-2 py-3 text-zinc-500" colSpan={5}>
-                    No flags in the last {windowDays} days.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-      </details>
-
-      <details className="rounded-lg border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900">
-        <summary className="cursor-pointer text-sm font-semibold text-[#C8102E]">Add attendance event</summary>
-      <form
-        onSubmit={addManual}
-        className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5"
-      >
-        <label className="text-xs font-medium text-zinc-600">
-          Employee
-          <select
-            required
-            value={manual.employee_id}
-            onChange={(e) => setManual((s) => ({ ...s, employee_id: e.target.value }))}
-            className="mt-1 w-full rounded-lg border border-zinc-300 px-2 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-          >
-            <option value="">Select…</option>
-            {employees.map((emp) => (
-              <option key={emp.id} value={emp.id}>
-                {employeeFullName(emp)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="text-xs font-medium text-zinc-600">
-          Date
-          <input
-            type="date"
-            required
-            value={manual.event_date}
-            onChange={(e) => setManual((s) => ({ ...s, event_date: e.target.value }))}
-            className="mt-1 w-full rounded-lg border border-zinc-300 px-2 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-          />
-        </label>
-        <label className="text-xs font-medium text-zinc-600">
-          Event
-          <select
-            value={manual.event_type}
-            onChange={(e) => setManual((s) => ({ ...s, event_type: e.target.value }))}
-            className="mt-1 w-full rounded-lg border border-zinc-300 px-2 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-          >
-            {MANUAL_TYPES.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="text-xs font-medium text-zinc-600 lg:col-span-1">
-          Note
-          <input
-            value={manual.note}
-            onChange={(e) => setManual((s) => ({ ...s, note: e.target.value }))}
-            className="mt-1 w-full rounded-lg border border-zinc-300 px-2 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-            placeholder="Optional"
-          />
-        </label>
-        <div className="flex items-end">
-          <button
-            type="submit"
-            disabled={saving}
-            className="w-full rounded-lg bg-[#C8102E] px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
-          >
-            Add event
-          </button>
-        </div>
-      </form>
-      </details>
-
-      <section className="rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
-        <div className="grid gap-3 sm:grid-cols-3">
-          <label className="text-xs font-medium text-zinc-600">
-            From
-            <input
-              type="date"
-              value={from}
-              onChange={(e) => setFrom(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-zinc-300 px-2 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-            />
-          </label>
-          <label className="text-xs font-medium text-zinc-600">
-            To
-            <input
-              type="date"
-              value={to}
-              onChange={(e) => setTo(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-zinc-300 px-2 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-            />
-          </label>
-          <label className="text-xs font-medium text-zinc-600">
-            Employee
-            <select
-              value={employeeId}
-              onChange={(e) => setEmployeeId(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-zinc-300 px-2 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-            >
-              <option value="">Everyone</option>
-              {employees.map((emp) => (
-                <option key={emp.id} value={emp.id}>
-                  {employeeFullName(emp)}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-
-        {loading ? (
-          <p className="mt-4 text-sm text-zinc-500">Loading flags…</p>
-        ) : (
-          <div className="mt-3 overflow-x-auto">
-            <table className="min-w-[720px] w-full text-left text-sm">
-              <thead className="bg-zinc-50 text-xs uppercase text-zinc-500 dark:bg-zinc-800">
-                <tr>
-                  <th className="px-2 py-2">Date</th>
-                  <th className="px-2 py-2">Employee</th>
-                  <th className="px-2 py-2">Flag</th>
-                  <th className="px-2 py-2">Minutes</th>
-                  <th className="px-2 py-2">Shift</th>
-                  <th className="px-2 py-2">Note</th>
-                </tr>
-              </thead>
-              <tbody>
-                {events.map((event) => (
-                  <tr key={event.id} className="border-t border-zinc-100 align-top dark:border-zinc-800">
-                    <td className="px-2 py-2 whitespace-nowrap">{event.event_date_label}</td>
-                    <td className="px-2 py-2 font-medium">{event.employee_name}</td>
-                    <td className="px-2 py-2">
-                      <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${typeBadge(event.event_type)}`}>
-                        {event.event_type_label}
-                      </span>
-                      <span className="mt-1 block text-[10px] text-zinc-400">
-                        {event.auto_generated ? "Auto" : "Manual"}
-                      </span>
-                    </td>
-                    <td className="px-2 py-2 whitespace-nowrap">{minutesLabel(event)}</td>
-                    <td className="px-2 py-2 text-zinc-600">{event.shift_label}</td>
-                    <td className="px-2 py-2">
-                      <textarea
-                        rows={1}
-                        value={noteDrafts[event.id] ?? event.note}
-                        onChange={(e) => setNoteDrafts((s) => ({ ...s, [event.id]: e.target.value }))}
-                        aria-label={`Note for ${event.employee_name}`}
-                        className="min-h-8 w-full rounded-md border border-zinc-200 px-2 py-1 text-sm focus:min-h-16 dark:border-zinc-700 dark:bg-zinc-950"
-                      />
-                      {noteDrafts[event.id] != null && noteDrafts[event.id] !== event.note ? (
-                        <button
-                          type="button"
-                          onClick={() => saveNote(event.id)}
-                          className="mt-1 text-xs font-semibold text-[#C8102E]"
-                        >
-                          Save note
-                        </button>
-                      ) : null}
-                    </td>
-                  </tr>
-                ))}
-                {events.length === 0 ? (
-                  <tr>
-                    <td className="px-2 py-4 text-zinc-500" colSpan={6}>
-                      No attendance flags in this range. Re-scan after punches post, or add a call-out.
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+  const disabled = loading || busy;
+  return <section className={styles.page} aria-label="Employee attendance workspace">
+    <header className={styles.heading}>
+      <div><p className={styles.eyebrow}>TIME CLOCK / EMPLOYEE WORKSPACE</p><h1>Attendance</h1><p>One employee. Their schedule, punches, and attendance story.</p></div>
+      <div className={styles.actions}><a className={styles.button} href="/timeclock/timecards">Timecards ↗</a><button disabled={disabled} onClick={() => mutate('/api/attendance/rescan', range, 'POST', 'Attendance refreshed from the current schedule and punches.')}>{busy ? 'Saving…' : 'Refresh attendance'}</button><button className={styles.primary} aria-expanded={exportOpen} onClick={() => setExportOpen(!exportOpen)}>{exportOpen ? 'Close export' : 'Export attendance'}</button></div>
+    </header>
+    <div className={styles.toolbar}>
+      <div className={styles.periods} aria-label="Attendance period"><button aria-pressed={period === 'payperiod'} disabled={busy} onClick={() => choosePeriod('payperiod')}>Pay period</button>{[30, 60, 90].map(days => <button key={days} aria-pressed={period === String(days)} disabled={busy} onClick={() => choosePeriod(String(days))}>{days} days</button>)}<button aria-pressed={period === 'custom'} disabled={busy} onClick={() => choosePeriod('custom')}>Custom</button></div>
+      <span>{formatLongDate(range.from)} – {formatLongDate(range.to)}{range.to > serverToday ? ` · Through ${formatLongDate(serverToday)}` : ''}</span>
     </div>
-  );
+    {period === 'payperiod' && <div className={styles.payPeriodNav}><button disabled={disabled} onClick={() => movePayPeriod(-1)}>← Previous pay period</button><span>14-day payroll period</span><button disabled={disabled || addDaysISO(range.from, 14) > serverToday} onClick={() => movePayPeriod(1)}>Next pay period →</button></div>}
+    {period === 'custom' && <form className={styles.custom} onSubmit={event => { event.preventDefault(); setRange({ ...custom }); setMessage(''); }}>
+      <label>From<input type="date" required max={custom.to < serverToday ? custom.to : serverToday} value={custom.from} onChange={event => setCustom({ ...custom, from: event.target.value })} /></label>
+      <label>Through<input type="date" required min={custom.from} max={serverToday} value={custom.to} onChange={event => setCustom({ ...custom, to: event.target.value })} /></label>
+      <button disabled={disabled} type="submit">Apply dates</button>
+    </form>}
+    <p className={styles.rule}><span aria-hidden="true">✓</span> Future shifts are excluded. No-shows count only after a published shift ends with no matching punch or call-out.</p>
+    {exportOpen && <AttendanceExport range={range} through={serverToday} employees={report?.employees || []} currentEmployee={selected} disabled={disabled} />}
+    {error && <p className={styles.error} role="alert">{error} <button onClick={load} disabled={disabled}>Try again</button></p>}
+    {message && <p className={styles.message} role="status">{message}</p>}
+    <div className={styles.workspace} aria-busy={loading}>
+      <aside className={styles.directory} aria-label="Employee directory">
+        <div className={styles.directoryHead}><h2>Employees <span>{report?.employees.length || 0}</span></h2><label className={styles.search}><span className={styles.srOnly}>Search employees</span><input type="search" placeholder="Search employees…" value={search} onChange={event => { setSearch(event.target.value); setManualOpen(false); }} /></label></div>
+        <div className={styles.employeeList}>{people.map(person => <button key={person.id} className={styles.employee} aria-pressed={person.id === selected?.id} disabled={busy} onClick={() => { setEmployeeId(person.id); setManualOpen(false); setView('all'); }}>
+          <span className={styles.avatar}>{initials(person.name)}</span><span className={styles.personText}><strong>{person.name}</strong><span>{person.matching_count ? `${person.matching_count} to match` : person.exception_count ? `${person.exception_count} attendance ${person.exception_count === 1 ? 'flag' : 'flags'}` : 'No attendance flags'}{!person.active ? ' · Inactive' : ''}</span></span><span className={styles.chevron} aria-hidden="true">›</span>
+        </button>)}{!people.length && <p className={styles.empty}>{loading ? 'Loading employees…' : search ? 'No employees match your search.' : 'No employees to display.'}</p>}</div>
+      </aside>
+      <div className={styles.detail}>
+        {loading ? <div className={styles.empty} role="status">Matching schedules and punches…</div> : !selected ? <div className={styles.empty}>Choose an employee to see their attendance.</div> : <>
+          <header className={styles.personHeader}><span className={`${styles.avatar} ${styles.largeAvatar}`}>{initials(selected.name)}</span><div><p className={styles.eyebrow}>EMPLOYEE ATTENDANCE</p><h2>{selected.name}</h2><p>{selected.completed} completed {selected.completed === 1 ? 'shift' : 'shifts'} in this period{!selected.active ? ' · Inactive employee' : ''}</p></div><button className={styles.primary} disabled={disabled || selected.id.startsWith('unmatched:')} aria-expanded={manualOpen} onClick={() => setManualOpen(!manualOpen)}>{manualOpen ? 'Close entry' : '+ Add entry'}</button></header>
+          <div className={styles.metrics}>{METRICS.map(([type, label]) => <div key={type}><span>{label}</span><strong data-alert={selected.counts[type] > 0}>{selected.counts[type]}</strong></div>)}</div>
+          {(selected.counts.clock_in_early > 0 || selected.counts.unscheduled > 0) && <p className={styles.otherCounts}>{selected.counts.clock_in_early} early clock-ins <span>·</span> {selected.counts.unscheduled} unscheduled punches</p>}
+          {manualOpen && <form className={styles.manual} onSubmit={addManual}><h3>Add attendance for {selected.name}</h3><div className={styles.formRow}><label>Date<input type="date" required max={serverToday} value={manual.event_date} onChange={event => setManual({ ...manual, event_date: event.target.value })} /></label><label>Attendance type<select value={manual.event_type} onChange={event => setManual({ ...manual, event_type: event.target.value })}>{Object.entries(ATTENDANCE_LABELS).map(([type, label]) => <option key={type} value={type}>{label}</option>)}</select></label></div><label>Manager note<textarea rows={2} placeholder="What happened?" maxLength={2000} value={manual.note} onChange={event => setManual({ ...manual, note: event.target.value })} /></label><button type="submit" className={styles.primary} disabled={disabled}>Save entry</button></form>}
+          <div className={styles.historyHeader}><h3>Attendance history</h3><div className={styles.periods}><button aria-pressed={view === 'all'} onClick={() => setView('all')}>All activity</button><button aria-pressed={view === 'flags'} onClick={() => setView('flags')}>Flags only</button></div></div>
+          <div className={styles.history}>{history.map(record => <article key={record.id} className={styles.record}>
+            <div className={styles.date}><strong>{formatLongDate(record.date)}</strong><span>{record.role || 'Attendance'}</span></div>
+            <div className={styles.evidence}><div className={styles.badges}>{record.flags.length ? record.flags.map(flag => <span key={flag.key} className={styles.badge} data-tone={flag.event_type === 'no_show' ? 'red' : 'amber'}>{flag.label}{flag.minutes_delta ? ` · ${flag.minutes_delta} min` : ''}</span>) : <span className={styles.badge} data-tone={record.status === 'Worked' ? 'green' : 'neutral'}>{record.status}</span>}{record.flags.length > 0 && record.actual.length > 0 && <span className={styles.worked}>{record.completed ? 'Worked' : 'Clocked in'}</span>}</div>
+              <div className={styles.times}><div><span>Scheduled</span><strong>{record.scheduled_label}</strong></div><div><span>Actual punches</span>{record.actual.length ? record.actual.map(punch => <strong key={punch.id}>{punch.label}</strong>) : <strong className={styles.muted}>{record.ambiguous ? 'Punch found · match needed' : 'No punch recorded'}</strong>}</div></div>
+              {record.schedule_state !== 'published' && <p className={styles.context}>{record.schedule_state === 'draft' ? 'Draft schedule' : 'No published schedule'} · automatic attendance flags are not counted.</p>}
+              {record.ambiguous && <p className={styles.context}>A punch overlaps more than one shift. Check the timecard before assigning attendance.</p>}
+              {record.notes.map(note => <NoteEditor key={`${note.id}:${note.note}`} note={note} busy={disabled} onSave={value => mutate(`/api/attendance/events/${note.id}`, { note: value }, 'PATCH', 'Manager note saved.')} />)}
+              {record.flags.filter(flag => !record.notes.some(note => note.id && note.id === flag.id)).map(flag => <NoteEditor key={flag.key} note={{ note: '', label: `${flag.label} · manager note` }} busy={disabled} onSave={value => flag.id ? mutate(`/api/attendance/events/${flag.id}`, { note: value }, 'PATCH', 'Manager note saved.') : mutate('/api/attendance/events', { ...flag, note: value, generated_note: true }, 'POST', 'Manager note saved.')} />)}
+            </div>
+          </article>)}</div>
+          {!history.length && <div className={styles.empty}>{view === 'flags' ? 'No attendance flags in this period.' : 'No past shifts, punches, or attendance entries in this period.'}</div>}
+          <p className={styles.footer}>Times shown in restaurant time · Draft and upcoming shifts never count as no-shows.</p>
+        </>}
+      </div>
+    </div>
+  </section>;
 }

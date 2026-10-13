@@ -332,13 +332,16 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
   const deviceCookie=pairResult.headers.getSetCookie().find(c=>c.startsWith('hub_clock_device=')).split(';')[0];
   assert.match(pairResult.headers.getSetCookie().find(c=>c.startsWith('hub_clock_device=')),/HttpOnly/i);
   assert.equal((await clockRequest('/api/clock/device/pair','','POST',{code:pairingCode})).status,403);
-  assert.deepEqual(await (await clockRequest('/api/clock/status',deviceCookie)).json(),{paired:true,unlocked:false});
-  assert.equal((await clockRequest('/api/clock/roster',deviceCookie)).status,401);
-  const unlock=await clockRequest('/api/clock/unlock',deviceCookie,'POST',{pin:'5678'});
+  assert.deepEqual(await (await clockRequest('/api/clock/status',deviceCookie)).json(),{paired:true,unlocked:true});
+  assert.equal((await clockRequest('/api/clock/roster',deviceCookie)).status,200);
+  const unlock=await clockRequest('/api/clock/unlock',deviceCookie,'POST');
   assert.equal(unlock.status,200,await unlock.clone().text());
-  const shiftCookie=unlock.headers.getSetCookie().find(c=>c.startsWith('hub_kiosk=')).split(';')[0];
-  const authorized=deviceCookie+'; '+shiftCookie;
-  assert.equal(new Set(rateKeys).size,2); // pairing attempts cannot consume the employee-PIN budget
+  assert.equal(unlock.headers.getSetCookie().length,0); // no manager session is created
+  const authorized=deviceCookie; // reopening with only the persistent device cookie works
+  const oldTime=t.mock.method(Date,'now',()=>0);
+  const expiredKiosk=`hub_kiosk=${await token(ids.gm,'gm','kiosk')}`;
+  oldTime.mock.restore();
+  assert.equal((await clockRequest('/api/clock/roster',authorized+'; '+expiredKiosk)).status,200);
   assert.deepEqual(await (await clockRequest('/api/clock/status',authorized)).json(),{paired:true,unlocked:true});
   assert.equal((await clockRequest('/api/clock/roster',authorized)).status,200);
 
@@ -349,6 +352,7 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
   const offlineSnapshot=(await prepared.json()).snapshot;
   const identified=await clockRequest('/api/clock/identify',authorized,'POST',{employee_id:ids.gm,pin:'5678'});
   assert.equal(identified.status,200,await identified.clone().text());
+  assert.equal(new Set(rateKeys).size,2); // pairing attempts cannot consume the employee-PIN budget
   const identity=await identified.json();
   assert.ok(identity.offlinePin.version);
   assert.equal(identity.offlinePin.version,offlineSnapshot.employees.find(row=>row.id===ids.gm).pin_version);
@@ -417,11 +421,12 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
   assert.equal(calls.some(c=>c.path==='/storage/v1/bucket'),false);
   storageFailure=false;
   managerActive=false;
-  assert.deepEqual(await (await clockRequest('/api/clock/status',authorized)).json(),{paired:true,unlocked:false});
-  assert.equal((await clockRequest('/api/clock/roster',authorized)).status,401);
+  assert.deepEqual(await (await clockRequest('/api/clock/status',authorized)).json(),{paired:true,unlocked:true});
+  assert.equal((await clockRequest('/api/clock/roster',authorized)).status,200);
+  assert.equal((await clockRequest('/api/clock/identify',authorized,'POST',{employee_id:ids.gm,pin:'5678'})).status,401);
   managerActive=true;
   assert.equal((await request('/api/clock/roster',authorized)).status,401); // bypassing the gateway fails
-  assert.equal((await clockRequest('/api/clock/roster',shiftCookie)).status,401);
+  assert.equal((await clockRequest('/api/clock/roster',kiosk)).status,401);
   const replacement=await issue();
   assert.equal((await clockRequest('/api/clock/roster',authorized)).status,200); // issuing alone preserves old iPad
   assert.equal((await clockRequest('/api/clock/device/pair','','POST',{code:replacement})).status,200);
