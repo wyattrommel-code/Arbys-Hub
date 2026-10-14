@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
+import { validateWorkRequest } from '../lib/clock-work.js';
 
 // Run the real route handlers with a synthetic data layer. No live timecards.
 const employee = { id: '11111111-1111-4111-8111-111111111111', name: 'Synthetic Crew' };
@@ -23,11 +24,11 @@ const clock = {
   canAuthorizeUnscheduled: value => value.role === 'gm',
   pickClockInShift: () => null,
   clockEmployeeName: () => employee.name,
-  readPhotoFromRequest: async request => { const body = await request.json(); return { pin: body.pin, managerPin: body.manager_pin, employeeId: body.employee_id, photo, faceDetected: true }; },
+  readPhotoFromRequest: async request => { const body = await request.json(); return { pin: body.pin, managerPin: body.manager_pin, employeeId: body.employee_id, photo, faceDetected: true, workContext:body.work_context }; },
   uploadPunchPhoto: async () => 'https://synthetic.invalid/photo.jpg',
   computePaidWorkedMinutes: () => 480,
 };
-const db = { from(table) { return {
+const db = { async rpc(name, args) { assert.equal(name,'hub_clock_in_work');writes.push(args);return {data:{id:'saved',...args.p_punch,work_context:args.p_work}}; }, from(table) { return {
   update(patch) { writes.push({ table, patch }); return this; },
   eq() { return this; }, select() { return this; },
   async maybeSingle() { return { data: { ...openPunch, ...writes.at(-1).patch } }; },
@@ -42,6 +43,8 @@ const mocks = {
   '@/lib/security/http': { secureJson: (value, init) => Response.json(value, init) },
   '@/lib/attendance': { evaluatePunchAndSweep: async () => {} },
   '@/lib/clock': clock,
+  '@/lib/clock-work': { validateWorkRequest },
+  '@/lib/clock-work-server': { fetchClockWorkShifts:async()=>({shifts:[]}) },
   '@/lib/break-punches': {
     healOrphanOnBreak: async (_db, value) => value, fetchOpenBreak: async () => null,
     isOnBreak: value => Boolean(value.on_break), serializeOpenBreak: value => value,
@@ -66,7 +69,7 @@ const clockIn = (await import('../app/api/clock/in/route.js')).POST;
 const clockOut = (await import('../app/api/clock/out/route.js')).POST;
 const startBreak = (await import('../app/api/clock/break/start/route.js')).POST;
 const endBreak = (await import('../app/api/clock/break/end/route.js')).POST;
-const request = (pin = '1234', manager_pin = '') => new Request('https://synthetic.invalid/api/clock', { method: 'POST', body: JSON.stringify({ pin, employee_id: employee.id, manager_pin }) });
+const request = (pin = '1234', manager_pin = '', work_context = {reason:'extra_hours',note:''}) => new Request('https://synthetic.invalid/api/clock', { method: 'POST', body: JSON.stringify({ pin, employee_id: employee.id, manager_pin,work_context }) });
 function reset() {
   openPunch = { id: 'punch', employee_id: employee.id, clock_in: '2026-10-08T16:00:00Z', status: 'open', unscheduled: true };
   photo = new Blob(['synthetic photo']); writes = []; scheduleReads = 0; scheduleUnavailable = true;
@@ -96,6 +99,15 @@ test('an open unscheduled or overnight shift reaches actions even when schedule/
   assert.equal(session.needsAuthorization, false);
   assert.equal(session.clock_schedule.unavailable, true);
   assert.equal(scheduleReads, 0);
+});
+
+test('unscheduled reasons reach atomic save only after employee PIN, manager PIN and photo checks',async()=>{
+  reset();openPunch=null;scheduleUnavailable=false;
+  assert.equal((await clockIn(request('1234','5678',null))).status,400);assert.equal(writes.length,0);
+  assert.equal((await clockIn(request('1234','5678',{reason:'bypass',note:''}))).status,400);assert.equal(writes.length,0);
+  assert.equal((await clockIn(request('1234','5678'))).status,200);
+  assert.equal(writes.length,1);assert.equal(writes[0].p_work.reason,'extra_hours');
+  assert.equal(writes[0].p_punch.employee_id,employee.id);assert.equal(writes[0].p_punch.authorized_by_id,'manager');
 });
 
 test('clock-out, start break and end break do not require a schedule or manager PIN', async () => {

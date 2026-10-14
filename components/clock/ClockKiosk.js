@@ -6,6 +6,8 @@ import FaceCapture from "@/components/clock/FaceCapture";
 import CameraWarmup from "@/components/clock/CameraWarmup";
 import CorrectionContext from "@/components/clock/CorrectionContext";
 import ClockScheduleNotice from "@/components/clock/ClockScheduleNotice";
+import ClockWorkForm from './ClockWorkForm';
+import { defaultClockWork, clockWorkRequest } from '@/lib/clock-work';
 import { createFaceDetector } from "@/lib/face-detect";
 import PinPad from "@/components/PinPad";
 import { clockFetch, rememberOnlinePin } from "@/lib/offline-clock-store";
@@ -82,6 +84,7 @@ export default function ClockKiosk() {
   const [selected, setSelected] = useState(null);
   const [pin, setPin] = useState("");
   const [managerPin, setManagerPin] = useState("");
+  const [work, setWork] = useState(defaultClockWork);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState("");
@@ -128,6 +131,7 @@ export default function ClockKiosk() {
     setSelected(null);
     setPin("");
     setManagerPin("");
+    setWork(defaultClockWork());
     setError("");
     setLoading(false);
     setSession(null);
@@ -185,6 +189,7 @@ export default function ClockKiosk() {
         form.set("pin", pinValue ?? pin);
         form.set("employee_id", person.id);
         if (active.action === "clock_in" && active.needsAuthorization) {
+          form.set('work_context', JSON.stringify(clockWorkRequest(work)));
           form.set(
             "manager_pin",
             managerPinValue || (active.canSelfAuthorize ? pinValue ?? pin : managerPin)
@@ -197,7 +202,9 @@ export default function ClockKiosk() {
         const data = await res.json();
         if (!res.ok || !data.ok) {
           setError(data.error || "Could not save punch.");
-          if (/end break/i.test(data.error || "")) setStep("actions");
+          if (res.status===403 && active.action==='clock_in' && active.needsAuthorization) setStep('manager_pin');
+          else if (data.choose_work) setStep('unscheduled');
+          else if (/end break/i.test(data.error || "")) setStep("actions");
           else if (needsPhotoFor(active)) setStep("photo");
           else if (active.action === "clock_out" && active.settings?.use_break_punches) {
             setStep("actions");
@@ -226,7 +233,7 @@ export default function ClockKiosk() {
         setLoading(false);
       }
     },
-    [session, selected, pin, managerPin, loadRoster]
+    [session, selected, pin, managerPin, loadRoster, work]
   );
 
   const identifyingRef = useRef(false);
@@ -272,9 +279,10 @@ export default function ClockKiosk() {
   }, [pin, step, selected, identify]);
 
   function continueAfterManagerPin() {
-    if (managerPin.length !== 4) return;
+    if (managerPin.length !== 4 && !session?.canSelfAuthorize) return;
+    try { clockWorkRequest(work); } catch (err) { setError(err.message); return; }
     setError("");
-    if (needsPhotoFor(session)) {
+    if (needsPhotoFor(session) || session?.needsAuthorization) {
       setStep("photo");
       return;
     }
@@ -521,9 +529,10 @@ export default function ClockKiosk() {
                   {error}
                 </p>
               ) : null}
+              <ClockWorkForm value={work} onChange={setWork} shifts={session?.work_shifts} employeeId={selected.id} />
               <button
                 type="button"
-                disabled={loading}
+                disabled={loading || !work.reason || (work.reason==='covering' && !work.covered_shift_id)}
                 onClick={() => {
                   setManagerPin("");
                   setError("");
@@ -546,6 +555,9 @@ export default function ClockKiosk() {
           {step === "manager_pin" ? (
             <>
               <PunchHeader employee={selected} clockedIn={false} />
+              <ClockWorkForm value={work} onChange={setWork} shifts={session?.work_shifts} employeeId={selected.id} manager />
+              {error && <p role="alert" className="my-3 text-red-700 dark:text-red-300">{error}</p>}
+              {session?.canSelfAuthorize ? <p className="mt-3 text-sm">Your manager PIN has been verified. Confirm these details to approve.</p> : <>
               <PinPad
                 pin={managerPin}
                 onChange={(next) => {
@@ -557,10 +569,10 @@ export default function ClockKiosk() {
                 size="kiosk"
                 title="Manager authorize"
                 subtitle="GM or assistant manager PIN"
-              />
+              /></>}
               <button
                 type="button"
-                disabled={loading || managerPin.length !== 4}
+                disabled={loading || (!session?.canSelfAuthorize && managerPin.length !== 4)}
                 onClick={continueAfterManagerPin}
                 className="mt-8 min-h-16 w-full rounded-2xl bg-[#C8102E] text-xl font-bold text-white disabled:opacity-40"
               >
@@ -593,7 +605,7 @@ export default function ClockKiosk() {
                     <ClockScheduleNotice action="break_start" context={session.clock_schedule} settings={session.settings} />
                   </>}
                   <button disabled={loading} onClick={() => {
-                    if (!clockedIn && session.needsAuthorization && !session.canSelfAuthorize) setStep("unscheduled");
+                    if (!clockedIn && session.needsAuthorization) setStep("unscheduled");
                     else beginPunch();
                   }} className="mt-3 min-h-16 rounded-2xl bg-[#C8102E] text-xl font-bold text-white disabled:opacity-40">{clockedIn ? "Clock Out" : "Clock In"}</button>
                   {clockedIn && <ClockScheduleNotice action="clock_out" context={session.clock_schedule} settings={session.settings} />}

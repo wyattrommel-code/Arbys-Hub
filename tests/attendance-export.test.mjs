@@ -35,10 +35,10 @@ test('everyone summary matches workspace counts, includes zero-activity employee
   const output=buildAttendanceExport(report,options());
   const rows=parse(output.csv);
   assert.ok(output.csv.startsWith('\uFEFF'));
-  assert.deepEqual(rows[1],['Alex Rivera','1','1','0','0','1','0','0','0']);
-  assert.deepEqual(rows[2],['Blair Jones','0','0','0','1','0','0','0','0']);
-  assert.deepEqual(rows[3],['Casey Cole','0','0','0','0','0','0','0','0']);
-  assert.deepEqual(rows[4],['PERIOD TOTAL','1','1','0','1','1','0','0','0']);
+  assert.deepEqual(rows[1],['Alex Rivera','1','1','0','0','1','0','0','0','0']);
+  assert.deepEqual(rows[2],['Blair Jones','0','0','0','1','0','0','0','0','0']);
+  assert.deepEqual(rows[3],['Casey Cole','0','0','0','0','0','0','0','0','0']);
+  assert.deepEqual(rows[4],['PERIOD TOTAL','1','1','0','1','1','0','0','0','0']);
   assert.match(output.filename,/attendance-summary-everyone-2026-10-11-to-2026-10-12\.csv$/);
 });
 test('single and multiple selection exports include only requested employees and correct selected totals',()=>{
@@ -98,7 +98,7 @@ test('invalid dates, unknown report types and empty selections fail instead of e
     assert.throws(()=>options(input),error=>error.status===400);
   }
   const empty={...report,employees:[]};
-  assert.deepEqual(parse(buildAttendanceExport(empty,options()).csv)[1],['PERIOD TOTAL','0','0','0','0','0','0','0','0']);
+  assert.deepEqual(parse(buildAttendanceExport(empty,options()).csv)[1],['PERIOD TOTAL','0','0','0','0','0','0','0','0','0']);
   assert.match(buildAttendanceExport(report,options({type:'details',scope:'selected',employee_id:'c'})).csv,/No attendance activity/);
 });
 

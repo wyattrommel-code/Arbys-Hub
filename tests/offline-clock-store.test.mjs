@@ -46,3 +46,27 @@ test('durable photo queue survives reopening, lost replies, retries and concurre
     await assert.rejects(enqueue(item()),/renew offline/);
   }finally{globalThis.fetch=originalFetch;}
 });
+
+test('offline work reasons require a verified authorized manager and survive durable queue storage',async()=>{
+  globalThis.window=new EventTarget();
+  const employee=randomUUID(), manager=randomUUID();
+  const previous=await readOfflineClock();
+  const snapshot={lease:'work-lease',issued_at:new Date().toISOString(),expires_at:new Date(Date.now()+86400000).toISOString(),employees:[
+    {id:employee,pin_version:'crew-work',punch_id:null,break_id:null},
+    {id:manager,pin_version:'manager-work',can_authorize_work:true,punch_id:null,break_id:null},
+  ]};
+  await saveOfflineSnapshot(snapshot,previous.events.map(e=>e.id));
+  await rememberOnlinePin(employee,'1234','crew-work');await rememberOnlinePin(manager,'5678','manager-work');
+  const employeeProof=await verifyOfflineEmployeePin(employee,'1234');
+  await assert.rejects(verifyOfflineEmployeePin(manager,'1111'),/Incorrect PIN/);
+  const time=new Date().toISOString();
+  const item={event:{id:randomUUID(),employee_id:employee,kind:'clock_in',occurred_at:time,captured_at:time,reason:'',punch_id:null,break_id:null,previous_id:null,
+    manager_id:manager,work_context:{reason:'extra_hours',note:'Called in'}},photo:new Blob(['photo']),sealed_pin:'encrypted',lease:snapshot.lease};
+  await assert.rejects(enqueueOfflinePunch(item,employeeProof),/manager must verify/);
+  await assert.rejects(enqueueOfflinePunch(item,employeeProof,employeeProof),/manager must verify/);
+  const managerProof=await verifyOfflineEmployeePin(manager,'5678');
+  await enqueueOfflinePunch(item,employeeProof,managerProof);
+  const saved=await readOfflineClock();assert.equal(saved.events.length,1);
+  assert.deepEqual(saved.events[0].event.work_context,item.event.work_context);
+  assert.equal(saved.events[0].event.manager_id,manager);
+});

@@ -28,7 +28,8 @@ function Flags({ punch }) {
   if (!punch.approval || punch.pending_approval) {
     if (punch.on_break) flags.push(["On break", "amber"]);
     else if (punch.open) flags.push(["Open", "amber"]);
-    if (punch.unscheduled) flags.push(["Unscheduled", "purple"]);
+    if (punch.work_label) flags.push([punch.work_label, "purple"]);
+    else if (punch.unscheduled) flags.push(["Unscheduled", "purple"]);
     if ((punch.clock_in_photo_url && !punch.face_detected_in) || (punch.clock_out_photo_url && !punch.face_detected_out)) flags.push(["No face detected", "red"]);
     if (punch.edited) flags.push(["Edited", "gray"]);
   }
@@ -72,6 +73,8 @@ function PunchDetails({ punch }) {
   const approved = Boolean(punch.approval && !punch.pending_approval);
   return <div className="grid gap-4 text-xs sm:grid-cols-3">
     <div><p className="mb-1 font-semibold">Scheduled shift</p><p className="text-zinc-600 dark:text-zinc-400">{punch.scheduled_label}</p>
+      {punch.work_label && <p className="mt-1">{punch.work_label}{punch.work_context?.covered_employee_name ? ` · ${punch.work_context.covered_employee_name}` : ''}</p>}
+      {punch.work_context?.note && <p className="mt-1">{punch.work_context.note}</p>}
       {punch.authorized_by ? <p className="mt-1">Authorized by {punch.authorized_by}</p> : null}</div>
     <div><p className="mb-1 font-semibold">Breaks</p>
       {(punch.breaks || []).map((row, index) => <p key={row.id || index} className="text-zinc-600 dark:text-zinc-400">

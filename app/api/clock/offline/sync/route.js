@@ -43,8 +43,8 @@ export async function POST(request) {
         const at=new Date(event.occurred_at);
         const [shifts,punches]=await Promise.all([fetchTodaysShiftsForEmployee(db,employee,at),fetchRecentPunches(db,employee.id,at)]);
         shift=pickClockInShift(shifts,punches,at);
-        if(!shift) {
-          manager=credentials.manager_pin ? await attachEffectiveAccess(db,await fetchClockEmployeeByPin(db,credentials.manager_pin)) : null;
+        if(!shift || event.work_context) {
+          manager=credentials.manager_pin ? await attachEffectiveAccess(db,await fetchClockEmployeeByPin(db,credentials.manager_pin,event.manager_id || null)) : null;
           if(!manager || !canAuthorizeUnscheduled(manager)) issue='Unscheduled offline clock-in needs manager authorization.';
         }
       }
@@ -58,7 +58,7 @@ export async function POST(request) {
     if(uploaded.error && /bucket.*not found/i.test(uploaded.error.message || '')) { await ensurePunchPhotosBucket(db); uploaded=await upload(); }
     if(uploaded.error && !/already exists|duplicate/i.test(uploaded.error.message || '')) throw uploaded.error;
     const photoUrl=bucket.getPublicUrl(path).data.publicUrl;
-    const saved=await db.rpc('hub_sync_offline_punch',{p_event:event,p_device:deviceHash,p_fingerprint:fingerprint,p_photo:photoUrl,
+    const saved=await db.rpc('hub_sync_offline_punch_work',{p_event:event,p_device:deviceHash,p_fingerprint:fingerprint,p_photo:photoUrl,
       p_face:form.get('face_detected')==='true',p_issue:issue,p_shift:shift?.id || null,p_manager:manager?.id || null,p_manager_name:manager ? clockEmployeeName(manager) : null});
     if(saved.error) throw saved.error;
     if(saved.data.punch) after(async()=>{try{await evaluatePunchAndSweep(getSupabaseServer(),saved.data.punch);}catch{console.error('Offline punch attendance evaluation failed.');}});

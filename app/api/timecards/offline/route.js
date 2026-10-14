@@ -20,7 +20,7 @@ export async function PATCH(request) {
   let body;try{body=await request.json();}catch{return secureJson({error:'Invalid resolution.'},{status:400});}
   if(!uuid(body.id) || typeof body.note!=='string' || body.note.trim().length<3 || body.note.length>1000)return secureJson({error:'Enter how you resolved this punch (3–1000 characters).'},{status:400});
   if(body.action==='apply'){
-    const {data,error:applyError}=await getSupabaseServer().rpc('hub_apply_offline_review',{p_id:body.id,p_actor:employee.employee_id,p_note:body.note.trim()});
+    const {data,error:applyError}=await getSupabaseServer().rpc('hub_apply_offline_review_work',{p_id:body.id,p_actor:employee.employee_id,p_note:body.note.trim()});
     if(applyError)return secureJson({error:applyError.message || 'Could not apply this punch.'},{status:['P0001','22023','40001'].includes(applyError.code)?409:503});
     after(async()=>{try{await evaluatePunchAndSweep(getSupabaseServer(),data);}catch{console.error('Offline review attendance evaluation failed.');}});
     return secureJson({ok:true});

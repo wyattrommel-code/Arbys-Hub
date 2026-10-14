@@ -22,6 +22,7 @@ import {
 import { fetchOpenBreak, healOrphanOnBreak, isOnBreak, serializeOpenBreak } from "@/lib/break-punches";
 import { attachEffectiveAccess } from "@/lib/roles";
 import { getSupabaseServer } from "@/lib/supabase-server";
+import { fetchClockWorkShifts } from '@/lib/clock-work-server';
 
 export async function POST(request) {
   const kioskError = await requireKiosk();
@@ -87,6 +88,7 @@ export async function POST(request) {
     const shift = pickClockInShift(shifts, punches);
     const scheduled = Boolean(shift);
     const access = scheduled ? employee : await attachEffectiveAccess(supabase, employee);
+    const workShifts = scheduled ? [] : (await fetchClockWorkShifts(supabase)).shifts;
 
     return secureJson({
       ok: true,
@@ -99,6 +101,7 @@ export async function POST(request) {
       shift: serializeShift(shift),
       needsAuthorization: !scheduled,
       canSelfAuthorize: !scheduled && canAuthorizeUnscheduled(access),
+      work_shifts: workShifts,
       settings: publicSettings(settings),
       message: scheduled
         ? null

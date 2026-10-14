@@ -46,7 +46,7 @@ test('legacy unique Jolt or full-name identity can match, ambiguous names cannot
   assert.ok(!types(report({ shifts: [{ ...shift, employee_id: null }] })).includes('no_show'));
   const result = report({ employees: [employee, { ...employee, id: 'other' }], shifts: [{ ...shift, employee_id: null }], punches: [] });
   assert.deepEqual(types(result), []);
-  assert.ok(result.employees.some(e => e.records.some(r => r.status === 'Needs matching')));
+  assert.ok(result.employees.some(e => e.records.some(r => r.status === 'Check timecard')));
 });
 test('call-outs suppress absence by shift, with employee/day fallback for legacy call-outs', () => {
   for (const shift_id of ['shift', null]) {
@@ -87,7 +87,7 @@ test('a just-recorded open punch matches immediately and an out-of-window linked
   assert.ok(!types(report({ now: new Date(punch.clock_in), punches: [{ ...punch, clock_out: null }] })).includes('no_show'));
   const result = report({ punches: [{ ...punch, shift_id: 'shift', clock_in: '2026-10-12T01:00:00Z', clock_out: '2026-10-12T02:00:00Z' }] });
   assert.ok(!types(result).includes('no_show'));
-  assert.equal(result.employees[0].records.find(r=>r.shift_id === 'shift').status, 'Needs matching');
+  assert.equal(result.employees[0].records.find(r=>r.shift_id === 'shift').status, 'Check timecard');
 });
 test('manual absence without a published ended shift is retained as a note, not a counted no-show', () => {
   const result = report({ shifts: [], punches: [], events: [{ ...stale, shift_id: null, auto_generated: false }] });

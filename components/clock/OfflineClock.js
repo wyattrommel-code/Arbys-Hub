@@ -5,6 +5,8 @@ import FaceCapture from './FaceCapture';
 import CameraWarmup from './CameraWarmup';
 import CorrectionContext from './CorrectionContext';
 import ClockScheduleNotice from './ClockScheduleNotice';
+import ClockWorkForm from './ClockWorkForm';
+import { defaultClockWork, clockWorkRequest, cachedScheduledShift } from '@/lib/clock-work';
 import { OFFLINE_LABELS, baseKind, canCapture, captureTime, encryptOfflinePin, offlineActions, projectRoster } from '@/lib/offline-clock';
 import { offlinePinReady } from '@/lib/offline-pin';
 import { enqueueOfflinePunch, verifyOfflineEmployeePin } from '@/lib/offline-clock-store';
@@ -15,6 +17,8 @@ export default function OfflineClock({ state, onBusy, onSaved }) {
   const [selected,setSelected]=useState(null), [pin,setPin]=useState(''), [managerPin,setManagerPin]=useState('');
   const [step,setStep]=useState('list'), [kind,setKind]=useState(null), [claimed,setClaimed]=useState(''), [reason,setReason]=useState('');
   const [query,setQuery]=useState(''), [error,setError]=useState(''), [busy,setBusy]=useState(false), [done,setDone]=useState(null);
+  const [work,setWork]=useState(defaultClockWork), [managerId,setManagerId]=useState(''), [scheduledShift,setScheduledShift]=useState(null);
+  const managerProof=useRef(null);
   const saving=useRef(false), pinProof=useRef(null), verifying=useRef(false);
   const snapshot=state.snapshot, roster=projectRoster(snapshot,state.events), ready=canCapture(snapshot);
   const selectedState=useRef(null);
@@ -24,7 +28,7 @@ export default function OfflineClock({ state, onBusy, onSaved }) {
     const timer=setTimeout(()=>{setStep('list');setSelected(null);setDone(null);},5000);
     return ()=>clearTimeout(timer);
   },[step]);
-  function reset(){pinProof.current=null;setSelected(null);setPin('');setManagerPin('');setKind(null);setError('');setStep('list');}
+  function reset(){pinProof.current=null;managerProof.current=null;setWork(defaultClockWork());setManagerId('');setSelected(null);setPin('');setManagerPin('');setKind(null);setError('');setStep('list');}
   function choose(employee){pinProof.current=null;selectedState.current={...employee};setSelected(employee);setPin('');setError('');setStep('pin');}
   async function checkPin(){
     if(verifying.current) return;
@@ -35,8 +39,22 @@ export default function OfflineClock({ state, onBusy, onSaved }) {
   }
   function action(value){
     setKind(value);setError('');setReason('');setManagerPin('');
+    setWork(defaultClockWork());managerProof.current=null;setManagerId('');
+    const shift=value==='clock_in' ? cachedScheduledShift(snapshot,selected,state.events,captureTime(snapshot)) : null;
+    setScheduledShift(shift);
     setClaimed(toStoreDateTimeLocal(captureTime(snapshot)));
-    setStep(value.startsWith('forgot_') ? 'correction' : value==='clock_in' ? 'authorization' : 'photo');
+    setStep(value.startsWith('forgot_') ? 'correction' : value==='clock_in' && !shift ? 'work' : 'photo');
+  }
+  async function authorizeWork(){
+    if(busy) return;
+    setBusy(true);setError('');
+    try {
+      clockWorkRequest(work);
+      if(!snapshot.employees.find(e=>e.id===managerId)?.can_authorize_work) throw new Error('Select an authorized manager.');
+      managerProof.current=await verifyOfflineEmployeePin(managerId,managerPin);
+      setStep('photo');
+    } catch(err){managerProof.current=null;setError(err.message);}
+    finally{setBusy(false);}
   }
   async function save(photo,face){
     if(saving.current) return false;
@@ -47,8 +65,12 @@ export default function OfflineClock({ state, onBusy, onSaved }) {
       const current=selectedState.current;
       const event={id:crypto.randomUUID(),employee_id:selected.id,kind,captured_at:captured,occurred_at:occurred,reason,
         punch_id:current.punch_id || null,break_id:current.break_id || null,previous_id:current.previous_id || null};
+      if(kind==='clock_in') {
+        if(scheduledShift) event.scheduled_shift_id=scheduledShift.id;
+        else { event.work_context=clockWorkRequest(work); event.manager_id=managerId; }
+      }
       const sealed_pin=await encryptOfflinePin(snapshot.public_key,event,pin,managerPin);
-      await enqueueOfflinePunch({event,sealed_pin,lease:snapshot.lease,photo,face_detected:!!face},pinProof.current);
+      await enqueueOfflinePunch({event,sealed_pin,lease:snapshot.lease,photo,face_detected:!!face},pinProof.current,managerProof.current);
       pinProof.current=null;
       setDone({name:selected.name,label:OFFLINE_LABELS[kind],time:occurred});setPin('');setManagerPin('');setStep('done');
       await onSaved();
@@ -79,9 +101,13 @@ export default function OfflineClock({ state, onBusy, onSaved }) {
         <button onClick={()=>action(value)} className={`${button} w-full`}>{OFFLINE_LABELS[value]}</button>
         {!value.startsWith('forgot_') && value!=='clock_in' && <ClockScheduleNotice action={value} context={selected.clock_schedule} settings={snapshot.settings} offline clockOffset={snapshot.clock_offset_ms || 0} />}
       </div>)}</div>}
-      {step==='authorization' && <div className="space-y-4"><h3 className="text-lg font-semibold">Clock in</h3><p className="text-sm">If you are working outside your scheduled shift, have a manager enter their PIN. Scheduled shifts can continue.</p>
-        <label className="block text-sm font-medium">Manager PIN (unscheduled work only)<input type="password" inputMode="numeric" autoComplete="off" maxLength={4} value={managerPin} onChange={e=>setManagerPin(e.target.value.replace(/\D/g,''))} className="mt-2 block w-full rounded-lg border p-3" /></label>
-        <button disabled={managerPin.length>0 && managerPin.length!==4} className={`${button} w-full`} onClick={()=>setStep('photo')}>Continue to photo</button></div>}
+      {step==='work' && <><h3 className="text-lg font-semibold">No shift scheduled</h3><ClockWorkForm value={work} onChange={setWork} shifts={snapshot.work_shifts} employeeId={selected.id} at={captureTime(snapshot)} offline /><button className={`${button} w-full`} disabled={!work.reason || (work.reason==='covering' && !work.covered_shift_id)} onClick={()=>setStep('authorization')}>Manager approve</button></>}
+      {step==='authorization' && <div className="space-y-4"><h3 className="text-lg font-semibold">Manager approval</h3>
+        <ClockWorkForm value={work} onChange={setWork} shifts={snapshot.work_shifts} employeeId={selected.id} at={captureTime(snapshot)} manager offline />
+        <label className="block text-sm font-medium">Manager<select value={managerId} onChange={e=>{setManagerId(e.target.value);setManagerPin('');}} className="mt-2 block min-h-12 w-full rounded-lg border bg-white p-3 text-zinc-900"><option value="">Choose a manager</option>{snapshot.employees.filter(e=>e.can_authorize_work).map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></label>
+        <label className="block text-sm font-medium">Manager PIN<input type="password" inputMode="numeric" autoComplete="off" maxLength={4} value={managerPin} onChange={e=>setManagerPin(e.target.value.replace(/\D/g,''))} className="mt-2 block w-full rounded-lg border p-3" /></label>
+        <p className="text-sm">The manager must have entered their PIN online on this iPad before approving offline.</p>
+        <button disabled={busy || !managerId || managerPin.length!==4} className={`${button} w-full`} onClick={authorizeWork}>{busy?'Checking PIN…':'Approve & continue to photo'}</button><button className={`${button} w-full`} disabled={busy} onClick={()=>setStep('work')}>Back</button></div>}
       {step==='correction' && <form className="space-y-4" onSubmit={e=>{e.preventDefault();setStep('photo');}}><h3 className="text-lg font-semibold">{OFFLINE_LABELS[kind]}</h3>
         <CorrectionContext type={kind} clockIn={selected?.clock_in} breakStart={selected?.break_start} lastClockOut={selected?.last_clock_out} />
         <label className="block text-sm font-medium">Actual time (restaurant time)<input type="datetime-local" required value={claimed} max={toStoreDateTimeLocal(captureTime(snapshot))} onChange={e=>setClaimed(e.target.value)} className="mt-2 block w-full rounded-lg border p-3" /></label>
