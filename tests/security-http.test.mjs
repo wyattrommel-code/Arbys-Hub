@@ -173,6 +173,12 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
   const gm = await cookie(ids.gm);
   assert.equal((await request("/api/integrations/brink")).status, 401);
   assert.equal((await request("/api/integrations/brink", crew)).status, 403);
+  assert.equal((await request('/api/integrations/brink/kitchen')).status,401);
+  assert.equal((await request('/api/integrations/brink/kitchen',crew)).status,403);
+  assert.equal((await request('/api/integrations/brink/kitchen',crew,'POST',{action:'configure',enabled:true})).status,403);
+  assert.equal((await request('/api/deployment')).status,401);
+  assert.equal((await request('/api/deployment',crew,'POST',{})).status,403);
+  assert.equal((await request('/api/deployment?date=bad',gm)).status,400);
   for (const path of ["/api/integrations/brink?export=reports", "/api/integrations/brink?export=report-csv&type=voids"]) {
     assert.equal((await request(path)).status, 401);
     assert.equal((await request(path, crew)).status, 403);

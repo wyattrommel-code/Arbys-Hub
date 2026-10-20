@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { fetchActiveEmployees, fetchActiveShiftLeadsOrAbove } from "@/lib/employees";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { fetchActiveEmployees } from "@/lib/employees";
 import { canAccess } from "@/lib/permissions";
 import { getSupabase } from "@/lib/supabase";
+import { DEPLOYMENT_STATIONS } from "@/lib/kitchen-report";
+import { getStoreToday, formatStoreDateTime, fromStoreDateTimeLocal, toStoreDateTimeLocal } from "@/lib/store-time";
 
 const STORE_ID = "payson";
 
@@ -23,25 +25,7 @@ const SHIFT_OPTIONS = {
   },
 };
 
-const STATIONS = [
-  "DT Order Taker",
-  "DT Cashier",
-  "Runner",
-  "Front",
-  "Fryer",
-  "Slicer",
-  "Backline",
-  "Floater",
-];
-
-function toDateStr(dateValue) {
-  const d = new Date(dateValue);
-  if (Number.isNaN(d.getTime())) return "";
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
+const STATIONS = DEPLOYMENT_STATIONS;
 
 function fmtLongDate(dateStr) {
   return new Date(`${dateStr}T00:00:00`).toLocaleDateString("en-US", {
@@ -89,15 +73,10 @@ function isLeadRole(role) {
   return normalized.includes("day lead") || normalized.includes("night lead");
 }
 
-function formatSubmittedTime(iso) {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "unknown time";
-  return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-}
-
 function createEmployeeRow(values = {}) {
   return {
     id: values.id || crypto.randomUUID(),
+    employee_id: values.employee_id || null,
     employee_name: values.employee_name || "",
     role: values.role || "",
     scheduled_start: values.scheduled_start || null,
@@ -109,14 +88,17 @@ function createEmployeeRow(values = {}) {
 }
 
 export default function DeploymentPage() {
-  const today = useMemo(() => toDateStr(new Date()), []);
+  const today = useMemo(() => getStoreToday(), []);
   const supabase = useMemo(() => getSupabase(), []);
   const [logDate, setLogDate] = useState(today);
   const [shiftKey, setShiftKey] = useState("MORNING");
   const [submittedBy, setSubmittedBy] = useState("");
   const [employees, setEmployees] = useState([]);
   const [activeEmployees, setActiveEmployees] = useState([]);
-  const [submitterOptions, setSubmitterOptions] = useState([]);
+  const [versions, setVersions] = useState([]);
+  const [effectiveTime, setEffectiveTime] = useState("");
+  const [reload, setReload] = useState(0);
+  const saveAttempt = useRef(null);
   const [unscheduledEmployeeId, setUnscheduledEmployeeId] = useState("");
   const [loadingSchedule, setLoadingSchedule] = useState(false);
   const [fetchError, setFetchError] = useState("");
@@ -133,6 +115,7 @@ export default function DeploymentPage() {
       .then((json) => {
         if (!cancelled && json?.employee?.role) {
           setCanSubmit(canAccess(json.employee.role, "deployment.submit"));
+          setSubmittedBy(`${json.employee.first_name || ""} ${json.employee.last_name || ""}`.trim());
         }
       })
       .catch(() => {});
@@ -148,25 +131,17 @@ export default function DeploymentPage() {
       setFetchError("");
       setExistingLog(null);
       try {
-        const shiftDef = SHIFT_OPTIONS[shiftKey];
-        const [{ data: schedRows, error: schedErr }, { data: existingRows, error: existingErr }] = await Promise.all([
+        const [{ data: schedRows, error: schedErr }, history, active] = await Promise.all([
           supabase
             .from("schedule_shifts")
-            .select("employee_name, role, scheduled_start, scheduled_end")
+            .select("employee_id, employee_name, role, scheduled_start, scheduled_end")
             .eq("shift_date", logDate)
             .eq("store_id", STORE_ID),
-          supabase
-            .from("deployment_logs")
-            .select("id, submitted_by, submitted_at")
-            .eq("log_date", logDate)
-            .eq("shift", shiftDef.label)
-            .eq("store_id", STORE_ID)
-            .order("submitted_at", { ascending: false })
-            .limit(1),
+          fetch(`/api/deployment?date=${logDate}`).then(async res=>{const json=await res.json(); if(!res.ok) throw new Error(json.error); return json;}),
+          fetchActiveEmployees(supabase),
         ]);
 
         if (schedErr) throw schedErr;
-        if (existingErr) throw existingErr;
         if (cancelled) return;
 
         const overlapFiltered = (schedRows || []).filter((row) => includeForShiftByRole(row.role, shiftKey));
@@ -174,6 +149,7 @@ export default function DeploymentPage() {
         const mapped = overlapFiltered
           .map((row) =>
             createEmployeeRow({
+              employee_id: row.employee_id,
               employee_name: row.employee_name,
               role: row.role,
               scheduled_start: row.scheduled_start,
@@ -184,8 +160,23 @@ export default function DeploymentPage() {
             return toMinutes(a.scheduled_start) - toMinutes(b.scheduled_start);
           });
 
-        setEmployees(mapped);
-        setExistingLog(existingRows?.[0] || null);
+        const latest=history.versions[0];
+        const restored=(latest?.assignments || []).map(a=>createEmployeeRow({...a,unscheduled:true}));
+        const unique=new Set(restored.map(a=>a.employee_id));
+        for(const row of mapped) {
+          if(!row.employee_id) {
+            const matches=active.filter(e=>e.name.toLowerCase()===row.employee_name.trim().toLowerCase());
+            if(matches.length===1) row.employee_id=matches[0].id;
+          }
+          if(row.employee_id && unique.has(row.employee_id)) continue;
+          if(row.employee_id) unique.add(row.employee_id);
+          restored.push(row);
+        }
+        setEmployees(restored);
+        setActiveEmployees(active);
+        setVersions(history.versions);
+        setExistingLog(latest || null);
+        setEffectiveTime("");
       } catch (err) {
         if (!cancelled) {
           setEmployees([]);
@@ -200,31 +191,7 @@ export default function DeploymentPage() {
     return () => {
       cancelled = true;
     };
-  }, [logDate, shiftKey, supabase]);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function loadEmployeePicklists() {
-      try {
-        const [active, submitters] = await Promise.all([
-          fetchActiveEmployees(supabase),
-          fetchActiveShiftLeadsOrAbove(supabase),
-        ]);
-        if (cancelled) return;
-        setActiveEmployees(active);
-        setSubmitterOptions(submitters);
-      } catch (err) {
-        if (cancelled) return;
-        setFetchError(err?.message || "Failed to load employees.");
-        setActiveEmployees([]);
-        setSubmitterOptions([]);
-      }
-    }
-    loadEmployeePicklists();
-    return () => {
-      cancelled = true;
-    };
-  }, [supabase]);
+  }, [logDate, shiftKey, supabase, reload]);
 
   const coverage = useMemo(() => {
     const out = Object.fromEntries(STATIONS.map((station) => [station, []]));
@@ -272,6 +239,7 @@ export default function DeploymentPage() {
     setEmployees((prev) =>
       prev.concat(
         createEmployeeRow({
+          employee_id: selected.id,
           employee_name: selected.name,
           role: "Unscheduled",
           unscheduled: true,
@@ -281,77 +249,27 @@ export default function DeploymentPage() {
     setUnscheduledEmployeeId("");
   }
 
-  function calcLateStatus(shiftDef, submissionDate, dateStr) {
-    const cutoff = new Date(`${dateStr}T00:00:00`);
-    cutoff.setHours(shiftDef.cutoffHour, shiftDef.cutoffMinute, 0, 0);
-    if (submissionDate <= cutoff) return { isLate: false, minutesLate: 0 };
-    return {
-      isLate: true,
-      minutesLate: Math.max(1, Math.round((submissionDate.getTime() - cutoff.getTime()) / 60000)),
-    };
-  }
-
   async function handleSubmit(event) {
     event.preventDefault();
     setSubmitError("");
     const shiftDef = SHIFT_OPTIONS[shiftKey];
-    if (!submittedBy) {
-      setSubmitError("Please choose who is submitting this deployment.");
-      return;
-    }
-    if (assignedRows.length === 0) {
-      setSubmitError("Assign at least one station before submitting.");
-      return;
-    }
-
     setSubmitting(true);
     try {
-      const submittedAt = new Date();
-      const { isLate, minutesLate } = calcLateStatus(shiftDef, submittedAt, logDate);
-
-      const { data: upsertedLog, error: upsertErr } = await supabase
-        .from("deployment_logs")
-        .upsert(
-          {
-            log_date: logDate,
-            shift: shiftDef.label,
-            submitted_by: submittedBy,
-            submitted_at: submittedAt.toISOString(),
-            is_late: isLate,
-            minutes_late: minutesLate,
-            store_id: STORE_ID,
-          },
-          { onConflict: "log_date,shift" }
-        )
-        .select("id, submitted_by, submitted_at, is_late, minutes_late")
-        .single();
-      if (upsertErr) throw upsertErr;
-
-      const deploymentId = upsertedLog?.id;
-      if (!deploymentId) throw new Error("Could not resolve deployment id.");
-
-      const { error: deleteErr } = await supabase.from("deployment_assignments").delete().eq("deployment_id", deploymentId);
-      if (deleteErr) throw deleteErr;
-
-      const insertRows = assignedRows.map((row) => ({
-        deployment_id: deploymentId,
-        log_date: logDate,
-        shift: shiftDef.label,
-        employee_name: row.employee_name.trim(),
-        stations: row.stations,
-        notes: row.notes?.trim() || null,
-      }));
-
-      const { error: insertErr } = await supabase.from("deployment_assignments").insert(insertRows);
-      if (insertErr) throw insertErr;
-
+      const effective=effectiveTime?fromStoreDateTimeLocal(effectiveTime):null;
+      if(effectiveTime && (!effective || toStoreDateTimeLocal(effective.toISOString()).slice(0,16)!==effectiveTime)) throw new Error('Enter a valid store time.');
+      if(assignedRows.some(r=>!r.employee_id)) throw new Error('Match the highlighted names to an active roster employee first.');
+      const body={date:logDate,shift:shiftDef.label,effective_at:effective?.toISOString()||null,base:existingLog?.id||null,
+        assignments:assignedRows.map(r=>({employee_id:r.employee_id,stations:r.stations,notes:r.notes||''}))};
+      const signature=JSON.stringify(body);
+      if(saveAttempt.current?.signature!==signature) saveAttempt.current={id:crypto.randomUUID(),signature};
+      const response=await fetch('/api/deployment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...body,id:saveAttempt.current.id})});
+      const json=await response.json(); if(!response.ok) throw new Error(json.error);
       setSuccessState({
         logDate,
         shift: shiftDef.label,
-        submittedBy,
-        isLate,
-        minutesLate,
-        assignedCount: insertRows.length,
+        submittedBy:json.version.submitted_by,
+        effectiveAt:json.version.effective_at,
+        assignedCount:assignedRows.length,
         coverage,
       });
     } catch (err) {
@@ -362,12 +280,8 @@ export default function DeploymentPage() {
   }
 
   function submitAnother() {
-    const nextShift = shiftKey === "MORNING" ? "NIGHT" : "MORNING";
-    const keepSubmitter = successState?.submittedBy || submittedBy;
     setSuccessState(null);
-    setLogDate(today);
-    setShiftKey(nextShift);
-    setSubmittedBy(keepSubmitter);
+    setReload(n=>n+1);
     setSubmitError("");
   }
 
@@ -386,12 +300,7 @@ export default function DeploymentPage() {
             <span className="font-semibold">Submitted by:</span> {successState.submittedBy}
           </p>
           <p className="mt-1 text-sm">
-            <span className="font-semibold">Status:</span>{" "}
-            {successState.isLate ? (
-              <span className="font-semibold text-amber-700">Late ⚠️ ({successState.minutesLate} min)</span>
-            ) : (
-              <span className="font-semibold text-green-700">On time ✅</span>
-            )}
+            <span className="font-semibold">Effective from:</span> {formatStoreDateTime(successState.effectiveAt)} (store time). Previous versions retained.
           </p>
           <p className="mt-1 text-sm">
             <span className="font-semibold">Employees assigned:</span> {successState.assignedCount}
@@ -426,7 +335,7 @@ export default function DeploymentPage() {
               onClick={submitAnother}
               className="min-h-11 rounded-lg bg-[#C8102E] px-4 text-sm font-semibold text-white hover:bg-[#ab0d26]"
             >
-              Submit Another
+              Update station assignments
             </button>
           ) : null}
         </div>
@@ -490,30 +399,23 @@ export default function DeploymentPage() {
 
             <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
               Submitted By
-              <select
-                value={submittedBy}
-                onChange={(e) => setSubmittedBy(e.target.value)}
-                disabled={readOnly}
-                className="mt-1 h-11 w-full rounded-lg border border-zinc-300 bg-white px-3 text-sm disabled:opacity-70 dark:border-zinc-700 dark:bg-zinc-950"
-              >
-                <option value="">Select shift lead...</option>
-                {submitterOptions.map((person) => (
-                  <option key={person.id} value={person.name}>
-                    {person.name}
-                  </option>
-                ))}
-              </select>
+              <input value={submittedBy} readOnly className="mt-1 h-11 w-full rounded-lg border px-3 text-sm" />
             </label>
           </div>
+          <label className="mt-4 block text-sm font-medium">Assignments effective from (Mountain time)
+            <input type="datetime-local" value={effectiveTime} onChange={e=>setEffectiveTime(e.target.value)} disabled={readOnly}
+              className="mt-1 block rounded-lg border p-2 dark:bg-zinc-950" />
+          </label>
+          <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">Leave blank for now. Save everyone currently working, then update whenever someone moves or leaves. A new save replaces current coverage from that time onward; earlier versions remain. Clear all stations and save to end coverage.</p>
         </article>
 
         {existingLog ? (
           <article className="rounded-xl border border-yellow-300 bg-yellow-50 p-3 text-sm text-yellow-900">
-            <p className="font-semibold">⚠️ Deployment already submitted for this shift</p>
+            <p className="font-semibold">Latest saved coverage for this day</p>
             <p className="mt-1">
-              Submitted by {existingLog.submitted_by} at {formatSubmittedTime(existingLog.submitted_at)}.
+              Submitted by {existingLog.submitted_by}; effective {formatStoreDateTime(existingLog.effective_at)}.
             </p>
-            <p className="mt-1">Resubmitting will overwrite the existing deployment.</p>
+            <p className="mt-1">Save a new version when staffing changes. Reload if another manager has updated it.</p>
           </article>
         ) : null}
 
@@ -549,6 +451,12 @@ export default function DeploymentPage() {
                     <p className="text-xs text-zinc-500 dark:text-zinc-400">
                       {row.role || "Role not set"} {row.scheduled_start && row.scheduled_end ? `• ${fmtTimeRange(row.scheduled_start, row.scheduled_end)}` : ""}
                     </p>
+                    {!row.employee_id && <label className="mt-2 block text-sm text-amber-700">Match this name to the active roster
+                      <select value="" disabled={readOnly} onChange={e=>{
+                        const chosen=activeEmployees.find(a=>a.id===e.target.value);
+                        if(chosen) setEmployees(prev=>prev.map(r=>r.id===row.id?{...r,employee_id:chosen.id,employee_name:chosen.name}:r));
+                      }} className="ml-2 rounded border p-2"><option value="">Choose employee…</option>{activeEmployees.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</select>
+                    </label>}
                   </div>
 
                   <div className="grid grid-cols-2 gap-2">
@@ -583,6 +491,7 @@ export default function DeploymentPage() {
                     readOnly={readOnly}
                     disabled={readOnly}
                     placeholder="Notes (optional)"
+                    maxLength={500}
                     className="mt-3 h-10 w-full rounded-lg border border-zinc-300 px-3 text-sm disabled:opacity-70 dark:border-zinc-700 dark:bg-zinc-950"
                   />
                 </div>
@@ -650,13 +559,19 @@ export default function DeploymentPage() {
         {canSubmit ? (
         <button
           type="submit"
-          disabled={submitting}
+          disabled={submitting || loadingSchedule || Boolean(fetchError)}
           className="min-h-12 w-full rounded-xl bg-[#C8102E] px-4 text-base font-bold text-white shadow-sm hover:bg-[#ab0d26] disabled:cursor-not-allowed disabled:opacity-60"
         >
           {submitting ? "Submitting..." : "Submit"}
         </button>
         ) : null}
       </form>
+      {versions.length>0 && <details className="rounded-xl border p-4"><summary className="cursor-pointer font-semibold">Deployment timeline · {versions.length} versions</summary>
+        {versions.map(v=><div key={v.id} className="mt-3 border-t pt-3 text-sm"><p className="font-semibold">{formatStoreDateTime(v.effective_at)} · {v.submitted_by}</p>
+          <p>Recorded {formatStoreDateTime(v.recorded_at)}</p>
+          {v.assignments.length?v.assignments.map(a=><p key={a.employee_id}>{a.employee_name}: {a.stations.join(', ')}</p>):<p>All stations unassigned</p>}
+        </div>)}
+      </details>}
     </section>
   );
 }

@@ -20,8 +20,8 @@ export async function GET(request) {
     // after 6 AM. One request per tick prevents daily/automatic collisions.
     const reconcile = getStoreMinutes() >= 360 && state.last_daily_date !== yesterday;
     const date = reconcile || getStoreMinutes() < 240 ? yesterday : today;
-    const result = await syncBrink(date, reconcile ? "daily" : "automatic", { session, snapshotOnly: true });
-    return secureJson({ ok: true, business_date: result.business_date, summary: result.day.summary, integration_version: BRINK_SYNC_VERSION, diagnostics: result.diagnostics });
+    const result = await syncBrink(date, reconcile ? "daily" : "automatic", { session, snapshotOnly: true, kitchen: true });
+    return secureJson({ ok: true, business_date: result.business_date, summary: result.day.summary, kitchen:result.kitchen, integration_version: BRINK_SYNC_VERSION, diagnostics: result.diagnostics });
   } catch (err) {
     if (err instanceof BrinkError && err.status === 429) return secureJson({ skipped: true, reason: "Another recent sync holds the cooldown." });
     return secureJson({ error: err instanceof BrinkError ? err.message : "Scheduled PAR sync failed.", integration_version: BRINK_SYNC_VERSION }, { status: err instanceof BrinkError ? err.status : 500 });
