@@ -18,6 +18,7 @@ import {
   YAxis,
 } from "recharts";
 import { getSupabase } from "@/lib/supabase";
+import { salesForDay, salesUpdatedLabel, storeToday } from "@/public/store-sales.mjs";
 
 const ARBY_RED = "#C8102E";
 const GREEN = "#2a7a3b";
@@ -35,20 +36,11 @@ const REPORT_TYPES = [
 ];
 
 function todayLocalISODate() {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  return storeToday();
 }
 
 function yesterdayLocalISODate() {
-  const d = new Date();
-  d.setDate(d.getDate() - 1);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  return addDays(storeToday(), -1);
 }
 
 function addDays(dateStr, delta) {
@@ -188,10 +180,10 @@ function SalesImportEmptyState() {
   return (
     <div className="rounded-xl border border-zinc-200 bg-white p-4 text-sm shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
       <p className="font-semibold text-zinc-800 dark:text-zinc-200">
-        No sales data for this date - upload a sales CSV on the Import page to populate sales data
+        No saved sales for this date yet. PAR sales appear after a successful sync.
       </p>
       <Link href="/import" className="mt-2 inline-block text-xs font-semibold text-[#C8102E] underline">
-        Go to Import
+        Check sales imports
       </Link>
     </div>
   );
@@ -250,7 +242,8 @@ function getWeekBounds() {
 
 export default function DashboardPage() {
   const [tab, setTab] = useState("DASHBOARD");
-  const [selectedDate, setSelectedDate] = useState(yesterdayLocalISODate);
+  const [selectedDate, setSelectedDate] = useState(todayLocalISODate);
+  const [salesRefreshError, setSalesRefreshError] = useState(false);
   const [reportStart, setReportStart] = useState(currentWeekStartSundayISO);
   const [reportEnd, setReportEnd] = useState(todayLocalISODate);
   const [reportType, setReportType] = useState("Daily Summary");
@@ -425,6 +418,43 @@ export default function DashboardPage() {
       cancelled = true;
     };
   }, [selectedDate]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let running = false;
+    setSalesRefreshError(false);
+    async function refreshSales() {
+      if (running || document.hidden || tab !== 'DASHBOARD') return;
+      running = true;
+      try {
+        const db = getSupabase();
+        const { start, end } = getWeekBounds();
+        const results = await Promise.all([
+          db.from('hourly_sales').select('*').eq('sale_date', selectedDate),
+          db.from('hourly_sales').select('*').eq('sale_date', addDays(selectedDate, -7)),
+          db.from('hourly_sales').select('*').gte('sale_date', start).lte('sale_date', end),
+        ]);
+        if (results.some(r => r.error)) throw new Error('Sales refresh failed');
+        if (!cancelled) {
+          setState(s => ({ ...s, salesRows: results[0].data || [], lastWeekSalesRows: results[1].data || [],
+            weekSalesRows: results[2].data || [], disconnected: { ...s.disconnected, sales: false } }));
+          setSalesRefreshError(false);
+        }
+      } catch {
+        if (!cancelled) setSalesRefreshError(true); // Retain the last successful sales.
+      } finally { running = false; }
+    }
+    const timer = setInterval(refreshSales, 60000);
+    const onVisible = () => { if (!document.hidden) refreshSales(); };
+    window.addEventListener('focus', refreshSales);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      window.removeEventListener('focus', refreshSales);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [selectedDate, tab]);
 
   useEffect(() => {
     let cancelled = false;
@@ -609,8 +639,9 @@ export default function DashboardPage() {
     const usedPm = Math.max(0, oh2 + put2 - oh5) + Math.max(0, oh5 + put5 - ohClose);
     const totalRoastUsed = usedAm + usedPm;
 
-    const amSales = toNum(roastMap.get("daily_totals")?.on_hand);
-    const pmSales = toNum(roastMap.get("daily_totals")?.put_in);
+    const importedSales = salesForDay(state.salesRows, selectedDate);
+    const amSales = importedSales ? importedSales.am : toNum(roastMap.get("daily_totals")?.on_hand);
+    const pmSales = importedSales ? importedSales.pm : toNum(roastMap.get("daily_totals")?.put_in);
     const amDpr = usedAm > 0 ? amSales / usedAm : 0;
     const pmDpr = usedPm > 0 ? pmSales / usedPm : 0;
     const blendedDpr = totalRoastUsed > 0 ? (amSales + pmSales) / totalRoastUsed : 0;
@@ -628,7 +659,8 @@ export default function DashboardPage() {
       lastWeekSalesTotal,
       salesDiffDollar: salesTotal - lastWeekSalesTotal,
       salesDiffPct: getPctDiff(salesTotal, lastWeekSalesTotal),
-      hasSalesData: state.salesRows.some((r) => getSalesValue(r) > 0),
+      hasSalesData: importedSales !== null,
+      salesUpdatedAt: importedSales?.updatedAt,
       laborCost,
       laborHours,
       laborPct,
@@ -653,7 +685,7 @@ export default function DashboardPage() {
       roast: { put6, put10, put2, put5, ohClose, usedAm, usedPm, totalRoastUsed, amDpr, pmDpr, blendedDpr },
       inventory: { total: invTotal, categories: invCats },
     };
-  }, [state]);
+  }, [state, selectedDate]);
 
   const weekSummary = useMemo(() => {
     const { start } = getWeekBounds();
@@ -1436,6 +1468,8 @@ export default function DashboardPage() {
               >
                 Today
               </button>
+              <button type="button" onClick={() => setSelectedDate(yesterdayLocalISODate())}
+                className="rounded-lg border border-zinc-200 px-3 py-2 text-sm font-semibold">Yesterday</button>
             </div>
           </section>
 
@@ -1445,13 +1479,17 @@ export default function DashboardPage() {
             <>
               <section>
                 <h2 className="mb-2 text-sm font-bold uppercase tracking-wide text-[#C8102E]">Daily Snapshot</h2>
+                <p className="mb-2 text-xs text-zinc-500" role="status">
+                  {snapshot.hasSalesData ? `Net sales ${selectedDate === today ? 'so far · ' : '· '}Updated ${salesUpdatedLabel(snapshot.salesUpdatedAt)} · Auto-refresh on` : 'Waiting for saved sales'}
+                  {salesRefreshError ? ' · Refresh failed; showing last saved sales' : ''}
+                </p>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   {state.disconnected.sales || !snapshot.hasSalesData ? (
                     <SalesImportEmptyState />
                   ) : (
                     <MetricCard
-                      title="Sales"
-                      value={fmtMoney(snapshot.salesTotal)}
+                      title="Net sales"
+                      value={fmtMoney2(snapshot.salesTotal)}
                       sub={`vs same day last week: ${fmtSignedPct(snapshot.salesDiffPct)}`}
                       subColor={
                         !hasSalesComparison
@@ -1532,7 +1570,7 @@ export default function DashboardPage() {
 
               <Expandable
                 title="Sales Detail"
-                summary={`${fmtMoney(snapshot.salesTotal)} · txns — · avg ticket —`}
+                summary={`${fmtMoney2(snapshot.salesTotal)} net sales`}
                 open={expanded.sales}
                 setOpen={(v) => setExpanded((s) => ({ ...s, sales: typeof v === "function" ? v(s.sales) : v }))}
                 empty={state.disconnected.sales || !snapshot.hasSalesData}
