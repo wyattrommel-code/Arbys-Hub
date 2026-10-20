@@ -19,7 +19,7 @@ import {
   Package,
   Settings,
   Trash2,
-  Upload,
+  Plug,
   Users,
   X,
 } from "lucide-react";
@@ -44,7 +44,7 @@ const ICONS = {
   "layout-grid": LayoutGrid,
   gauge: Gauge,
   "circle-dollar-sign": CircleDollarSign,
-  upload: Upload,
+  plug: Plug,
   "bar-chart-3": BarChart3,
   settings: Settings,
 };

@@ -9,9 +9,9 @@ const navCards = [
     feature: "checklists.complete",
   },
   {
-    href: "/import",
-    title: "Import",
-    description: "Upload labor and hourly sales CSV files.",
+    href: "/connections",
+    title: "Connections",
+    description: "Manage PAR sales sync and review connection activity.",
     feature: "import",
   },
   {

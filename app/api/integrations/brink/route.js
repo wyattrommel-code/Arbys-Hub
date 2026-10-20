@@ -17,7 +17,7 @@ export async function GET(request) {
     const params = new URL(request.url).searchParams;
     const status = await brinkStatus(params.get("date") || getStoreToday());
     if (["reports", "report-csv"].includes(params.get("export"))) {
-      if (!status.day) return secureJson({error:"No saved sales snapshot for this date. Import the date first."}, {status:404});
+      if (!status.day) return secureJson({error:"No saved sales snapshot for this date. Sync the date first."}, {status:404});
       const reports = salesReports(status);
       if (params.get("export") === "reports") return secureJson(reports, {
         headers: { "Content-Disposition": `attachment; filename="par-reports-${status.business_date}.json"` },

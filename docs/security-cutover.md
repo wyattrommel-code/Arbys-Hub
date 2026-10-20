@@ -1,6 +1,18 @@
 # Hub data access security cutover
 
-## Release status
+## October 20, 2026: Supabase October 30 grant-change review
+
+Supabase's October 20 email and [official announcement](https://github.com/orgs/supabase/discussions/45329) say the October 30 change removes automatic Data API grants for **new** public tables. Existing tables retain their grants. This also matters when rebuilding schemas in a new project or preview environment.
+
+The live project's read-only permission audit found 51 public tables, all with RLS enabled and SELECT available to `service_role`. None had table-level SELECT/INSERT/UPDATE/DELETE access for `anon` or `authenticated`. The Hub uses its own employee sessions and authorized server endpoints, then the server's service credential; it must not copy the email's example browser-role grants. No live grants or database records were changed for this review.
+
+The security cutover explicitly grants the server access to the existing base tables. Subsequent table-creating migrations for PAR sales/logs, timecard approvals/edits, COGS, kiosk registration, and offline punches include explicit service-role grants. There is no new database table in the Connections cleanup. A complete fresh-project rebuild was not part of this audit.
+
+For every future table (including a Brink labor source table), include RLS, explicit minimum service-role grants, and public/browser-role revocations in the creating migration. Include sequence permissions where required and explicit EXECUTE restrictions for any RPCs. Test with automatic grants absent; a service-role key bypasses RLS but does not substitute for table privileges. Keep employee/wage authorization in Hub endpoints. See [Supabase's current guidance](https://supabase.com/docs/guides/api/securing-your-api).
+
+Connections remains GM-only using the existing `import` permission identifier; `/import` is only a redirect. Both routes remain unavailable on the dedicated clock deployment.
+
+## Original cutover plan (historical)
 
 This change prepares the application and database security cutover. It has not
 changed the live database. Do not apply the migration independently of the matching

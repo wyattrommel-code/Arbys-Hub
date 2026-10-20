@@ -1,6 +1,6 @@
 # PAR POS connection
 
-The Import page automatically refreshes saved sales and exposes a GM-only API call log with evidence downloads.
+The Connections page (`/connections`) automatically refreshes saved sales and exposes a GM-only API call log with evidence downloads. Legacy `/import` links redirect there. Manual sales, labor, and schedule CSV uploads have been removed; existing records are preserved. Detailed sales, meals, discounts, and void reports remain at `/reports/pos`.
 
 ## Credentials and switching locations
 
@@ -57,7 +57,7 @@ This is near-real-time polling, not instant push delivery. Register-to-PAR uploa
 
 A successful request atomically replaces the connection/date snapshot. Repeated order IDs cannot duplicate totals. Closed, nonempty orders contribute to sales; open orders are retained but excluded from completed totals. Order-level NetSales avoids double-counting combo components. Refund values retain the signs returned by PAR. WCF DateTimeOffset.DateTime is interpreted as UTC; OffsetMinutes is not applied twice. Hourly buckets use America/Denver and the order's opening time.
 
-Sandbox data never updates real hourly sales or roast/forecast tables. Production has a separate explicit `BRINK_PUBLISH_HOURLY_SALES=true` opt-in, which replaces all 24 hourly buckets for the selected date. Forecast generation and legacy roast daily-total fields are not part of this release. CSV imports remain available, but overlapping production CSV/API dates require an agreed source of truth before publishing.
+Sandbox data never updates real hourly sales or roast/forecast tables. Production has a separate explicit `BRINK_PUBLISH_HOURLY_SALES=true` opt-in, which replaces all 24 hourly buckets for the selected date. The dashboard and roast beef sheet read these hourly totals. Current roast forecasts use the same weekday's sales from the previous week, with saved forecast overrides preserved. The manual CSV upload interface is retired; historical API retrieval remains available through **Historical sync / recovery → Sync selected date**.
 
 ## Request log and evidence
 
