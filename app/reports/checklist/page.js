@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { roleDisplayName, verificationMethodLabel } from "@/lib/checklist-roles";
 import { formatLongDate } from "@/lib/schedule";
@@ -247,7 +248,7 @@ function ReportsContent() {
                   <td className="px-3 py-2">
                     {c.photo_url ? (
                       <button type="button" onClick={() => setLightbox(c.photo_url)}>
-                        <img src={c.photo_url} alt="" className="h-10 w-10 rounded object-cover" />
+                        <Image src={c.photo_url} alt="" width={40} height={40} unoptimized className="h-10 w-10 rounded object-cover" />
                       </button>
                     ) : (
                       "—"
@@ -301,7 +302,9 @@ function ReportsContent() {
           role="dialog"
           aria-modal="true"
         >
-          <img src={lightbox} alt="Completion photo" className="max-h-full max-w-full rounded-lg" />
+          <div className="relative h-full w-full">
+            <Image src={lightbox} alt="Completion photo" fill sizes="100vw" unoptimized className="rounded-lg object-contain" />
+          </div>
         </div>
       ) : null}
     </section>

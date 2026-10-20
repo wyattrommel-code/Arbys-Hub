@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronLeft, ChevronRight, Download, RefreshCw, X } from "lucide-react";
 import EmployeeAvatar from "@/components/EmployeeAvatar";
@@ -60,7 +61,7 @@ function PunchTime({ punch, direction, onOpen }) {
   const time = isIn ? punch.clock_in_time : punch.clock_out_time;
   return <div className="flex items-center gap-2">
     {photo ? <button type="button" onClick={onOpen} className="shrink-0 rounded-md" aria-label={"View clock-" + direction + " photo for " + punch.employee_name}>
-      <img src={photo} alt="" loading="lazy" className="h-9 w-9 rounded-md object-cover" />
+      <Image src={photo} alt="" width={36} height={36} unoptimized className="h-9 w-9 rounded-md object-cover" />
     </button> : null}
     {timestamp ? <time dateTime={timestamp} className="block whitespace-nowrap leading-snug">
       <span className="block text-[11px] text-zinc-500 dark:text-zinc-400">{dateLabel(getStoreToday(new Date(timestamp)))}</span>
@@ -440,7 +441,9 @@ export default function TimecardsBoard() {
       <p className="mb-3 text-xs text-zinc-500">{lightbox.clock_in_label}</p>
       <div className="grid gap-4 sm:grid-cols-2">{["in", "out"].map((direction) => <div key={direction}>
         <h4 className="mb-2 text-xs font-semibold">Clock {direction}</h4>
-        {lightbox["clock_" + direction + "_photo_url"] ? <><img src={lightbox["clock_" + direction + "_photo_url"]} alt={"Clock-" + direction + " photo of " + lightbox.employee_name} className="max-h-[55vh] w-full rounded-lg object-contain" />
+        {lightbox["clock_" + direction + "_photo_url"] ? <><div className="relative h-[55vh] w-full">
+          <Image src={lightbox["clock_" + direction + "_photo_url"]} alt={"Clock-" + direction + " photo of " + lightbox.employee_name} fill sizes="(max-width: 640px) 100vw, 50vw" unoptimized className="rounded-lg object-contain" />
+          </div>
           {!lightbox["face_detected_" + direction] ? <p className="mt-2 text-xs text-red-700 dark:text-red-300">Face was not detected.</p> : null}</> : <p className="py-8 text-sm text-zinc-500">No clock-{direction} photo</p>}
       </div>)}</div>
     </Modal> : null}

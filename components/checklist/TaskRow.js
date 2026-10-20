@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import { hasCompletionImage, isCaptureMethod, isSignatureMethod } from "@/lib/checklist";
 import { formatStoreTime } from "@/lib/store-time";
@@ -227,9 +228,12 @@ export default function TaskRow({
               onClick={() => setImageOpen(true)}
               className="mt-2 block"
             >
-              <img
+              <Image
                 src={completion.photo_url}
                 alt={signatureTask ? "Signature" : "Completion photo"}
+                width={56}
+                height={56}
+                unoptimized
                 className="h-14 w-14 rounded-lg border border-zinc-200 object-cover dark:border-zinc-700"
               />
             </button>
@@ -277,11 +281,16 @@ export default function TaskRow({
           role="dialog"
           aria-modal="true"
         >
-          <img
-            src={completion.photo_url}
-            alt={signatureTask ? "Signature" : "Completion photo"}
-            className="max-h-full max-w-full rounded-lg"
-          />
+          <div className="relative h-full w-full">
+            <Image
+              src={completion.photo_url}
+              alt={signatureTask ? "Signature" : "Completion photo"}
+              fill
+              sizes="100vw"
+              unoptimized
+              className="rounded-lg object-contain"
+            />
+          </div>
         </div>
       ) : null}
     </li>
