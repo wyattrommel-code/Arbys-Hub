@@ -89,6 +89,28 @@ test("WCF DateTimeOffset wrappers preserve UTC rather than shifting by OffsetMin
   assert.equal(orders[0].opened_at, "2026-09-09T18:28:26.035Z");
   assert.equal(summarizeOrders(orders).hourly[12].net_sales, 5.49);
 });
+test("Sales Summary counts free meals but excludes zero-value records with only removed items", () => {
+  const paid = parseOrders(soap(order()), "2026-09-09")[0];
+  const free = { ...paid, net_sales: 0, tax: 0, total: 0 };
+  const removed = ["voided", "deleted", "cleared"].map(flag => ({
+    ...free, items: paid.items.map(i => ({ ...i, [flag]: true })),
+  }));
+  const empty = { ...free, items: [] };
+  const refund = { ...paid, refund: true, net_sales: -5.49, tax: -0.46, total: -5.95 };
+  // Preserve nonzero source financial records even if their item rows are removed.
+  const nonzeroRemoved = { ...paid, items: [{ ...paid.items[0], voided: true }] };
+  const records = [paid, free, ...removed, empty, refund, nonzeroRemoved, { ...paid, closed: false }];
+  const summary = summarizeOrders(records);
+  assert.equal(summary.closed_orders, 4);
+  assert.equal(summary.excluded_removed_orders, 3);
+  assert.equal(summary.open_orders, 1);
+  assert.equal(summary.net_sales, 5.49);
+  assert.equal(summary.tax, 0.46);
+  assert.equal(summary.total, 5.95);
+  assert.equal(summary.hourly[12].net_sales, 5.49);
+  assert.equal(records.length, 9);
+  assert.equal(removed[0].items[0].voided, true);
+});
 test("failed and malformed PAR responses cannot masquerade as zero sales", () => {
   for (const xml of [soap(order(), 4), soap(order() + order()), soap(order()).replace("5.49", "NaN"), soap(order()).replace("2026-09-09T00:00:00", "2026-09-08T00:00:00"), '<!DOCTYPE x [<!ENTITY x "bad">]>' + soap(""), "<broken>", soap("").replace("<Orders></Orders>", "")]) assert.throws(() => parseOrders(xml, "2026-09-09"));
   assert.equal(validBusinessDate("2026-02-30"), false); assert.equal(validBusinessDate("2026-09-09"), true);
