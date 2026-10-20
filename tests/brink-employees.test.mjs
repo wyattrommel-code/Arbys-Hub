@@ -46,3 +46,17 @@ test('directory denial is logged safely and cannot erase a cached name list', as
   assert.equal(result.employees[0].id, '42'); assert.equal(writes.at(-1).status, 'error');
   assert.ok(!JSON.stringify(writes).includes('secret-access'));
 });
+test('manual recovery retries only failed lookups after a cooldown; report reads never call PAR', async () => {
+  const failed = [{status:'error',started_at:'2026-09-25T11:56:00Z'}];
+  const automatic = setup(failed);
+  await employeeDirectory(automatic.options); assert.equal(automatic.count(),0);
+  const recovery = setup(failed);
+  await employeeDirectory({...recovery.options,retryFailed:true}); assert.equal(recovery.count(),1);
+  const recent = setup([{status:'error',started_at:'2026-09-25T11:59:00Z'}]);
+  await employeeDirectory({...recent.options,retryFailed:true}); assert.equal(recent.count(),0);
+  const successful = setup([{status:'success',started_at:'2026-09-25T11:56:00Z',response_xml:xml}]);
+  await employeeDirectory({...successful.options,retryFailed:true}); assert.equal(successful.count(),0);
+  const read = setup([{status:'success',started_at:'2026-09-24T10:00:00Z',response_xml:xml}]);
+  assert.equal((await employeeDirectory({...read.options,cacheOnly:true})).employees.length,1);
+  assert.equal(read.count(),0);
+});

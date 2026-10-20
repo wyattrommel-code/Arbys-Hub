@@ -1,6 +1,6 @@
 # Live sales and adjustment reports
 
-Release: `2026-10-20.1`. Entry point: **Reports → PAR Sales & Meals**
+Release: `2026-10-20.2`. Entry point: **Reports → PAR Sales & Meals**
 (`/reports/pos`); the same reports appear in the existing PAR import panel.
 
 ## Connection and storage
@@ -17,6 +17,12 @@ Successful reads replace one connection/business-date snapshot in Supabase
 previous good snapshot. Existing three-minute polling and morning reconciliation
 continue after the new connection is enabled. Viewing or exporting reports reads
 saved data and does not call PAR.
+
+Employee-name requests have up to 12 seconds within a separate, bounded budget.
+Automatic name-lookup failures wait an hour; **Import selected date** can retry
+a failed lookup after three minutes. Successful names are cached for 12 hours.
+Viewing a historical report can apply the existing name cache without another
+PAR request or rewriting the sale.
 
 Cutover uses `BRINK_PUBLISH_HOURLY_SALES=false`: review the production records
 before deciding to replace the official hourly-sales source. Current dashboard
