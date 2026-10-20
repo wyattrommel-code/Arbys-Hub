@@ -160,5 +160,5 @@ test("disabled employee lookup makes no Settings2 request and retains detailed s
   await syncBrink(date, 'automatic', { session, snapshotOnly: true });
   assert.equal(count(), 1); assert.equal(db.calls.size, 1);
   assert.equal(db.snapshots.get(date)[0].employee_id, '42');
-  assert.equal(db.snapshots.get(date)[0].details_version, 2);
+  assert.equal(db.snapshots.get(date)[0].details_version, 3);
 });

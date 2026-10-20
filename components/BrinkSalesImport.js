@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { getStoreToday, formatStoreDateTime } from "@/lib/store-time";
 import BrinkCallLog from "./BrinkCallLog";
 import BrinkOrderDetails from "./BrinkOrderDetails";
+import BrinkSalesReports from "./BrinkSalesReports";
 const dollars = (value) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value || 0);
 export default function BrinkSalesImport() {
   const [date, setDate] = useState(getStoreToday);
@@ -63,7 +64,8 @@ export default function BrinkSalesImport() {
     {data?.day ? <>
       <p className="mt-4 font-semibold">{data.day.summary.closed_orders} closed orders · Net sales {dollars(data.day.summary.net_sales)} · Tax {dollars(data.day.summary.tax)} · Total {dollars(data.day.summary.total)}</p>
       <p className="mt-1 text-xs text-gray-500">{data.day.summary.open_orders} open orders (excluded from totals). Snapshot: {formatStoreDateTime(data.day.synced_at)}</p>
-      {!data.employee_lookup_enabled && <p className="mt-2 text-sm text-gray-600">Employee-name lookup is paused. Orders still show the POS employee ID. PAR must resolve directory access before names can be synced.</p>}
+      {!data.employee_lookup_enabled && <p className="mt-2 text-sm text-gray-600">Employee-name lookup is paused for this connection. Orders still show the POS employee ID.</p>}
+      <BrinkSalesReports key={`reports-${date}`} status={data} />
       <BrinkOrderDetails key={date} orders={data.day.orders || []} date={date} />
     </> : data?.configured && <p className="mt-4 text-sm text-gray-500">No saved API sales for this date yet. Automatic sync reads the current business day; older dates can be imported below.</p>}
     <details className="mt-4 text-sm"><summary className="cursor-pointer text-gray-600">Historical import / manual recovery</summary><button type="button" disabled={busy || !data?.configured} onClick={sync} className="mt-2 rounded border border-gray-300 px-3 py-2 disabled:opacity-50">Import selected date</button></details>

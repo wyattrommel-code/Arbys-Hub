@@ -110,13 +110,13 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
       res.setHeader('Content-Range',`0-${Math.max(0,rows.length-1)}/${rows.length}`);
       res.end(JSON.stringify(rows));return;
     }
-    if (url.pathname === '/rest/v1/rpc/hub_sync_offline_punch') {
+    if (url.pathname === '/rest/v1/rpc/hub_sync_offline_punch_work') {
       let body='';for await(const part of req)body+=part;
       const params=JSON.parse(body);
       const receipt={id:params.p_event.id,status:params.p_issue?'review':'applied',device_hash:params.p_device,fingerprint:params.p_fingerprint,event:params.p_event,photo_url:params.p_photo,issue:params.p_issue,employee_id:params.p_event.employee_id};
       offlineReceipts.push(receipt);res.end(JSON.stringify({id:receipt.id,status:receipt.status}));return;
     }
-    if (url.pathname === '/rest/v1/rpc/hub_apply_offline_review') {
+    if (url.pathname === '/rest/v1/rpc/hub_apply_offline_review_work') {
       let body='';for await(const part of req)body+=part;const params=JSON.parse(body);
       assert.equal(params.p_actor,ids.gm);assert.ok(params.p_note.length>3);
       offlineReceipts.find(row=>row.id===params.p_id).resolved_at=new Date().toISOString();
@@ -127,7 +127,7 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
     const id = idFilter?.startsWith("eq.") ? idFilter.slice(3) : null;
     let data = [];
     if (url.pathname === "/rest/v1/employees" && id) data = { id, first_name: "Synthetic", last_name: "User", employee_code: "synthetic-hash", is_active: id !== ids.inactive && (id !== ids.gm || managerActive), status: "active", store_id: "07462", role: id === ids.gm ? "gm" : "crew" };
-    else if (url.pathname === "/rest/v1/employees" && url.searchParams.get('select') === 'id,employee_code') data = [{id:ids.gm,employee_code:'synthetic-hash'}];
+    else if (url.pathname === "/rest/v1/employees" && ['id,employee_code','id,employee_code,role'].includes(url.searchParams.get('select'))) data = [{id:ids.gm,employee_code:'synthetic-hash',role:'gm'}];
     else if (url.pathname === "/rest/v1/employees" && url.searchParams.get('id')?.startsWith('in.')) data = [{id:ids.crew,first_name:'Synthetic',last_name:'Crew',is_active:true}];
     else if (url.pathname === "/rest/v1/employees") data = [{id:ids.gm,first_name:'Synthetic',last_name:'Manager',is_active:true}];
     else if (url.pathname === "/rest/v1/employee_wages") data = [{id:'wage',employee_id:ids.crew,hourly_rate:12,effective_date:'2026-09-10'}];
@@ -173,6 +173,10 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
   const gm = await cookie(ids.gm);
   assert.equal((await request("/api/integrations/brink")).status, 401);
   assert.equal((await request("/api/integrations/brink", crew)).status, 403);
+  for (const path of ["/api/integrations/brink?export=reports", "/api/integrations/brink?export=report-csv&type=voids"]) {
+    assert.equal((await request(path)).status, 401);
+    assert.equal((await request(path, crew)).status, 403);
+  }
   assert.equal((await request("/api/integrations/brink", crew, "POST", { date: "2026-09-09" })).status, 403);
   assert.equal((await request("/api/cron/brink-sales", gm)).status, 401);
   for (const path of ["/api/integrations/brink/logs?date=2026-09-09", "/api/integrations/brink/logs?date=2026-09-09&export=1"]) {

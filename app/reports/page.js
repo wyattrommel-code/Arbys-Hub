@@ -17,6 +17,11 @@ export default function ReportsPage() {
         className="mt-6 grid gap-3 sm:grid-cols-2"
         aria-label="Report types"
       >
+        <Link href="/reports/pos" className="group rounded-xl border border-[#C8102E]/20 bg-white p-4 shadow-sm transition hover:border-[#C8102E] dark:bg-zinc-900">
+          <p className="text-lg font-semibold text-[#C8102E]">PAR Sales &amp; Meals</p>
+          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">Employee meals, manager meals, discounts, voids and receipt details.</p>
+          <p className="mt-3 text-sm font-medium text-[#C8102E]">Open report →</p>
+        </Link>
         <Link
           href="/reports/checklist"
           className="group rounded-xl border border-[#C8102E]/20 bg-white p-4 shadow-sm transition hover:border-[#C8102E] hover:shadow-md active:translate-y-px dark:bg-zinc-900"

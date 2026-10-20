@@ -20,6 +20,18 @@ test("configuration isolates locations, allows key rotation and rejects unsafe h
   assert.throws(() => brinkConfig({ ...env, BRINK_ENVIRONMENT: "production" }));
   assert.equal(brinkConfig({ ...env, BRINK_ENVIRONMENT: "production", BRINK_API_HOST: "api.brinkpos.net", BRINK_PUBLISH_HOURLY_SALES: "true" }).publish, true);
 });
+
+test("assigned numbered PAR production host stays isolated and defaults to review mode", () => {
+  const production = { ...env, BRINK_ENVIRONMENT: "production", BRINK_API_HOST: "api6.brinkpos.net" };
+  const config = brinkConfig(production);
+  assert.equal(config.host, "api6.brinkpos.net");
+  assert.equal(config.publish, false);
+  assert.notEqual(config.connection, brinkConfig(env).connection);
+  assert.throws(() => brinkConfig({ ...production, BRINK_ENVIRONMENT: "sandbox" }));
+  for (const host of ["api6.brinkpos.net.evil.com", "https://api6.brinkpos.net/", "api6.brinkpos.net/path", "api6.brinkpos.net:443", "api6.brinkpos.net@evil.com"]) {
+    assert.throws(() => brinkConfig({ ...production, BRINK_API_HOST: host }));
+  }
+});
 test("SOAP parsing preserves long IDs, normalizes PAR timestamps, strips payment data", () => {
   const result = parseOrders(soap(order("<Payments><CardToken>private-payment</CardToken></Payments><Name>private-name</Name>")), "2026-09-09");
   assert.equal(result[0].id, "9007199254740999");
@@ -37,7 +49,7 @@ test("offers, allocations, combo links and recursive modifiers survive without s
   const itemExtra = '<CompositeOrderItemId>6</CompositeOrderItemId><Denominator>2</Denominator><ItemNetSales>4.50</ItemNetSales><Discounts><OrderItemDiscount><Id>0</Id><OrderDiscountId>7</OrderDiscountId><Amount>0.99</Amount></OrderItemDiscount></Discounts><Promotions><OrderEntryPromotion><Id>1</Id><OrderPromotionId>8</OrderPromotionId><Amount>1</Amount></OrderEntryPromotion></Promotions><Modifiers><OrderItemModifier><Id>2</Id><ItemId>101</ItemId><ModifierCodeId>3</ModifierCodeId><Modifiers><OrderItemModifier><Id>3</Id><ItemId>102</ItemId><Modifiers/></OrderItemModifier></Modifiers><Note>private-note</Note></OrderItemModifier></Modifiers>';
   const xml = soap(order(extra).replace('</OrderEntry>', `${itemExtra}</OrderEntry>`));
   const [o] = parseOrders(xml, '2026-09-09');
-  assert.equal(o.details_version, 2); assert.equal(o.discounts[0].name, 'Senior 10%');
+  assert.equal(o.details_version, 3); assert.equal(o.discounts[0].name, 'Senior 10%');
   assert.equal(o.discounts[0].approver_employee_id, '43'); assert.equal(o.promotions[0].amount, 1);
   assert.equal(o.items[0].composite_order_item_id, '6'); assert.equal(o.items[0].split_denominator, 2);
   assert.equal(o.items[0].discounts[0].order_adjustment_id, '7'); assert.equal(o.items[0].promotions[0].order_adjustment_id, '8');
@@ -62,7 +74,7 @@ test("missing detail collections remain unknown and malformed details preserve t
   const legacy = { ...missing }; delete legacy.details_version; delete legacy.discounts;
   const exported = brinkOrderExport({ environment: 'sandbox', label: 'Lab', business_date: '2026-09-09', day: { orders: [legacy] } });
   assert.equal(exported.orders[0].details_version, 1); assert.equal(exported.orders[0].discounts, null);
-  assert.equal(exported.environment, 'sandbox'); assert.equal(exported.schema, 'brink.orders.v2');
+  assert.equal(exported.environment, 'sandbox'); assert.equal(exported.schema, 'brink.orders.v3');
 });
 test("open orders, refunds and empty collections have correct totals", () => {
   const closed = parseOrders(soap(order()), "2026-09-09")[0];
