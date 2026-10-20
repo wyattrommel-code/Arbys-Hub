@@ -200,7 +200,7 @@ export default function DeploymentPage() {
     return () => {
       cancelled = true;
     };
-  }, [logDate, shiftKey]);
+  }, [logDate, shiftKey, supabase]);
 
   useEffect(() => {
     let cancelled = false;

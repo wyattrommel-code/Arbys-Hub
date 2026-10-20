@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { acquireClockCamera } from '@/lib/clock-camera';
 import { captureJpegBlob, createFaceDetector } from "@/lib/face-detect";
@@ -144,7 +145,7 @@ export default function FaceCapture({ actionLabel = "Clock in", onConfirm, onCan
   return (
     <div className="flex flex-col items-center">
       <div className="relative w-full overflow-hidden rounded-2xl bg-black">
-        {photo ? <img src={photo.url} alt="Captured photo" className="h-[min(52vh,420px)] w-full object-contain" style={{ transform: 'scaleX(-1)' }} />
+        {photo ? <Image src={photo.url} alt="Captured photo" width={frameSize.width} height={frameSize.height} unoptimized loading="eager" className="h-[min(52vh,420px)] w-full object-contain" style={{ transform: 'scaleX(-1)' }} />
           : <video ref={videoRef} className="h-[min(52vh,420px)] w-full object-contain" style={{ transform: "scaleX(-1)" }}
           playsInline muted autoPlay onLoadedData={() => setReady(true)}
           onResize={event => setFrameSize({ width: event.currentTarget.videoWidth, height: event.currentTarget.videoHeight })}
