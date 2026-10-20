@@ -1,0 +1,11 @@
+# Generated local outputs must not be uploaded to either Vercel project.
+.next
+.next-clock
+node_modules
+coverage
+.git
+.env*
+!.env.example
+
+# Only exclude generated output at the repository root, not app/api/clock/out.
+/out/

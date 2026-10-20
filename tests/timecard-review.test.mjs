@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { payPeriodFor, filterTimecardGroups } from '../lib/timecard-review.js';
 
 test('Payson fortnight boundaries match the observed Jolt pay periods', () => {
@@ -55,4 +56,94 @@ test('pending hours remain recorded and block the entire payroll export', () => 
   assert.throws(() => buildPayrollCsv(grouped, '2026-09-09', '2026-09-09'), /review/);
   assert.match(buildPayrollCsv(groupTimecards([cleared]), '2026-09-09', '2026-09-09'), /PERIOD TOTAL/);
   assert.equal(serializeTimecardPunch({ ...punch, worked_minutes: null }, shift).worked_minutes, 360);
+});
+
+function offlineFixture() {
+  const times = { clock_in: punch.clock_in, break_start: '2026-09-09T18:00:00Z', break_end: '2026-09-09T18:30:00Z', clock_out: punch.clock_out };
+  const receipts = Object.entries(times).map(([kind, time]) => ({
+    id: kind, punch_id: punch.id, employee_id: punch.employee_id, status: 'applied', issue: null,
+    event: { kind, employee_id: punch.employee_id, occurred_at: time, captured_at: time },
+    photo_url: `https://synthetic.invalid/${kind}.jpg`, occurred_at: time, captured_at: time,
+  }));
+  const corrections = receipts.map(r => ({
+    id: r.id, time_punch_id: punch.id, source: 'offline', correction_type: `forgot_${r.event.kind}`,
+    claimed_time: r.occurred_at, photo_captured_at: r.captured_at, photo_url: r.photo_url,
+  }));
+  return { receipts, card: { ...punch, worked_minutes: 330, break_minutes: 30,
+    breaks: [{ id: 'break', start: times.break_start, end: times.break_end, minutes: 30, open: false }], corrections } };
+}
+
+test('validated offline clock and break punches clear without a manager and export unchanged hours', () => {
+  const { card, receipts } = offlineFixture();
+  const result = timecardReview(card, shift, settings, [], receipts);
+  assert.deepEqual(result.review_flags, []);
+  assert.equal(result.pending_approval, false);
+  assert.equal(result.payroll_ready, true);
+  assert.equal(result.approval, null); // Automatic eligibility is not a fabricated manager approval.
+  assert.deepEqual(result.review_snapshot.corrections, card.corrections);
+  const grouped = groupTimecards([{ ...card, ...result }]);
+  assert.equal(grouped.approvedDisplay, '5.50');
+  assert.equal(grouped.pendingDisplay, '0.00');
+  assert.match(buildPayrollCsv(grouped, '2026-09-09', '2026-09-09'), /PERIOD TOTAL/);
+  // A shift may combine normal online punches and a single offline action.
+  for (const receipt of receipts) {
+    assert.equal(timecardReview({ ...card, corrections: card.corrections.filter(c => c.id === receipt.id) }, shift, settings, [], [receipt]).payroll_ready, true);
+  }
+});
+
+test('missing, held, mismatched and missed offline punches still require review', () => {
+  const { card, receipts } = offlineFixture();
+  assert.equal(timecardReview(card, shift, settings).pending_approval, true);
+  assert.equal(timecardReview(card, shift, settings, [], receipts.slice(1)).pending_approval, true);
+  for (const patch of [
+    { status: 'review' }, { issue: 'PIN did not match' }, { punch_id: 'other' }, { employee_id: 'other' },
+    { photo_url: 'https://synthetic.invalid/other.jpg' }, { occurred_at: punch.clock_out },
+    { captured_at: punch.clock_out }, { event: null },
+    { event: { ...receipts[0].event, employee_id: 'other' } },
+    { event: { ...receipts[0].event, occurred_at: 'invalid' } },
+  ]) {
+    assert.equal(timecardReview(card, shift, settings, [], [{ ...receipts[0], ...patch }, ...receipts.slice(1)]).pending_approval, true, JSON.stringify(patch));
+  }
+  for (let i = 0; i < receipts.length; i++) {
+    const missed = receipts.map((r, n) => n === i ? { ...r, event: { ...r.event, kind: `forgot_${r.event.kind}` } } : r);
+    assert.equal(timecardReview(card, shift, settings, [], missed).pending_approval, true);
+  }
+  const noPhoto = { ...card, corrections: card.corrections.map(c => ({ ...c, photo_url: null })) };
+  assert.equal(timecardReview(noPhoto, shift, settings, [], receipts).pending_approval, true);
+});
+
+test('offline exemption preserves schedule, correction, edit and incomplete-shift safeguards', () => {
+  const { card, receipts } = offlineFixture();
+  for (const patch of [
+    { unscheduled: true }, { clock_in: '2026-09-09T15:00:00Z' }, { clock_out: '2026-09-09T23:00:00Z' },
+    { edited: true, status: 'edited' }, { corrections: [...card.corrections, { id: 'online-correction' }] },
+    { breaks: [{ id: 'b', start: '2026-09-09T15:00:00Z', end: '2026-09-09T15:30:00Z' }] },
+  ]) {
+    const result = timecardReview({ ...card, ...patch }, shift, settings, [], receipts);
+    assert.equal(result.pending_approval, true);
+    assert.equal(result.payroll_ready, false);
+    assert.equal(result.review_flags.includes('Offline punch'), false);
+  }
+  for (const patch of [{ open: true, clock_out: null }, { on_break: true }, { breaks: [{ id: 'b', open: true }] }]) {
+    assert.equal(timecardReview({ ...card, ...patch }, shift, settings, [], receipts).payroll_ready, false);
+  }
+});
+
+test('existing offline approvals survive removal of only the offline flag, but not later changes', () => {
+  const { card, receipts } = offlineFixture();
+  const flagged = { ...card, unscheduled: true, edited: true, status: 'edited' };
+  const before = timecardReview(flagged, shift, settings); // Original flags, without validated receipts.
+  assert.deepEqual(before.review_flags, ['Unscheduled shift', 'Offline punch', 'Edited punch']);
+  const hash = createHash('sha256').update(JSON.stringify(before.review_snapshot)).digest('hex');
+  const approvals = [{ punch_id: card.id, snapshot_hash: hash, approved_by_name: 'Synthetic Manager' }];
+  const after = timecardReview(flagged, shift, settings, approvals, receipts);
+  assert.deepEqual(after.review_flags, ['Unscheduled shift', 'Edited punch']);
+  assert.equal(after.approval, approvals[0]);
+  assert.equal(after.payroll_ready, true);
+  for (const patch of [{ worked_minutes: 320 }, { edit_revision: 1 }, { clock_out: '2026-09-09T22:01:00Z' },
+    { breaks: [{ ...card.breaks[0], minutes: 40 }] }, { corrections: [...card.corrections, { id: 'new' }] }]) {
+    assert.equal(timecardReview({ ...flagged, ...patch }, shift, settings, approvals, receipts).pending_approval, true);
+  }
+  assert.equal(timecardReview(flagged, { ...shift, scheduled_end: '17:00:00' }, settings, approvals, receipts).pending_approval, true);
+  assert.equal(timecardReview(flagged, shift, { ...settings, grace_minutes_late: 15 }, approvals, receipts).pending_approval, true);
 });

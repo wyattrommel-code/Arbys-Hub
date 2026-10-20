@@ -19,14 +19,15 @@ import {
 } from "@/lib/clock";
 import { attachEffectiveAccess } from "@/lib/roles";
 import { getSupabaseServer } from "@/lib/supabase-server";
+import { validateWorkRequest } from '@/lib/clock-work';
 
 export async function POST(request) {
-  const pinError = await guardPinAttempt(request);
-  if (pinError) return pinError;
   const kioskError = await requireKiosk();
   if (kioskError) return kioskError;
+  const pinError = await guardPinAttempt(request);
+  if (pinError) return pinError;
   try {
-    const { pin, managerPin, faceDetected, photo, employeeId } = await readPhotoFromRequest(request);
+    const { pin, managerPin, faceDetected, photo, employeeId, workContext } = await readPhotoFromRequest(request);
     if (!employeeId) {
       return secureJson({ ok: false, error: "Select your name first." }, { status: 400 });
     }
@@ -35,12 +36,17 @@ export async function POST(request) {
     }
 
     const supabase = getSupabaseServer();
-    const employee = await attachEffectiveAccess(supabase, await fetchClockEmployeeByPin(supabase, pin));
+    const employee = await fetchClockEmployeeByPin(supabase, pin, employeeId);
     if (!employee || employee.id !== employeeId) {
       return secureJson({ ok: false, error: "Invalid PIN" }, { status: 401 });
     }
 
-    const openPunch = await fetchOpenPunch(supabase, employee.id);
+    const [openPunch, settings, shifts, punches] = await Promise.all([
+      fetchOpenPunch(supabase, employee.id),
+      getAttendanceSettings(supabase),
+      fetchTodaysShiftsForEmployee(supabase, employee),
+      fetchRecentPunches(supabase, employee.id),
+    ]);
     if (openPunch) {
       return secureJson(
         { ok: false, error: "Already clocked in. Clock out first." },
@@ -48,18 +54,14 @@ export async function POST(request) {
       );
     }
 
-    const [settings, shifts, punches] = await Promise.all([
-      getAttendanceSettings(supabase),
-      fetchTodaysShiftsForEmployee(supabase, employee),
-      fetchRecentPunches(supabase, employee.id),
-    ]);
-
     const shift = pickClockInShift(shifts, punches);
     let unscheduled = !shift;
     let authorizedBy = null;
     let authorizedById = null;
 
-    if (unscheduled) {
+    if (unscheduled || workContext) {
+      try { validateWorkRequest(workContext); }
+      catch (error) { return secureJson({ ok:false, error:error.message, choose_work:true },{ status:400 }); }
       if (!parsePin(managerPin)) {
         return secureJson(
           { ok: false, error: "You're not scheduled today. A manager must authorize." },
@@ -78,7 +80,7 @@ export async function POST(request) {
     }
 
     let photoUrl = null;
-    if (settings.require_face_on_clock_in) {
+    if (settings.require_face_on_clock_in || workContext) {
       if (!photo) {
         return secureJson(
           { ok: false, error: "Photo is required to clock in." },
@@ -122,14 +124,10 @@ export async function POST(request) {
       on_break: false,
       total_break_minutes: 0,
     };
-    let punchRes = await supabase.from("time_punches").insert(punchRow).select("id, clock_in, status").single();
-    if (punchRes.error && /on_break|total_break_minutes|column|schema cache/i.test(punchRes.error.message || "")) {
-      const { on_break: _ob, total_break_minutes: _t, ...legacy } = punchRow;
-      punchRes = await supabase.from("time_punches").insert(legacy).select("id, clock_in, status").single();
-    }
+    const punchRes = await supabase.rpc('hub_clock_in_work', { p_punch:punchRow, p_work:workContext });
     const { data: punch, error } = punchRes;
 
-    if (error) throw error;
+    if (error) return secureJson({ ok:false, error:error.message || 'Could not save punch.', choose_work:Boolean(workContext) },{status:409});
 
     after(async () => {
       try {

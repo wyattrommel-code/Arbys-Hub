@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ScheduleToast from "@/components/schedule/ScheduleToast";
 import ShiftModal from "@/components/schedule/ShiftModal";
+import ScheduleDayView from "@/components/schedule/ScheduleDayView";
 import { employeeFullName, fetchEmployees } from "@/lib/employees";
 import {
   assigneeFields,
@@ -14,11 +15,11 @@ import {
   findEmployeeForShift,
   formatClock,
   formatHours,
+  formatLongDate,
   formatShortDate,
   formatWeekRange,
   isUnassignedShift,
   nameKey,
-  parseStationNames,
   resolveEmployeeId,
   SCHEDULE_STORE_ID,
   SHIFT_SOURCE_HUB,
@@ -34,9 +35,8 @@ import {
 import { addDaysISO, getStoreToday } from "@/lib/store-time";
 import { getSupabase } from "@/lib/supabase";
 
-function stationColor(stations, stationValue) {
-  const first = parseStationNames(stationValue)[0];
-  const match = stations.find((s) => s.name === first);
+function roleColor(roles, roleName) {
+  const match = roles.find((role) => nameKey(role.name) === nameKey(roleName));
   return match?.color || "#6b7280";
 }
 
@@ -75,6 +75,9 @@ async function writeShift(supabase, method, payload, id) {
 export default function ScheduleBuilder() {
   const supabase = useMemo(() => getSupabase(), []);
   const [weekStart, setWeekStart] = useState(() => weekStartSunday(getStoreToday()));
+  const [selectedDay, setSelectedDay] = useState(null);
+  const [daySaving, setDaySaving] = useState(false);
+  const daySaveRef = useRef(false);
   const [employees, setEmployees] = useState([]);
   const [catalogRoles, setCatalogRoles] = useState([]);
   const [shifts, setShifts] = useState([]);
@@ -99,6 +102,7 @@ export default function ScheduleBuilder() {
   const skipCardClickRef = useRef(false);
   const toastTimer = useRef(null);
   const templatesRef = useRef(null);
+  const loadGeneration = useRef(0);
 
   useEffect(() => {
     shiftsRef.current = shifts;
@@ -141,6 +145,7 @@ export default function ScheduleBuilder() {
   }, []);
 
   const loadWeek = useCallback(async () => {
+    const generation = ++loadGeneration.current;
     setLoading(true);
     setLoadError("");
     try {
@@ -216,6 +221,7 @@ export default function ScheduleBuilder() {
 
       const stationRows = stationsRes.data || [];
       const storeStations = stationRows.filter((s) => s.store_id === SCHEDULE_STORE_ID);
+      if (generation !== loadGeneration.current) return;
       setEmployees(mappedEmployees);
       setCatalogRoles(rolesRes.roles || []);
       setShifts(shiftsRes.data || []);
@@ -225,15 +231,17 @@ export default function ScheduleBuilder() {
       setTimeOff(timeOffRes.data || []);
       setAvailability(availabilityRows);
     } catch (err) {
+      if (generation !== loadGeneration.current) return;
       setLoadError(err?.message || "Could not load the schedule.");
       setShifts([]);
     } finally {
-      setLoading(false);
+      if (generation === loadGeneration.current) setLoading(false);
     }
   }, [supabase, weekStart, weekEnd]);
 
   useEffect(() => {
     loadWeek();
+    return () => { loadGeneration.current += 1; };
   }, [loadWeek]);
 
   const rows = useMemo(() => {
@@ -321,6 +329,17 @@ export default function ScheduleBuilder() {
     return [...set];
   }, [shifts, employees, catalogRoles]);
 
+  const scheduledRoles = useMemo(() => {
+    const names = new Map();
+    for (const shift of shifts) {
+      const key = nameKey(shift.role);
+      const role = catalogRoles.find((item) => nameKey(item.name) === key);
+      names.set(key, role?.name || shift.role?.trim() || "No role");
+    }
+    return [...names].map(([key, name]) => ({ key, name, color: roleColor(catalogRoles, key) }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [shifts, catalogRoles]);
+
   const availabilityIndex = useMemo(() => {
     const map = new Map();
     for (const row of availability) {
@@ -353,8 +372,8 @@ export default function ScheduleBuilder() {
     return shiftWarningMessages(shift, avail, off);
   }
 
-  function openCreate(employee, date) {
-    if (published) return;
+  function openCreate(employee, date, start = "") {
+    if (published || daySaveRef.current) return;
     setModal({
       mode: "create",
       draft: {
@@ -362,7 +381,7 @@ export default function ScheduleBuilder() {
         employeeId: rowKey(employee),
         role: employee.primary_role || "",
         station: "",
-        scheduled_start: "",
+        scheduled_start: start,
         scheduled_end: "",
         unpaid_break_minutes: 0,
       },
@@ -370,7 +389,7 @@ export default function ScheduleBuilder() {
   }
 
   function openEdit(shift) {
-    if (published) return;
+    if (published || daySaveRef.current) return;
     const emp = findEmployeeForShift(rows, shift);
     setModal({
       mode: "edit",
@@ -569,6 +588,58 @@ export default function ScheduleBuilder() {
     if (error) {
       setShifts((current) => current.map((row) => (row.id === shiftId ? prev : row)));
       showToast(error.message || "Could not move shift.");
+    }
+  }
+
+  async function changeDayShift(shiftId, employee, fields, duplicate = false) {
+    if (published) {
+      showToast("Week is locked. Unlock to edit.");
+      return false;
+    }
+    if (daySaveRef.current) return false;
+    const prev = shiftsRef.current.find((shift) => shift.id === shiftId);
+    if (!prev || String(shiftId).startsWith("temp-")) return false;
+    // Former, unlinked employees can retain their own shift but cannot receive
+    // a new assignment. All current employee moves use the stable employee id.
+    if (employee.isSynthetic && employee.id !== findEmployeeForShift(rows, prev)?.id) return false;
+    const id = duplicate ? `temp-${crypto.randomUUID()}` : prev.id;
+    const next = {
+      ...prev,
+      ...assigneeFields(employee),
+      ...fields,
+      id,
+      scheduled_hours: computeScheduledHours(fields.scheduled_start, fields.scheduled_end, prev.unpaid_break_minutes),
+      ...(duplicate ? { source: SHIFT_SOURCE_HUB } : {}),
+    };
+    daySaveRef.current = true;
+    setDaySaving(true);
+    setShifts((current) => duplicate ? [...current, next] : current.map((shift) => shift.id === id ? next : shift));
+    try {
+      if (duplicate) {
+        await persistInsert(next, id);
+      } else {
+        const { data, error } = await writeShift(supabase, "update", shiftPayload(next, weekStart), id);
+        if (error) throw error;
+        setShifts((current) => current.map((shift) => shift.id === id ? { ...next, ...data } : shift));
+      }
+      return true;
+    } catch (error) {
+      setShifts((current) => duplicate ? current.filter((shift) => shift.id !== id) : current.map((shift) => shift.id === id ? prev : shift));
+      showToast(error?.message || "Could not save the shift. Your change was restored.");
+      return false;
+    } finally {
+      daySaveRef.current = false;
+      setDaySaving(false);
+    }
+  }
+
+  function navigateSchedule(direction) {
+    if (selectedDay) {
+      const next = addDaysISO(selectedDay, direction);
+      setSelectedDay(next);
+      setWeekStart(weekStartSunday(next));
+    } else {
+      setWeekStart(addDaysISO(weekStart, direction * 7));
     }
   }
 
@@ -813,29 +884,34 @@ export default function ScheduleBuilder() {
   );
 
   return (
-    <section className="mx-auto flex w-full flex-1 flex-col gap-3 px-3 py-4 sm:px-4">
-      <div className="schedule-no-print flex flex-wrap items-center justify-between gap-2 rounded-xl border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+    <section className="mx-auto flex w-full min-w-0 flex-1 flex-col gap-1.5 px-2 py-2">
+      <fieldset disabled={daySaving} className="schedule-no-print flex min-w-0 flex-wrap items-center justify-between gap-1.5 rounded-lg border border-zinc-200 bg-white px-2 py-1.5 dark:border-zinc-800 dark:bg-zinc-900">
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={() => setWeekStart(addDaysISO(weekStart, -7))}
+            onClick={() => navigateSchedule(-1)}
+            aria-label={selectedDay ? "Previous day" : "Previous week"}
             className="rounded-md border border-zinc-300 px-2 py-1 text-sm dark:border-zinc-700"
           >
             ←
           </button>
-          <p className="min-w-[220px] text-center text-sm font-bold text-[#C8102E]">
-            {formatWeekRange(weekStart)}
+          <p className="text-center text-xs font-bold text-[#C8102E]">
+            {selectedDay ? formatLongDate(selectedDay) : formatWeekRange(weekStart)}
           </p>
           <button
             type="button"
-            onClick={() => setWeekStart(addDaysISO(weekStart, 7))}
+            onClick={() => navigateSchedule(1)}
+            aria-label={selectedDay ? "Next day" : "Next week"}
             className="rounded-md border border-zinc-300 px-2 py-1 text-sm dark:border-zinc-700"
           >
             →
           </button>
           <button
             type="button"
-            onClick={() => setWeekStart(weekStartSunday(getStoreToday()))}
+            onClick={() => {
+              setWeekStart(weekStartSunday(getStoreToday()));
+              if (selectedDay) setSelectedDay(getStoreToday());
+            }}
             className="rounded-md border border-zinc-300 px-2 py-1 text-xs font-semibold dark:border-zinc-700"
           >
             Today
@@ -848,16 +924,23 @@ export default function ScheduleBuilder() {
             {published ? "Published" : "Unpublished"}
           </span>
         </div>
-        <div className="flex flex-wrap items-center gap-2 text-sm">
+        <div className="flex flex-wrap items-center gap-2 text-xs">
           <span className="rounded-lg bg-zinc-100 px-2 py-1 font-semibold dark:bg-zinc-800">
-            {formatHours(weekHours)} total
+            {formatHours(weekHours)} this week
           </span>
           <span className="text-zinc-500">{shifts.length} shifts</span>
         </div>
-      </div>
+      </fieldset>
+
+      <fieldset disabled={daySaving} aria-label="Schedule view" className="schedule-no-print grid min-w-0 grid-cols-4 overflow-hidden rounded-lg border border-zinc-200 bg-white text-xs dark:border-zinc-700 dark:bg-zinc-900 sm:grid-cols-8">
+        <button type="button" aria-pressed={!selectedDay} onClick={() => setSelectedDay(null)} className={`min-h-8 px-2 py-1 font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[#C8102E] ${!selectedDay ? "bg-[#C8102E] text-white" : "hover:bg-zinc-100 dark:hover:bg-zinc-800"}`}>Week view</button>
+        {dates.map((date, index) => <button key={date} type="button" aria-pressed={selectedDay === date} onClick={() => setSelectedDay(date)} className={`min-h-8 border-l border-zinc-200 px-1 py-1 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[#C8102E] dark:border-zinc-700 ${selectedDay === date ? "bg-[#C8102E] text-white" : "hover:bg-zinc-100 dark:hover:bg-zinc-800"}`}>
+          <span className="font-semibold">{DAY_LABELS[index]}</span> <span>{formatShortDate(date)}</span>
+        </button>)}
+      </fieldset>
 
       {published ? (
-        <div className="schedule-no-print rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
+        <div className="schedule-no-print rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
           This week is published and locked. Unlock to edit.
           <button
             type="button"
@@ -869,13 +952,13 @@ export default function ScheduleBuilder() {
         </div>
       ) : null}
 
-      <div className="schedule-no-print flex flex-wrap items-center gap-2 rounded-xl border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+      <fieldset disabled={daySaving || loading || Boolean(loadError)} className="schedule-no-print flex min-w-0 flex-wrap items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2 py-1.5 dark:border-zinc-800 dark:bg-zinc-900">
         <div className="relative" ref={templatesRef}>
           <button
             type="button"
             disabled={published}
             onClick={() => setTemplatesOpen((v) => !v)}
-            className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-semibold disabled:opacity-50 dark:border-zinc-700"
+            className="min-h-8 rounded-md border border-zinc-300 px-2 py-1 text-xs font-semibold disabled:opacity-50 dark:border-zinc-700"
           >
             Templates ▾
           </button>
@@ -938,15 +1021,15 @@ export default function ScheduleBuilder() {
         </div>
         <button
           type="button"
-          onClick={() => downloadCsv(`schedule-${weekStart}.csv`, shiftsToCsv(shifts, weekStart))}
-          className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-semibold dark:border-zinc-700"
+          onClick={() => downloadCsv(`schedule-${selectedDay || weekStart}.csv`, shiftsToCsv(selectedDay ? shifts.filter((shift) => shift.shift_date === selectedDay) : shifts, weekStart))}
+          className="min-h-8 rounded-md border border-zinc-300 px-2 py-1 text-xs font-semibold dark:border-zinc-700"
         >
           Export CSV
         </button>
         <button
           type="button"
           onClick={() => window.print()}
-          className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-semibold dark:border-zinc-700"
+          className="min-h-8 rounded-md border border-zinc-300 px-2 py-1 text-xs font-semibold dark:border-zinc-700"
         >
           Print
         </button>
@@ -954,14 +1037,14 @@ export default function ScheduleBuilder() {
           type="button"
           disabled={published}
           onClick={() => setPublished(true)}
-          className="rounded-lg bg-[#C8102E] px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
+          className="min-h-8 rounded-md bg-[#C8102E] px-2 py-1 text-xs font-semibold text-white disabled:opacity-50"
         >
           Publish week
         </button>
         <p className="text-xs text-zinc-500">
-          Click a cell to add a shift. Drag a card to move it. Ctrl-click a shift to duplicate it.
+          {daySaving ? "Saving shift…" : selectedDay ? "Click an empty time slot or + to add a shift." : "Click a day to open its timeline. Click a cell to add; drag a card to move. Ctrl/Cmd-drag to copy."}
         </p>
-      </div>
+      </fieldset>
 
       {loadError ? (
         <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{loadError}</p>
@@ -974,22 +1057,30 @@ export default function ScheduleBuilder() {
       ) : (
         <>
           <p className="schedule-print-title mb-2 hidden text-lg font-bold text-[#C8102E] print:block">
-            Arby&apos;s Payson · {formatWeekRange(weekStart)}
+            Arby&apos;s Payson · {selectedDay ? formatLongDate(selectedDay) : formatWeekRange(weekStart)}
           </p>
-          <div className="schedule-print-grid overflow-x-auto rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-            <table className="min-w-[980px] w-full border-collapse text-left text-xs">
+          {selectedDay ? <ScheduleDayView key={selectedDay} date={selectedDay} rows={rows} shiftsByRowDay={shiftsByRowDay} hoursByRow={hoursByRow} colorFor={(role) => roleColor(catalogRoles, role)} warningsFor={warningsFor} locked={published || Boolean(loadError)} saving={daySaving} onCreate={openCreate} onEdit={openEdit} onChange={changeDayShift} /> : <div className="schedule-print-grid overflow-x-auto rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+            {/* Fixed column sizing keeps empty, single-shift, and split-shift days equally wide. */}
+            <table aria-label="Weekly schedule" className="w-full min-w-[1380px] table-fixed border-collapse text-left text-xs">
+              <colgroup>
+                <col className="w-[144px] print:w-[100px]" />
+                {dates.map((date) => <col key={date} />)}
+                <col className="w-[60px] print:w-[48px]" />
+              </colgroup>
               <thead>
                 <tr className="bg-zinc-50 dark:bg-zinc-800">
-                  <th className="sticky left-0 z-10 min-w-[140px] border-b border-zinc-200 bg-zinc-50 px-2 py-2 dark:border-zinc-700 dark:bg-zinc-800">
+                  <th className="sticky left-0 z-10 border-b border-zinc-200 bg-zinc-50 px-2 py-1 dark:border-zinc-700 dark:bg-zinc-800">
                     Employee
                   </th>
                   {dates.map((date, idx) => (
-                    <th key={date} className="min-w-[120px] border-b border-zinc-200 px-2 py-2 dark:border-zinc-700">
-                      <span className="block font-bold">{DAY_LABELS[idx]}</span>
-                      <span className="font-normal text-zinc-500">{formatShortDate(date)}</span>
+                    <th key={date} className="border-b border-zinc-200 px-2 py-1 dark:border-zinc-700">
+                      <button type="button" onClick={() => setSelectedDay(date)} aria-label={`View ${formatLongDate(date)} schedule`} className="w-full rounded py-1 text-left hover:text-[#C8102E] focus-visible:outline-2 focus-visible:outline-[#C8102E]">
+                        <span className="font-bold">{DAY_LABELS[idx]}</span>{" "}
+                        <span className="font-normal text-zinc-500">{formatShortDate(date)}</span>
+                      </button>
                     </th>
                   ))}
-                  <th className="min-w-[72px] border-b border-zinc-200 px-2 py-2 dark:border-zinc-700">Hours</th>
+                  <th className="border-b border-zinc-200 px-1 py-1 dark:border-zinc-700">Hours</th>
                 </tr>
               </thead>
               <tbody>
@@ -998,17 +1089,8 @@ export default function ScheduleBuilder() {
                   const overtime = hours > 40;
                   return (
                     <tr key={rowKey(emp)} className="align-top">
-                      <th className="sticky left-0 z-10 border-b border-zinc-100 bg-white px-2 py-2 text-left font-semibold dark:border-zinc-800 dark:bg-zinc-900">
-                        <span className="block">{emp.fullName}</span>
-                        <span className="text-[10px] font-normal uppercase tracking-wide text-zinc-500">
-                          {emp.isUnassigned
-                            ? "Open"
-                            : emp.role === "gm"
-                              ? "Manager"
-                              : emp.is_shift_lead || emp.role === "shift_lead"
-                                ? "Shift lead"
-                                : "Crew"}
-                        </span>
+                      <th className="sticky left-0 z-10 border-b border-zinc-100 bg-white px-2 py-px text-left font-semibold dark:border-zinc-800 dark:bg-zinc-900">
+                        <span className="block truncate leading-[34px]" title={emp.fullName}>{emp.fullName}</span>
                       </th>
                       {dates.map((date) => {
                         const cellKey = `${rowKey(emp)}|${date}`;
@@ -1024,13 +1106,13 @@ export default function ScheduleBuilder() {
                               if (e.target.closest("[data-shift-card]")) return;
                               openCreate(emp, date);
                             }}
-                            className={`h-[76px] cursor-pointer border-b border-r border-zinc-100 p-1 dark:border-zinc-800 ${
+                            className={`h-[38px] cursor-pointer border-b border-r border-zinc-100 p-px dark:border-zinc-800 ${
                               active ? "bg-[#C8102E]/10" : "hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
                             }`}
                           >
-                            <div className="flex min-h-[68px] flex-col gap-1">
+                            <div className="flex min-h-[34px] min-w-0 flex-col gap-px">
                               {cellShifts.map((shift) => {
-                                const color = stationColor(stations, shift.station);
+                                const color = roleColor(catalogRoles, shift.role);
                                 const warns = warningsFor(shift, emp);
                                 return (
                                   <button
@@ -1057,24 +1139,25 @@ export default function ScheduleBuilder() {
                                       }
                                       openEdit(shift);
                                     }}
-                                    className={`relative rounded px-1.5 py-1 text-left shadow-sm ${
+                                    className={`relative flex h-[34px] w-full min-w-0 shrink-0 items-center gap-1 rounded px-1 text-left text-[11px] leading-4 shadow-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#C8102E] ${
                                       copyDragId === shift.id ? "cursor-copy ring-2 ring-white ring-offset-1 ring-offset-[#C8102E]" : ""
                                     }`}
-                                    style={{ background: color, color: contrastText(color) }}
+                                    style={{ background: color, color: contrastText(color), printColorAdjust: "exact" }}
                                     title={
-                                      warns.join(" · ") ||
-                                      `${shift.role || "Shift"} ${formatClock(shift.scheduled_start)}–${formatClock(shift.scheduled_end)}`
+                                      [
+                                        `${shift.role || "Shift"} ${formatClock(shift.scheduled_start)}–${formatClock(shift.scheduled_end)}`,
+                                        shift.station,
+                                        ...warns,
+                                      ].filter(Boolean).join(" · ")
                                     }
                                   >
-                                    <span className="flex items-center justify-between gap-1">
-                                      <span className="truncate font-semibold">
-                                        {formatClock(shift.scheduled_start)}–{formatClock(shift.scheduled_end)}
-                                      </span>
-                                      {warns.length ? <span aria-label={warns.join(". ")}>⚠️</span> : null}
+                                    <span className="shrink-0 whitespace-nowrap font-semibold tabular-nums">
+                                      {formatClock(shift.scheduled_start)}–{formatClock(shift.scheduled_end)}
                                     </span>
-                                    <span className="block truncate text-[10px] opacity-90">
-                                      {shift.station || shift.role || "Shift"}
+                                    <span className="min-w-0 flex-1 truncate font-semibold">
+                                      {shift.role || "No role"}
                                     </span>
+                                    {warns.length ? <span className="shrink-0" aria-label={warns.join(". ")}>⚠️</span> : null}
                                     {copyDragId === shift.id ? (
                                       <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-white text-[10px] font-bold text-[#C8102E]">
                                         +
@@ -1087,7 +1170,7 @@ export default function ScheduleBuilder() {
                           </td>
                         );
                       })}
-                      <td className="border-b border-zinc-100 px-2 py-2 font-semibold dark:border-zinc-800">
+                      <td className="border-b border-zinc-100 px-1 py-px font-semibold leading-[34px] tabular-nums dark:border-zinc-800">
                         {formatHours(hours)}
                         {overtime ? (
                           <span className="ml-1" title="Over 40 hours this week">
@@ -1100,16 +1183,17 @@ export default function ScheduleBuilder() {
                 })}
               </tbody>
             </table>
-          </div>
+          </div>}
         </>
       )}
 
-      {stations.length ? (
-        <div className="flex flex-wrap gap-2 text-[11px] text-zinc-600">
-          {stations.map((station) => (
-            <span key={station.id} className="inline-flex items-center gap-1">
-              <span className="h-2.5 w-2.5 rounded-sm" style={{ background: station.color || "#6b7280" }} />
-              {station.name}
+      {!loading && scheduledRoles.length ? (
+        <div aria-label="Shift role colors" className="flex flex-wrap gap-2 text-[11px] text-zinc-600 dark:text-zinc-300">
+          <span className="font-semibold">Roles this week:</span>
+          {scheduledRoles.map((role) => (
+            <span key={role.key} className="inline-flex items-center gap-1">
+              <span className="h-2.5 w-2.5 rounded-sm" style={{ background: role.color, printColorAdjust: "exact" }} />
+              {role.name}
             </span>
           ))}
         </div>

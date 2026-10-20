@@ -1,24 +1,13 @@
-import { guardPinAttempt } from "@/lib/security/pin-guard";
-import { KIOSK_COOKIE } from "@/lib/security/kiosk";
 import { secureJson } from "@/lib/security/http";
-import { fetchEmployeeByPin } from "@/lib/employees";
-import { getSupabaseServer } from "@/lib/supabase-server";
-import { currentActor } from "@/lib/security/current-actor";
-import { canAccess } from "@/lib/permissions";
-import { createSessionToken, sessionCookieOptions } from "@/lib/session";
-export async function POST(request) {
-  const limited = await guardPinAttempt(request);
-  if (limited) return limited;
+import { hasClockDevice } from "@/lib/security/clock-device";
+
+// Compatibility for an older clock page. Pairing is sufficient; never issue a
+// manager session or treat this station access as unscheduled-work approval.
+export async function POST() {
   try {
-    const { pin } = await request.json();
-    const db = getSupabaseServer();
-    const employee = await fetchEmployeeByPin(db, String(pin || ""));
-    const actor = employee && await currentActor(db, { employee_id: employee.id });
-    if (!actor || !canAccess(actor.role, "timeclock.full")) return secureJson({ ok: false, error: "Invalid manager PIN" }, { status: 401 });
-    const response = secureJson({ ok: true });
-    response.cookies.set(KIOSK_COOKIE, await createSessionToken(actor, "kiosk"), sessionCookieOptions());
-    return response;
+    if (!(await hasClockDevice({ throwOnError: true }))) return secureJson({ ok: false, error: "This device is not authorized. Ask your GM to pair the store iPad." }, { status: 403 });
+    return secureJson({ ok: true });
   } catch {
-    return secureJson({ ok: false, error: "Could not unlock time clock" }, { status: 503 });
+    return secureJson({ ok: false, error: "Time clock connection unavailable." }, { status: 503 });
   }
 }
