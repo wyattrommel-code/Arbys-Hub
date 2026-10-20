@@ -20,6 +20,18 @@ test("configuration isolates locations, allows key rotation and rejects unsafe h
   assert.throws(() => brinkConfig({ ...env, BRINK_ENVIRONMENT: "production" }));
   assert.equal(brinkConfig({ ...env, BRINK_ENVIRONMENT: "production", BRINK_API_HOST: "api.brinkpos.net", BRINK_PUBLISH_HOURLY_SALES: "true" }).publish, true);
 });
+
+test("assigned numbered PAR production host stays isolated and defaults to review mode", () => {
+  const production = { ...env, BRINK_ENVIRONMENT: "production", BRINK_API_HOST: "api6.brinkpos.net" };
+  const config = brinkConfig(production);
+  assert.equal(config.host, "api6.brinkpos.net");
+  assert.equal(config.publish, false);
+  assert.notEqual(config.connection, brinkConfig(env).connection);
+  assert.throws(() => brinkConfig({ ...production, BRINK_ENVIRONMENT: "sandbox" }));
+  for (const host of ["api6.brinkpos.net.evil.com", "https://api6.brinkpos.net/", "api6.brinkpos.net/path", "api6.brinkpos.net:443", "api6.brinkpos.net@evil.com"]) {
+    assert.throws(() => brinkConfig({ ...production, BRINK_API_HOST: host }));
+  }
+});
 test("SOAP parsing preserves long IDs, normalizes PAR timestamps, strips payment data", () => {
   const result = parseOrders(soap(order("<Payments><CardToken>private-payment</CardToken></Payments><Name>private-name</Name>")), "2026-09-09");
   assert.equal(result[0].id, "9007199254740999");
