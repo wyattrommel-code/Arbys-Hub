@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { salesForDay, storeToday, salesUpdatedLabel } from '../public/store-sales.mjs';
+import { roastUsage, salesForDay, storeToday, salesUpdatedLabel } from '../public/store-sales.mjs';
 
 const date = '2026-10-19';
 const row = (hour, amount, day = date) => ({ sale_date: day, hour_of_day: hour, net_sales: amount, updated_at: '2026-10-20T18:56:14Z' });
@@ -34,6 +34,35 @@ test('missing dates are absent, while valid zero and negative sales remain real 
   assert.equal(salesForDay([row(8,0)],date).total,0);
   assert.equal(salesForDay([row(8,-5)],date).total,-5);
   assert.equal(storeToday(new Date('2026-10-20T03:00:00Z')),'2026-10-19');
+});
+
+test('incomplete roast counts cannot become usage or imply that missing stock was sold', () => {
+  const morning = [
+    {daypart:'6am',on_hand:1,put_in:4},
+    {daypart:'10am',on_hand:null,put_in:null},
+    {daypart:'2pm',on_hand:null,put_in:null},
+  ];
+  assert.equal(roastUsage(morning).totalRoastUsed,null);
+  assert.equal(roastUsage(morning).usedAm,null);
+  assert.equal(roastUsage(morning).ohClose,null);
+  morning[1] = {daypart:'10am',on_hand:3,put_in:2};
+  morning[2] = {daypart:'2pm',on_hand:1,put_in:0};
+  assert.equal(roastUsage(morning).usedAm,6);
+  assert.equal(roastUsage(morning).usedPm,null);
+  assert.equal(roastUsage(morning).totalRoastUsed,null);
+  morning.push({daypart:'5pm',on_hand:0,put_in:1},{daypart:'close',on_hand:0});
+  assert.equal(roastUsage(morning).usedPm,2);
+  assert.equal(roastUsage(morning).totalRoastUsed,8);
+});
+
+test('explicit zero roast counts are valid; blank and invalid counts stay unknown', () => {
+  const rows = ['6am','10am','2pm','5pm','close'].map(daypart=>({daypart,on_hand:0,put_in:0}));
+  assert.equal(roastUsage(rows).totalRoastUsed,0);
+  for (const missing of ['',null,undefined,'invalid',-1]) {
+    rows[0].on_hand=missing;
+    assert.equal(roastUsage(rows).usedAm,null);
+    assert.equal(roastUsage(rows).usedPm,0);
+  }
 });
 
 function sheet() {

@@ -39,3 +39,28 @@ export function salesUpdatedLabel(iso) {
     timeZone: 'America/Denver', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
   }).format(new Date(iso));
 }
+
+// A missing inventory count is not a count of zero. Only calculate an interval
+// after both counts and its cooked quantity have been recorded.
+export function roastUsage(rows) {
+  const entries = new Map((rows || []).map(row => [String(row.daypart || '').toLowerCase(), row]));
+  const count = (daypart, field) => {
+    const value = entries.get(daypart)?.[field];
+    if (value == null || String(value).trim() === '') return null;
+    const number = Number(value);
+    return Number.isFinite(number) && number >= 0 ? number : null;
+  };
+  const interval = (start, end) => {
+    const values = [count(start, 'on_hand'), count(start, 'put_in'), count(end, 'on_hand')];
+    return values.includes(null) ? null : Math.max(0, values[0] + values[1] - values[2]);
+  };
+  const sum = (a, b) => a == null || b == null ? null : a + b;
+  const usedAm = sum(interval('6am', '10am'), interval('10am', '2pm'));
+  const usedPm = sum(interval('2pm', '5pm'), interval('5pm', 'close'));
+  return {
+    put6: count('6am', 'put_in'), put10: count('10am', 'put_in'),
+    put2: count('2pm', 'put_in'), put5: count('5pm', 'put_in'),
+    ohClose: count('close', 'on_hand'), usedAm, usedPm,
+    totalRoastUsed: sum(usedAm, usedPm),
+  };
+}

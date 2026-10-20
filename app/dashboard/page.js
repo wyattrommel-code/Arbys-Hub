@@ -18,7 +18,7 @@ import {
   YAxis,
 } from "recharts";
 import { getSupabase } from "@/lib/supabase";
-import { salesForDay, salesUpdatedLabel, storeToday } from "@/public/store-sales.mjs";
+import { roastUsage, salesForDay, salesUpdatedLabel, storeToday } from "@/public/store-sales.mjs";
 
 const ARBY_RED = "#C8102E";
 const GREEN = "#2a7a3b";
@@ -626,25 +626,15 @@ export default function DashboardPage() {
     const topWaste = [...wasteByItem.entries()].sort((a, b) => b[1] - a[1])[0] || ["—", 0];
 
     const roastMap = new Map(state.roastRows.map((r) => [String(r.daypart || "").toLowerCase(), r]));
-    const put6 = toNum(roastMap.get("6am")?.put_in);
-    const put10 = toNum(roastMap.get("10am")?.put_in);
-    const put2 = toNum(roastMap.get("2pm")?.put_in);
-    const put5 = toNum(roastMap.get("5pm")?.put_in);
-    const oh6 = toNum(roastMap.get("6am")?.on_hand);
-    const oh10 = toNum(roastMap.get("10am")?.on_hand);
-    const oh2 = toNum(roastMap.get("2pm")?.on_hand);
-    const oh5 = toNum(roastMap.get("5pm")?.on_hand);
-    const ohClose = toNum(roastMap.get("close")?.on_hand);
-    const usedAm = Math.max(0, oh6 + put6 - oh10) + Math.max(0, oh10 + put10 - oh2);
-    const usedPm = Math.max(0, oh2 + put2 - oh5) + Math.max(0, oh5 + put5 - ohClose);
-    const totalRoastUsed = usedAm + usedPm;
+    const roast = roastUsage(state.roastRows);
+    const { usedAm, usedPm, totalRoastUsed } = roast;
 
     const importedSales = salesForDay(state.salesRows, selectedDate);
     const amSales = importedSales ? importedSales.am : toNum(roastMap.get("daily_totals")?.on_hand);
     const pmSales = importedSales ? importedSales.pm : toNum(roastMap.get("daily_totals")?.put_in);
-    const amDpr = usedAm > 0 ? amSales / usedAm : 0;
-    const pmDpr = usedPm > 0 ? pmSales / usedPm : 0;
-    const blendedDpr = totalRoastUsed > 0 ? (amSales + pmSales) / totalRoastUsed : 0;
+    const amDpr = usedAm > 0 ? amSales / usedAm : null;
+    const pmDpr = usedPm > 0 ? pmSales / usedPm : null;
+    const blendedDpr = totalRoastUsed > 0 ? (amSales + pmSales) / totalRoastUsed : null;
 
     const invTotal = state.inventoryRows.reduce((sum, row) => sum + toNum(row.total_value), 0);
     const invByCategory = new Map();
@@ -682,7 +672,7 @@ export default function DashboardPage() {
       salesByHour,
       peak,
       topWaste,
-      roast: { put6, put10, put2, put5, ohClose, usedAm, usedPm, totalRoastUsed, amDpr, pmDpr, blendedDpr },
+      roast: { ...roast, amDpr, pmDpr, blendedDpr },
       inventory: { total: invTotal, categories: invCats },
     };
   }, [state, selectedDate]);
@@ -1681,20 +1671,20 @@ export default function DashboardPage() {
 
               <Expandable
                 title="Roast Beef Detail"
-                summary={`${snapshot.roast.totalRoastUsed.toFixed(1)} roasts used · ${fmtMoney2(snapshot.roast.blendedDpr)}/roast`}
+                summary={snapshot.roast.totalRoastUsed == null ? "Awaiting roast counts" : `${snapshot.roast.totalRoastUsed.toFixed(1)} roasts used${snapshot.roast.blendedDpr == null ? "" : ` · ${fmtMoney2(snapshot.roast.blendedDpr)}/roast`}`}
                 open={expanded.roast}
                 setOpen={(v) => setExpanded((s) => ({ ...s, roast: typeof v === "function" ? v(s.roast) : v }))}
                 empty={state.disconnected.roast || state.roastRows.length === 0}
               >
                 <div className="grid grid-cols-2 gap-2 text-sm">
-                  <p>6am put in: {snapshot.roast.put6}</p>
-                  <p>10am put in: {snapshot.roast.put10}</p>
-                  <p>2pm put in: {snapshot.roast.put2}</p>
-                  <p>5pm put in: {snapshot.roast.put5}</p>
-                  <p>Close on hand: {snapshot.roast.ohClose}</p>
-                  <p>Total used: {snapshot.roast.totalRoastUsed.toFixed(1)}</p>
-                  <p>AM $/roast: {fmtMoney2(snapshot.roast.amDpr)}</p>
-                  <p>PM $/roast: {fmtMoney2(snapshot.roast.pmDpr)}</p>
+                  <p>6am put in: {snapshot.roast.put6 ?? "—"}</p>
+                  <p>10am put in: {snapshot.roast.put10 ?? "—"}</p>
+                  <p>2pm put in: {snapshot.roast.put2 ?? "—"}</p>
+                  <p>5pm put in: {snapshot.roast.put5 ?? "—"}</p>
+                  <p>Close on hand: {snapshot.roast.ohClose ?? "—"}</p>
+                  <p>Total used: {snapshot.roast.totalRoastUsed?.toFixed(1) ?? "—"}</p>
+                  <p>AM $/roast: {snapshot.roast.amDpr == null ? "—" : fmtMoney2(snapshot.roast.amDpr)}</p>
+                  <p>PM $/roast: {snapshot.roast.pmDpr == null ? "—" : fmtMoney2(snapshot.roast.pmDpr)}</p>
                 </div>
               </Expandable>
 
