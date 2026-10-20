@@ -8,7 +8,7 @@ test('deployment versions are atomic, immutable, idempotent and reject stale upd
     create table public.employees(id uuid primary key);
     create table public.deployment_logs(id uuid primary key default gen_random_uuid(),log_date date,shift text,submitted_by text,submitted_at timestamptz,is_late boolean,minutes_late integer,store_id text,unique(log_date,shift));
     create table public.deployment_assignments(deployment_id uuid,log_date date,shift text,employee_name text,stations text[],notes text,store_id text);
-    create table public.brink_sync_state(connection_id text primary key,attempt_id uuid);
+    create table public.brink_sync_state(connection_id text primary key,attempt_id uuid,attempted_at timestamptz,last_error text);
     grant all on all tables in schema public to service_role;
     insert into public.employees values ('11111111-1111-4111-8111-111111111111');`);
   await db.exec(await readFile(new URL('../supabase/migrations/20261020215516_kitchen_deployment_timing.sql',import.meta.url),'utf8'));
@@ -26,7 +26,10 @@ test('deployment versions are atomic, immutable, idempotent and reject stale upd
   assert.equal((await db.query('select assignments from public.deployment_versions where id=$1',[id])).rows[0].assignments[0].employee_name,'Test Crew');
   await assert.rejects(db.exec("update public.deployment_versions set submitted_by='tampered'"),/permission denied/);
   await assert.rejects(db.exec('delete from public.deployment_versions'),/permission denied/);
-  await db.exec(`insert into public.brink_sync_state values ('test','${id}'); insert into public.brink_kitchen_state(connection_id) values ('test');`);
+  await db.exec(`insert into public.brink_sync_state values ('test','${id}',now()-interval '3 minutes','Sales error'); insert into public.brink_kitchen_state(connection_id) values ('test');`);
+  assert.equal((await db.query("select public.brink_claim_kitchen('test',$1) v",[id])).rows[0].v,true);
+  assert.equal((await db.query("select public.brink_claim_kitchen('test',$1) v",[id2])).rows[0].v,false);
+  assert.equal((await db.query("select last_error from public.brink_sync_state where connection_id='test'")).rows[0].last_error,'Sales error');
   const finish=attempt=>db.query(`select public.brink_finish_kitchen('test',$1,current_date,'production','[]','[]',0) v`,[attempt]);
   assert.equal((await finish(id2)).rows[0].v,false);
   assert.equal((await finish(id)).rows[0].v,true);
