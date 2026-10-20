@@ -116,7 +116,7 @@ test("HTTP authorization prevents direct, stale-session, kiosk and CSRF bypasses
       const receipt={id:params.p_event.id,status:params.p_issue?'review':'applied',device_hash:params.p_device,fingerprint:params.p_fingerprint,event:params.p_event,photo_url:params.p_photo,issue:params.p_issue,employee_id:params.p_event.employee_id};
       offlineReceipts.push(receipt);res.end(JSON.stringify({id:receipt.id,status:receipt.status}));return;
     }
-    if (url.pathname === '/rest/v1/rpc/hub_apply_offline_review') {
+    if (url.pathname === '/rest/v1/rpc/hub_apply_offline_review_work') {
       let body='';for await(const part of req)body+=part;const params=JSON.parse(body);
       assert.equal(params.p_actor,ids.gm);assert.ok(params.p_note.length>3);
       offlineReceipts.find(row=>row.id===params.p_id).resolved_at=new Date().toISOString();
