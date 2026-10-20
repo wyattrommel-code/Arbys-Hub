@@ -5,6 +5,19 @@ import { protectPhotoUrls } from "../lib/security/photo-urls.js";
 import { canChangeCompletion, completionInputError } from "../lib/security/checklist-policy.js";
 import { createSessionToken, verifySessionToken } from "../lib/session.js";
 import { currentActor } from "../lib/security/current-actor.js";
+import { canAccess, featureForPathname } from "../lib/permissions.js";
+import { clockRouteAllowed } from "../lib/clock-gateway-policy.js";
+
+test("Connections and legacy Import links remain GM-only and unavailable on the clock", () => {
+  for (const path of ["/connections", "/connections/status", "/import"]) {
+    assert.equal(featureForPathname(path), "import");
+    for (const role of ["crew", "shift_lead", "assistant_manager"]) {
+      assert.equal(canAccess(role, featureForPathname(path)), false);
+    }
+    assert.equal(canAccess("gm", featureForPathname(path)), true);
+    assert.equal(clockRouteAllowed(path, "GET"), false);
+  }
+});
 
 const crew = { employee_id: "11111111-1111-4111-8111-111111111111", first_name: "Test", last_name: "Crew", role: "crew" };
 const gm = { ...crew, role: "gm" };

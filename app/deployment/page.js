@@ -529,11 +529,11 @@ export default function DeploymentPage() {
           ) : employees.length === 0 ? (
             <div className="p-4">
               <p className="text-sm text-zinc-700 dark:text-zinc-300">
-                No schedule found for this date and shift. Upload a schedule CSV on the Import page first.
+                No schedule found for this date and shift. A manager can add shifts in Schedule Builder.
               </p>
-              <Link href="/import" className="mt-2 inline-block text-sm font-semibold text-[#C8102E] underline">
-                Go to Import
-              </Link>
+              {canSubmit && <Link href="/schedule/builder" className="mt-2 inline-block text-sm font-semibold text-[#C8102E] underline">
+                Open Schedule Builder
+              </Link>}
             </div>
           ) : (
             <div className="divide-y divide-zinc-200 dark:divide-zinc-800">

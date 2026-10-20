@@ -1,7 +1,7 @@
 # Live sales and adjustment reports
 
 Release: `2026-10-20.3`. Entry point: **Reports → PAR Sales & Meals**
-(`/reports/pos`); the same reports appear in the existing PAR import panel.
+(`/reports/pos`). Connections (`/connections`) contains sync controls, summary totals, call logs, and a link to these reports; the manual CSV upload panels are retired.
 
 ## Connection and storage
 
@@ -19,7 +19,7 @@ continue after the new connection is enabled. Viewing or exporting reports reads
 saved data and does not call PAR.
 
 Employee-name requests have up to 12 seconds within a separate, bounded budget.
-Automatic name-lookup failures wait an hour; **Import selected date** can retry
+Automatic name-lookup failures wait an hour; **Sync selected date** can retry
 a failed lookup after three minutes. Successful names are cached for 12 hours.
 Viewing a historical report can apply the existing name cache without another
 PAR request or rewriting the sale.

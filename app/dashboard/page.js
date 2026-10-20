@@ -176,14 +176,14 @@ function EmptyState({ title }) {
   );
 }
 
-function SalesImportEmptyState() {
+function SalesConnectionEmptyState() {
   return (
     <div className="rounded-xl border border-zinc-200 bg-white p-4 text-sm shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
       <p className="font-semibold text-zinc-800 dark:text-zinc-200">
         No saved sales for this date yet. PAR sales appear after a successful sync.
       </p>
-      <Link href="/import" className="mt-2 inline-block text-xs font-semibold text-[#C8102E] underline">
-        Check sales imports
+      <Link href="/connections" className="mt-2 inline-block text-xs font-semibold text-[#C8102E] underline">
+        Check PAR connection
       </Link>
     </div>
   );
@@ -1475,7 +1475,7 @@ export default function DashboardPage() {
                 </p>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   {state.disconnected.sales || !snapshot.hasSalesData ? (
-                    <SalesImportEmptyState />
+                    <SalesConnectionEmptyState />
                   ) : (
                     <MetricCard
                       title="Net sales"
