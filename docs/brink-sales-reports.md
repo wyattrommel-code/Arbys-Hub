@@ -29,7 +29,20 @@ before replacing the official hourly-sales source. After reconciliation, setting
 it to `true` on the Hub production deployment publishes each successful import's
 24 hourly net-sales buckets to `hourly_sales`. Reimports replace that day's
 buckets rather than adding sales again. CSV source records remain available.
-The separate forecast/roast `daily_total` workflow is not populated by this flag.
+The dashboard and roast sheet read these same saved hourly buckets. The roast
+sheet displays imported net sales for each cooking window automatically, while
+manual sales remain a fallback only on dates without imported sales. Both screens
+refresh saved sales once per minute while visible; this makes no additional PAR
+requests. Last successful figures remain visible if a refresh fails.
+
+Daily and AM/PM totals count each hour once. Cooking windows overlap, so their
+amounts must not be added to obtain daily sales. Overnight hours stay with their
+PAR business date; AM is 4am–2pm and PM is 2pm through the overnight close.
+Prior-week hourly sales also supply roast dollar-per-roast calculations and the
+daily forecast used for tempering. Stored forecasts and manual roast counts are
+preserved. Imported sales are displayed from `hourly_sales`, not copied into the
+integer count columns in the legacy `daily_totals` row. Refreshing sales never
+writes roast entries or overwrites a count being entered by the crew.
 No labor, timeclock, inventory or kitchen importer is enabled by this release.
 
 ## Reports
@@ -128,6 +141,9 @@ The evidence is in the parent workspace's
 requests, repeat-safe writes, classification, refunds/open adjustments, duplicate
 item allocations, independent removal flags, legacy coverage and CSV escaping.
 Security tests cover GM-only report exports.
+`npm run test:sales` verifies the independent October 19 totals, cooking windows,
+refunds, zero/missing dates, business-date overnight boundaries, and a read-only
+roast refresh that retains prior data and crew entries when the network fails.
 
 To pause reads, use **Pause automatic sync**. To revert the connection, restore
 the saved sandbox host/environment/location values on the Hub project and

@@ -19,6 +19,7 @@ jobs:
       - run: npm run test:security
       - run: npm run test:timecards
       - run: npm run test:brink
+      - run: npm run test:sales
       - run: npm run test:security:http
       - run: npm run build
         env:

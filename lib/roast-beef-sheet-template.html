@@ -472,7 +472,8 @@
   <div id="sheets"></div>
 </div>
 
-<script>
+<script type="module">
+import { salesForDay, storeToday, salesUpdatedLabel } from '/store-sales.mjs';
 /**
  * Arby's #07462 roast sheet — single-file app with Supabase sync.
  *
@@ -524,25 +525,15 @@ const DAYPARTS = [
   { key: 'close', label: 'Close', window: 'End of day count', start: 21, end: 24, rate: 'pm', isClose: true },
 ];
 
-const DEFAULT_SALES = {
-  '2026-03-28': { h8: 72, h9: 85, h10: 312, h11: 498, h12: 428, h13: 418, h14: 328, h15: 166, h16: 124, h17: 241, h18: 587, h19: 310, h20: 202, h21: 208, h22: 0 },
-  '2026-03-29': { h8: 25, h9: 1, h10: 115, h11: 376, h12: 274, h13: 200, h14: 152, h15: 319, h16: 471, h17: 389, h18: 202, h19: 186, h20: 143, h21: 174, h22: 151 },
-  '2026-03-30': { h8: 48, h9: 72, h10: 298, h11: 452, h12: 412, h13: 380, h14: 265, h15: 198, h16: 312, h17: 340, h18: 380, h19: 240, h20: 210, h21: 195, h22: 88 },
-  '2026-03-31': { h8: 68, h9: 108, h10: 343, h11: 476, h12: 500, h13: 0, h14: 177, h15: 180, h16: 356, h17: 361, h18: 406, h19: 254, h20: 279, h21: 184, h22: 114 },
-  '2026-04-01': { h8: 107, h9: 138, h10: 420, h11: 560, h12: 599, h13: 0, h14: 152, h15: 271, h16: 336, h17: 368, h18: 393, h19: 314, h20: 256, h21: 189, h22: 71 },
-  '2026-04-02': { h8: 46, h9: 141, h10: 142, h11: 279, h12: 478, h13: 431, h14: 329, h15: 166, h16: 158, h17: 241, h18: 587, h19: 310, h20: 202, h21: 208, h22: 0 },
-  '2026-04-03': { h8: 25, h9: 56, h10: 78, h11: 334, h12: 461, h13: 613, h14: 322, h15: 399, h16: 244, h17: 719, h18: 553, h19: 369, h20: 414, h21: 194, h22: 281 },
-};
-
-const PREV_FALLBACK = {
-  total: 3598,
-  roasts: 7,
-};
 const MIN_DPR_REALISTIC = 300;
 const MAX_DPR_REALISTIC = 800;
 const SAFE_DPR_FALLBACK = 500;
 
-let salesByDate = { ...DEFAULT_SALES };
+let salesByDate = {};
+let importedSalesRows = [];
+let salesReadFailed = false;
+let refreshingSales = false;
+const sheetToday = new Date(storeToday() + 'T12:00:00');
 /** Optional per-daypart forecasts restored from Supabase (overrides hourly rollup). */
 const dbForecast = Object.create(null);
 /** sheet_date -> { daypartKey: forecasted_sales from DB } for tempering 4-day totals (may include 0). */
@@ -647,7 +638,7 @@ function isRealisticDpr(v) {
   return Number.isFinite(v) && v >= MIN_DPR_REALISTIC && v <= MAX_DPR_REALISTIC;
 }
 
-/** Sum net sales for [startH, endH) on dateStr; if nextDayExclusiveEnd > 0, add [0, nextDayExclusiveEnd) on the following calendar day. */
+/** Sum a cooking window within one business date, including its overnight hours. */
 function windowSales(dateStr, startH, endH, nextDayExclusiveEnd) {
   const day = salesByDate[dateStr];
   let total = 0;
@@ -658,19 +649,17 @@ function windowSales(dateStr, startH, endH, nextDayExclusiveEnd) {
   const nx =
     nextDayExclusiveEnd != null && Number.isFinite(nextDayExclusiveEnd) ? nextDayExclusiveEnd : 0;
   if (nx > 0) {
-    const nextStr = toDateStr(addDays(new Date(dateStr + 'T12:00:00'), 1));
-    const nextDay = salesByDate[nextStr];
-    if (nextDay) {
-      for (let h = 0; h < nx; h++) total += nextDay['h' + h] || 0;
+    if (day) {
+      for (let h = 0; h < nx; h++) total += day['h' + h] || 0;
     }
   }
-  return total;
+  return Math.round(total * 100) / 100;
 }
 
 function dayTotal(dateStr) {
   const day = salesByDate[dateStr];
   if (!day) return 0;
-  return Object.values(day).reduce((a, b) => a + b, 0);
+  return Object.values(day).reduce((a, b) => a + Math.round(b * 100), 0) / 100;
 }
 
 /** Apply hourly_sales rows from Supabase; salesByDate[date] replaces defaults for that date. */
@@ -761,6 +750,10 @@ function dailyTotalsWholesaleCost(dt) {
 }
 
 function totalForecastSalesForTemperingDay(sheetDateStr) {
+  // Cooking windows overlap. A daily projection counts each hourly sale once.
+  const basisDate = toDateStr(addDays(new Date(sheetDateStr + 'T12:00:00'), -7));
+  const basisSales = salesForDay(importedSalesRows, basisDate);
+  if (basisSales) return basisSales.total;
   const dt = dailyTotalsSales[sheetDateStr];
   const dailyTotalsSalesDollars = dailyTotalsWholesaleCost(dt);
   if (dailyTotalsSalesDollars > 0) {
@@ -783,7 +776,7 @@ function totalPutInSumPriorWeek(priorDateStr) {
 
 /** Blended $/roast for tempering: prior-week sales dollars / prior-week roasts used. */
 function blendedDollarPerRoastForTemper(priorDateStr, ratesFallback) {
-  const dt = dailyTotalsSales[priorDateStr];
+  const dt = salesForDay(importedSalesRows, priorDateStr) || dailyTotalsSales[priorDateStr];
   const ckSum = totalPutInSumPriorWeek(priorDateStr);
   if (dt && ckSum > 0) {
     const totalSales = (Number(dt.am) || 0) + (Number(dt.pm) || 0);
@@ -860,6 +853,8 @@ function deriveLockedRatesFromPriorWeek(priorDateStr) {
   let aPm = act[2] + act[3];
   if (aAm <= 0) aAm = fAm;
   if (aPm <= 0) aPm = fPm;
+  const imported = salesForDay(importedSalesRows, priorDateStr);
+  if (imported) { aAm = imported.am; aPm = imported.pm; }
 
   const amRaw = amUsed > 0 ? aAm / amUsed : NaN;
   const pmRaw = pmUsed > 0 ? aPm / pmUsed : NaN;
@@ -949,18 +944,18 @@ async function loadRemoteForRange(startStr, endStr) {
   if (!hub) return;
   setSyncStatus('saving');
   try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const today = sheetToday;
     const hourlyFrom = toDateStr(addDays(today, -14));
     const hourlyTo = toDateStr(today);
 
     const { data: hourlyRows, error: e0 } = await hub
       .from('hourly_sales')
-      .select('sale_date,hour_of_day,net_sales')
+      .select('sale_date,hour_of_day,net_sales,updated_at')
       .gte('sale_date', hourlyFrom)
       .lte('sale_date', hourlyTo);
     if (e0) throw e0;
-    mergeHourlySalesRowsIntoSalesByDate(hourlyRows);
+    importedSalesRows = hourlyRows || [];
+    mergeHourlySalesRowsIntoSalesByDate(importedSalesRows);
 
     const { data: rows, error: e1 } = await hub
       .from('roast_entries')
@@ -1004,6 +999,30 @@ async function loadRemoteForRange(startStr, endStr) {
     online = false;
     setSyncStatus('offline');
   }
+}
+
+async function refreshSales() {
+  if (!hub || refreshingSales || document.hidden) return;
+  // Updating sales must not reload/overwrite the crew's roast counts or move
+  // focus while they are typing. A later tick retries after editing finishes.
+  if (document.activeElement?.tagName === 'INPUT' || syncTimer || temperTimer) return;
+  refreshingSales = true;
+  try {
+    const { data, error } = await hub.from('hourly_sales')
+      .select('sale_date,hour_of_day,net_sales,updated_at')
+      .gte('sale_date', toDateStr(addDays(sheetToday, -14)))
+      .lte('sale_date', toDateStr(sheetToday));
+    if (error) throw error;
+    importedSalesRows = data || [];
+    salesByDate = {};
+    mergeHourlySalesRowsIntoSalesByDate(importedSalesRows);
+    salesReadFailed = false;
+  } catch {
+    salesReadFailed = true; // Keep the last successful amounts visible.
+  } finally {
+    refreshingSales = false;
+  }
+  for (let idx = 0; idx < 7; idx++) recalcSheet(idx);
 }
 
 function captureInputFocusForSheet(idx) {
@@ -1059,8 +1078,7 @@ function captureSheetStateFromDom(idx, dateStr) {
 
 function recalcSheet(idx) {
   const focusSnap = captureInputFocusForSheet(idx);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = sheetToday;
   const day = addDays(today, idx);
   const dateStr = toDateStr(day);
   const basisStr = toDateStr(addDays(day, -7));
@@ -1068,6 +1086,11 @@ function recalcSheet(idx) {
   captureSheetStateFromDom(idx, dateStr);
   ensureSheetState(dateStr);
   const st = sheetState[dateStr];
+  const imported = salesForDay(importedSalesRows, dateStr);
+  const salesStatus = document.getElementById(`sales-status-${idx}`);
+  if (salesStatus) salesStatus.textContent = imported
+    ? `${dateStr === storeToday() ? 'Net sales so far' : 'Net sales'}: $${imported.total.toFixed(2)} · AM $${imported.am.toFixed(2)} · PM $${imported.pm.toFixed(2)} · Updated ${salesUpdatedLabel(imported.updatedAt)}${salesReadFailed ? ' · Refresh failed; showing last saved sales' : ' · Auto-refresh on'}`
+    : (dateStr > storeToday() ? 'Actual sales will appear when this business day starts.' : 'No imported sales for this date yet.');
 
   if (!lockedDprBySheet[dateStr]) {
     lockedDprBySheet[dateStr] = deriveLockedRatesFromPriorWeek(basisStr);
@@ -1080,7 +1103,6 @@ function recalcSheet(idx) {
   const tbody = document.getElementById(`tbody-${idx}`);
   if (!tbody) return;
 
-  let totalForecast = 0;
   let totalPutIn = 0;
   let totalBeefsUsed = 0;
 
@@ -1088,16 +1110,15 @@ function recalcSheet(idx) {
 
   DAYPARTS.forEach((dp, di) => {
     const forecast = forecasts[di];
-    totalForecast += forecast;
     const dpr = dp.rate === 'am' ? rates.am : rates.pm;
     const needs = dpr > 0 ? Math.ceil(forecast / dpr) : 0;
 
     const onHand = parseHand(st.rows[di].onHandStr);
     const suggested = Math.max(0, needs - onHand);
 
-    const actualStr = st.rows[di].actualStr;
+    const actualStr = imported && !dp.isClose ? imported.windows[dp.key].toFixed(2) : st.rows[di].actualStr;
     const actual = parseFloat(actualStr) || 0;
-    const variance = actual ? actual - forecast : null;
+    const variance = actualStr !== '' ? actual - forecast : null;
     const putIn = st.rows[di].putIn;
     totalPutIn += putIn;
 
@@ -1139,7 +1160,7 @@ function recalcSheet(idx) {
         <td><span class="time-cell">${dp.label}</span></td>
         <td><span class="window-cell">${dp.window}</span></td>
         <td><strong>$${forecast.toLocaleString()}</strong></td>
-        <td><input class="num-input actual-input" type="number" inputmode="decimal" id="actual-${idx}-${di}" value="${actualValAttr}" placeholder="—" data-sheet="${dateStr}" data-dp="${dp.key}"></td>
+        <td>${imported ? `<output id="imported-actual-${idx}-${di}" title="Imported net sales for this cooking window">$${actualValAttr}</output>` : `<input class="num-input actual-input" type="number" inputmode="decimal" id="actual-${idx}-${di}" value="${actualValAttr}" placeholder="—" data-sheet="${dateStr}" data-dp="${dp.key}">`}</td>
         <td>${varHTML}</td>
         <td><span class="needs-val ${nc}">${needs}</span></td>
         <td><input class="num-input inv-input" type="text" inputmode="decimal" autocomplete="off" id="oh-${idx}-${di}" value="${onHandValAttr}" placeholder="0" data-sheet="${dateStr}" data-dp="${dp.key}"></td>
@@ -1192,7 +1213,7 @@ function recalcSheet(idx) {
     bind(ac, 'actual_sales');
   });
 
-  const prevTotal = dayTotal(basisStr) || PREV_FALLBACK.total;
+  const prevTotal = dayTotal(basisStr);
   document.getElementById(`prev-sales-${idx}`).textContent = '$' + Math.round(prevTotal).toLocaleString();
   document.getElementById(`prev-label-${idx}`).textContent = formatDisplay(new Date(basisStr + 'T12:00:00'));
 
@@ -1217,14 +1238,14 @@ function recalcSheet(idx) {
   const totRow = document.getElementById(`totals-row-${idx}`);
   if (totRow) {
     totRow.innerHTML = `
-      <div class="total-pill"><span>Forecasted total</span> $${totalForecast.toLocaleString()}</div>
+      <div class="total-pill"><span>Projected daily sales (last week)</span> $${dayTotal(basisStr).toFixed(2)}</div>
       <div class="total-pill"><span>Total put in</span> ${totalPutIn}</div>
     `;
   }
 
-  const amActual = (parseFloat(st.rows[0].actualStr) || 0) + (parseFloat(st.rows[1].actualStr) || 0);
-  const pmActual = (parseFloat(st.rows[2].actualStr) || 0) + (parseFloat(st.rows[3].actualStr) || 0);
-  const amUsedAct = used[1] == null ? 0 : Math.max(0, used[1]);
+  const amActual = imported ? imported.am : (parseFloat(st.rows[0].actualStr) || 0) + (parseFloat(st.rows[1].actualStr) || 0);
+  const pmActual = imported ? imported.pm : (parseFloat(st.rows[2].actualStr) || 0) + (parseFloat(st.rows[3].actualStr) || 0);
+  const amUsedAct = Math.max(0, used[1] || 0) + Math.max(0, used[2] || 0);
   const pmUsedAct =
     (used[3] == null ? 0 : Math.max(0, used[3])) + (used[4] == null ? 0 : Math.max(0, used[4]));
 
@@ -1247,10 +1268,8 @@ function recalcSheet(idx) {
 }
 
 function recalcTemper(idx) {
-  const todayRef = new Date();
-  todayRef.setHours(0, 0, 0, 0);
-  const tabAnchor = new Date();
-  tabAnchor.setHours(0, 0, 0, 0);
+  const todayRef = sheetToday;
+  const tabAnchor = sheetToday;
   const day = addDays(tabAnchor, idx);
   const dateStr = toDateStr(day);
 
@@ -1342,7 +1361,7 @@ function wirePrint(idx) {
 
 function buildSheetCard(idx, day, dateStr) {
   const basisStr = toDateStr(addDays(day, -7));
-  const prevTotal = dayTotal(basisStr) || PREV_FALLBACK.total;
+  const prevTotal = dayTotal(basisStr);
   const proj4 = Math.round(prevTotal * 4);
 
   const card = document.createElement('div');
@@ -1386,6 +1405,7 @@ function buildSheetCard(idx, day, dateStr) {
     </div>
 
     <div class="section-head">Sales &amp; cooking</div>
+    <p id="sales-status-${idx}" role="status" style="padding:8px 12px;font-size:12px">Loading saved sales…</p>
     <div class="table-wrap">
       <table class="cook-table" aria-label="Roast sheet">
         <thead>
@@ -1442,6 +1462,7 @@ function buildSheetCard(idx, day, dateStr) {
     </div>
 
     <div class="footnotes">
+      · Actual sales come from the Hub’s imported net sales. Today's amounts are sales so far. Cooking windows overlap; do not add their sales together. AM/PM and daily totals count each sale once.<br>
       · Needs = forecast ÷ locked AM or PM $/roast (ceil).<br>
       · Put In = number of raw roasts loaded into the oven at that drop time.<br>
       · Used = (previous on hand + previous put in) − current on hand; first drop shows —.<br>
@@ -1471,13 +1492,12 @@ function buildSheetCard(idx, day, dateStr) {
 }
 
 function buildTabsAndSheets() {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = sheetToday;
 
   document.getElementById('header-date').innerHTML =
     formatFull(today) +
     '<br><span style="font-size:11px;opacity:0.78">Local time ' +
-    new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) +
+    new Date().toLocaleTimeString('en-US', { timeZone: 'America/Denver', hour: 'numeric', minute: '2-digit' }) +
     '</span>';
 
   const tabsEl = document.getElementById('tabs');
@@ -1514,14 +1534,16 @@ async function init() {
   hub = createHub();
   if (!hub) setSyncStatus('offline');
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = sheetToday;
   const endStr = toDateStr(addDays(today, 6));
   const loadStart = toDateStr(addDays(today, -14));
 
   await loadRemoteForRange(loadStart, endStr);
 
   buildTabsAndSheets();
+  setInterval(refreshSales, 60000);
+  window.addEventListener('focus', refreshSales);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshSales(); });
 
   window.addEventListener('online', () => {
     if (!online) setSyncStatus('saving');
