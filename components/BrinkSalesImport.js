@@ -63,6 +63,7 @@ export default function BrinkSalesImport() {
     {(error || data?.state?.last_error) && <p role="alert" className="mt-3 rounded-md bg-red-50 p-3 text-sm text-red-700">{error || data.state.last_error}</p>}
     {data?.day ? <>
       <p className="mt-4 font-semibold">{data.day.summary.closed_orders} closed orders · Net sales {dollars(data.day.summary.net_sales)} · Tax {dollars(data.day.summary.tax)} · Total {dollars(data.day.summary.total)}</p>
+      {data.day.summary.excluded_removed_orders > 0 && <p className="mt-1 text-xs text-gray-500">{data.day.summary.excluded_removed_orders} zero-value records with all items removed are excluded from the order count. Their item history remains available below.</p>}
       <p className="mt-1 text-xs text-gray-500">{data.day.summary.open_orders} open orders (excluded from totals). Snapshot: {formatStoreDateTime(data.day.synced_at)}</p>
       {!data.employee_lookup_enabled && <p className="mt-2 text-sm text-gray-600">Employee-name lookup is paused for this connection. Orders still show the POS employee ID.</p>}
       <BrinkSalesReports key={`reports-${date}`} status={data} />

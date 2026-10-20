@@ -1,6 +1,6 @@
 # Live sales and adjustment reports
 
-Release: `2026-10-20.2`. Entry point: **Reports → PAR Sales & Meals**
+Release: `2026-10-20.3`. Entry point: **Reports → PAR Sales & Meals**
 (`/reports/pos`); the same reports appear in the existing PAR import panel.
 
 ## Connection and storage
@@ -24,9 +24,12 @@ a failed lookup after three minutes. Successful names are cached for 12 hours.
 Viewing a historical report can apply the existing name cache without another
 PAR request or rewriting the sale.
 
-Cutover uses `BRINK_PUBLISH_HOURLY_SALES=false`: review the production records
-before deciding to replace the official hourly-sales source. Current dashboard
-totals and CSV import records are not automatically replaced in review mode.
+Review mode uses `BRINK_PUBLISH_HOURLY_SALES=false`: inspect production records
+before replacing the official hourly-sales source. After reconciliation, setting
+it to `true` on the Hub production deployment publishes each successful import's
+24 hourly net-sales buckets to `hourly_sales`. Reimports replace that day's
+buckets rather than adding sales again. CSV source records remain available.
+The separate forecast/roast `daily_total` workflow is not populated by this flag.
 No labor, timeclock, inventory or kitchen importer is enabled by this release.
 
 ## Reports
@@ -92,9 +95,32 @@ $3,019.82 total. The report reducer reproduced:
 | Promotions, separate | 4 | $24.80 |
 
 That snapshot contains 9 voided entries, 40 deleted entries, 0 cleared entries
-and 3 empty order records. This checks report calculations against the returned
-API data; it is not a reconciliation to an independent till/Sales Summary report.
-Do that comparison before enabling official hourly publication.
+and 3 empty order records.
+
+On October 20, the independent October 19 Brink Sales Summary for
+RDS-07462-Billings confirmed the net sales, tax, $3,019.82 tender total,
+$3,148.22 source gross sales, every discount/meal row and both promotion rows.
+All seven destination sales amounts and transaction counts also reconcile.
+The independent October 19 Hourly Sales report matches all hourly net amounts
+from the API and the existing Hub imports, including the $2,784.48 daily total.
+The report's $24.85 void line equals the sum of this day's voided entry prices;
+this observation does not redefine removed item prices as financial loss.
+
+The comparison identified a count-only discrepancy: 199 nonempty closed records
+included four zero-value records with all entries voided or deleted. Release
+2026-10-20.3 excludes those records from `closed_orders`, yielding the report's
+195 transactions. Fully discounted meals still count. Nonzero financial records
+still count even if their item rows are removed. Source records, financial sums,
+hourly allocation and void history are preserved; `excluded_removed_orders`
+explains the count difference. Old saved summaries acquire the correction on
+their next successful sync.
+
+The October 6-19 Sales by Day report also matches the existing Hub hourly
+imports on all 14 daily net totals: $46,646.47, with zero difference each day.
+This is a comparison of existing Hub sales, not a 14-day API-detail backfill.
+Only October 19's API snapshot has been independently reconciled in detail.
+The evidence is in the parent workspace's
+`output/PAR-Reconciliation-2026-10-20/` directory.
 
 ## Validation and rollback
 
