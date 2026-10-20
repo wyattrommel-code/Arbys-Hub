@@ -25,6 +25,15 @@ const lead = { ...crew, role: "shift_lead" };
 const plan = (overrides = {}) => authorizeDataRequest({ actor: crew, table: "employees", method: "GET", search: "", ...overrides });
 const denied = (overrides) => assert.throws(() => plan(overrides), { status: 403 });
 
+test('deployment writes cannot bypass version history and kitchen storage is private',()=>{
+  for(const table of ['deployment_logs','deployment_assignments']) {
+    for(const method of ['POST','PATCH','DELETE']) denied({actor:gm,table,method,search:'id=eq.test',body:{}});
+    assert.ok(plan({table,method:'GET'}));
+  }
+  for(const table of ['deployment_versions','brink_kitchen_days','brink_kitchen_state']) denied({actor:gm,table});
+  for(const path of ['/api/deployment','/api/integrations/brink/kitchen']) assert.equal(clockRouteAllowed(path,'POST'),false);
+});
+
 test("bulk sales imports accept SDK column metadata without weakening write checks", () => {
   const request = { actor: gm, table: "hourly_sales", method: "POST", search: 'columns="sale_date","hour_of_day","net_sales"&on_conflict=sale_date,hour_of_day', body: [{ sale_date: "2026-09-08", hour_of_day: 8, net_sales: 38.31 }] };
   const result = plan(request);
