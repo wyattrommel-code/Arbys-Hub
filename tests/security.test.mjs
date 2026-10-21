@@ -37,7 +37,7 @@ test('deployment writes cannot bypass version history and kitchen storage is pri
 test("bulk sales imports accept SDK column metadata without weakening write checks", () => {
   const request = { actor: gm, table: "hourly_sales", method: "POST", search: 'columns="sale_date","hour_of_day","net_sales"&on_conflict=sale_date,hour_of_day', body: [{ sale_date: "2026-09-08", hour_of_day: 8, net_sales: 38.31 }] };
   const result = plan(request);
-  assert.equal(result.params.has("columns"), false);
+  assert.equal(result.params.get("columns"), '"sale_date","hour_of_day","net_sales"');
   assert.deepEqual(result.body, request.body);
   denied({ ...request, actor: crew });
   denied({ ...request, search: 'columns="unknown"' });
