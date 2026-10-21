@@ -259,8 +259,7 @@ export default function ResourceLibrary() {
       <div className={styles.categories} aria-label="Resource tabs">
         {categories.map((item) => {
           const Icon = CATEGORY_ICONS[item.icon] || FolderOpen;
-          const count = resources.filter((resource) => resource.category === item.value).length;
-          return <button key={item.value} className={`${styles.categoryCard} ${category === item.value ? styles.categoryActive : ""}`} aria-pressed={category === item.value} onClick={() => setCategory(category === item.value ? "all" : item.value)}><span className={styles.categoryTop}><Icon size={22} /><span>{loading || error ? "—" : count}</span></span><strong>{item.label}</strong><small>{item.description}</small></button>;
+          return <button key={item.value} className={`${styles.categoryCard} ${category === item.value ? styles.categoryActive : ""}`} aria-pressed={category === item.value} onClick={() => setCategory(category === item.value ? "all" : item.value)}><span className={styles.categoryTop}><Icon size={22} /></span><strong>{item.label}</strong><small>{item.description}</small></button>;
         })}
       </div>
       {category === "equipment" ? <EquipmentRegister embedded /> : null}
