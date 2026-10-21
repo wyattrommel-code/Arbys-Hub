@@ -1,14 +1,14 @@
 import { secureJson } from "@/lib/security/http";
-import { getCurrentEmployee } from "@/lib/auth";
+import { requireStoreSession } from "@/lib/store-auth";
 import { canAccess } from "@/lib/permissions";
-import { STORE_ID } from "@/lib/constants";
 import { fetchCompletionsForDay, fetchTasksForDay } from "@/lib/checklist";
 import { groupTasksByRole } from "@/lib/checklist-roles";
 import { getCurrentShift, getStoreToday } from "@/lib/store-time";
 import { getSupabaseServer } from "@/lib/supabase-server";
 
 export async function GET(request) {
-  const employee = await getCurrentEmployee();
+  const { employee, store, error: accessError } = await requireStoreSession();
+  if (accessError) return accessError;
   if (!employee) {
     return secureJson({ error: "Unauthorized" }, { status: 401 });
   }
@@ -18,8 +18,8 @@ export async function GET(request) {
   /** Full-day AM+PM view (preferred); `mode=full` kept for backward compatibility. */
   const view = searchParams.get("view");
   const fullDay = view === "roles-full" || view === "shifts" || mode === "full";
-  const date = searchParams.get("date") || getStoreToday();
-  const shift = searchParams.get("shift") || getCurrentShift();
+  const date = searchParams.get("date") || getStoreToday(new Date(), store.timezone);
+  const shift = searchParams.get("shift") || getCurrentShift(new Date(), store.timezone);
 
   try {
     const supabase = getSupabaseServer();
@@ -31,7 +31,7 @@ export async function GET(request) {
       const { data, error } = await supabase
         .from("checklist_tasks")
         .select("*")
-        .eq("store_id", STORE_ID)
+        .eq("store_id", employee.store_id)
         .order("display_order", { ascending: true });
       if (error) throw error;
       return secureJson({ tasks: data || [] });
@@ -40,10 +40,14 @@ export async function GET(request) {
     {
       const tasks = await fetchTasksForDay(supabase, {
         date,
+        storeId: employee.store_id,
+        timeZone: store.timezone,
         shift: fullDay ? null : shift,
       });
       const completions = await fetchCompletionsForDay(supabase, {
         date,
+        storeId: employee.store_id,
+        timeZone: store.timezone,
         shift: fullDay ? null : shift,
       });
       const { sections } = groupTasksByRole(tasks, completions, {
@@ -66,7 +70,8 @@ export async function GET(request) {
 }
 
 export async function POST(request) {
-  const employee = await getCurrentEmployee();
+  const { employee, store, error: accessError } = await requireStoreSession();
+  if (accessError) return accessError;
   if (!employee) {
     return secureJson({ error: "Unauthorized" }, { status: 401 });
   }
@@ -85,7 +90,7 @@ export async function POST(request) {
     const { data, error } = await supabase
       .from("checklist_tasks")
       .insert({
-        store_id: STORE_ID,
+        store_id: employee.store_id,
         title: body.title,
         description: body.description || null,
         day_of_week: dayOfWeek,
@@ -106,7 +111,8 @@ export async function POST(request) {
 }
 
 export async function PATCH(request) {
-  const employee = await getCurrentEmployee();
+  const { employee, store, error: accessError } = await requireStoreSession();
+  if (accessError) return accessError;
   if (!employee) {
     return secureJson({ error: "Unauthorized" }, { status: 401 });
   }
@@ -141,7 +147,7 @@ export async function PATCH(request) {
       .from("checklist_tasks")
       .update(payload)
       .eq("id", id)
-      .eq("store_id", STORE_ID)
+      .eq("store_id", employee.store_id)
       .select()
       .single();
 

@@ -1,7 +1,6 @@
 import { secureJson } from "@/lib/security/http";
-import { getCurrentEmployee } from "@/lib/auth";
+import { requireStoreSession } from "@/lib/store-auth";
 import { canAccess } from "@/lib/permissions";
-import { STORE_ID } from "@/lib/constants";
 import { fetchCompletionsForDay, fetchTasksForDay } from "@/lib/checklist";
 import { normalizeTaskRole, roleDisplayName } from "@/lib/checklist-roles";
 import { CHECKLIST_ROLE_ORDER } from "@/lib/constants";
@@ -9,8 +8,8 @@ import { fetchEmployees } from "@/lib/employees";
 import { addDaysISO, getStoreDayOfWeek, getStoreToday } from "@/lib/store-time";
 import { getSupabaseServer } from "@/lib/supabase-server";
 
-function parseDateRange(searchParams) {
-  const today = getStoreToday();
+function parseDateRange(searchParams, store) {
+  const today = getStoreToday(new Date(), store.timezone);
   const end = searchParams.get("end") || today;
   const start = searchParams.get("start") || addDaysISO(end, -6);
   return { start, end };
@@ -27,14 +26,15 @@ function datesInRange(start, end) {
 }
 
 export async function GET(request) {
-  const employee = await getCurrentEmployee();
+  const { employee, store, error: accessError } = await requireStoreSession();
+  if (accessError) return accessError;
   if (!employee) {
     return secureJson({ error: "Unauthorized" }, { status: 401 });
   }
   if (!canAccess(employee.role, "reports")) return secureJson({ error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(request.url);
-  const { start, end } = parseDateRange(searchParams);
+  const { start, end } = parseDateRange(searchParams, store);
   const employeeFilter = searchParams.get("employee_id") || "";
   const taskFilter = searchParams.get("task_id") || "";
   const shiftFilter = searchParams.get("shift") || "";
@@ -46,7 +46,7 @@ export async function GET(request) {
     let query = supabase
       .from("checklist_completions")
       .select("*, checklist_tasks(title, verification_method, role)")
-      .eq("store_id", STORE_ID)
+      .eq("store_id", employee.store_id)
       .gte("completion_date", start)
       .lte("completion_date", end)
       .order("completion_date", { ascending: false })
@@ -69,11 +69,12 @@ export async function GET(request) {
     const { data: allTasks, error: tasksErr } = await supabase
       .from("checklist_tasks")
       .select("*")
-      .eq("store_id", STORE_ID)
+      .eq("store_id", employee.store_id)
       .eq("is_active", true);
     if (tasksErr) throw tasksErr;
 
     const employees = await fetchEmployees(supabase, {
+      storeId: employee.store_id,
       select: "id, first_name, last_name",
       orderBy: { column: "first_name", ascending: true },
     });

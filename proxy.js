@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { canAccess, featureForPathname } from "./lib/permissions";
+import { STORE_ID } from "./lib/constants";
+import { supportsScopedStore } from "./lib/store-scope";
 import {
   SESSION_COOKIE,
   verifySessionToken,
@@ -36,7 +38,15 @@ export async function proxy(request) {
   }
   // Every API endpoint authenticates using a live employee lookup. Image access
   // also accepts a separately scoped kiosk cookie for profile photos only.
-  if (pathname.startsWith("/api/")) return NextResponse.next();
+  if (pathname.startsWith("/api/")) {
+    if (!isPublicPath(pathname)) {
+      const session = await verifySessionToken(request.cookies.get(SESSION_COOKIE)?.value);
+      if (session?.store_id && session.store_id !== STORE_ID && !supportsScopedStore(pathname)) {
+        return NextResponse.json({ error: "This area is not available for the selected store." }, { status: 403 });
+      }
+    }
+    return NextResponse.next();
+  }
 
   if (isPublicPath(pathname)) {
     return NextResponse.next();
@@ -50,6 +60,10 @@ export async function proxy(request) {
     loginUrl.pathname = "/login";
     loginUrl.searchParams.set("from", pathname);
     return NextResponse.redirect(loginUrl);
+  }
+
+  if (session.store_id && session.store_id !== STORE_ID && !supportsScopedStore(pathname)) {
+    return NextResponse.redirect(new URL("/database", request.url));
   }
 
   const requiredFeature = featureForPathname(pathname);

@@ -5,6 +5,7 @@ import { useEffect, useId, useState } from "react";
 import { usePathname } from "next/navigation";
 import {
   BarChart3,
+  BookOpen,
   Calendar,
   ChevronDown,
   ChevronsLeft,
@@ -30,6 +31,8 @@ import {
   subnavStorageKey,
 } from "@/lib/nav";
 import { canAccess } from "@/lib/permissions";
+import { STORE_ID } from "@/lib/constants";
+import { supportsScopedStore } from "@/lib/store-scope";
 import { setNavigationPreference, useNavigationPreferences } from "@/lib/navigation-preferences";
 
 const ICONS = {
@@ -38,6 +41,7 @@ const ICONS = {
   flame: Flame,
   "trash-2": Trash2,
   package: Package,
+  "book-open": BookOpen,
   users: Users,
   calendar: Calendar,
   clock: Clock,
@@ -101,9 +105,9 @@ function NavGroups({ groups, role, pathname, onNavigate }) {
   );
 }
 
-function NavLinks({ role, onNavigate, collapsed, openByHref, onToggleGroup, subnavId }) {
+function NavLinks({ role, onNavigate, collapsed, openByHref, onToggleGroup, subnavId, scopedOnly = false }) {
   const pathname = usePathname();
-  const visibleItems = SIDEBAR_NAV.filter((item) => canAccess(role, item.feature));
+  const visibleItems = SIDEBAR_NAV.filter((item) => canAccess(role, item.feature) && (!scopedOnly || supportsScopedStore(item.href)));
 
   return (
     <ul className="space-y-1">
@@ -186,6 +190,7 @@ export default function Sidebar({
   const pathname = usePathname();
   const subnavId = useId();
   const [role, setRole] = useState("crew");
+  const [scopedOnly, setScopedOnly] = useState(false);
   const { openByHref } = useNavigationPreferences(pathname);
 
   useEffect(() => {
@@ -195,6 +200,7 @@ export default function Sidebar({
       .then((json) => {
         if (!cancelled && json?.employee?.role) {
           setRole(json.employee.role);
+          setScopedOnly(Boolean(json.employee.store_id && json.employee.store_id !== STORE_ID));
         }
       })
       .catch(() => {});
@@ -245,6 +251,7 @@ export default function Sidebar({
         </div>
         <nav className={`flex-1 overflow-y-auto py-4 ${collapsed ? "px-1.5" : "px-3"}`} aria-label="Main navigation">
           <NavLinks
+            scopedOnly={scopedOnly}
             role={role}
             collapsed={collapsed}
             openByHref={openByHref}
@@ -274,6 +281,7 @@ export default function Sidebar({
         </div>
         <nav className="flex-1 overflow-y-auto px-3 py-4" aria-label="Main navigation">
           <NavLinks
+            scopedOnly={scopedOnly}
             role={role}
             collapsed={false}
             openByHref={openByHref}

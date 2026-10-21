@@ -8,6 +8,7 @@ export default function SessionBadge() {
   const router = useRouter();
   const [employee, setEmployee] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [storeName, setStoreName] = useState("");
 
   useEffect(() => {
     if (pathname === "/login" || pathname === "/clock") {
@@ -16,7 +17,7 @@ export default function SessionBadge() {
     let cancelled = false;
     fetch("/api/auth/me")
       .then((r) => (r.ok ? r.json() : { employee: null }))
-      .then((data) => { if (!cancelled) setEmployee(data.employee); })
+      .then((data) => { if (!cancelled) { setEmployee(data.employee); setStoreName(data.store?.name || ""); } })
       .catch(() => { if (!cancelled) setEmployee(null); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
@@ -35,6 +36,7 @@ export default function SessionBadge() {
   return (
     <div className="flex min-w-[80px] flex-col items-end gap-0.5 text-right text-[10px] leading-tight sm:text-xs">
       <span className="truncate font-medium">Logged in as: {employee.first_name}</span>
+      {storeName ? <span className="max-w-[160px] truncate text-[10px] text-white/85">{storeName}</span> : null}
       <button
         type="button"
         onClick={switchUser}

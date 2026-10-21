@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { compressImageFile } from "@/lib/image-compress";
 import ChecklistRoleSections from "./ChecklistRoleSections";
+import EquipmentChecklist from "@/components/equipment/EquipmentChecklist";
 
 function patchSections(sections, payload, completionPatch) {
   return sections.map((section) => ({
@@ -21,7 +22,7 @@ function patchSections(sections, payload, completionPatch) {
   }));
 }
 
-export default function ChecklistWidget({
+function DailyChecklist({
   /** Full daily view: all roles for today. */
   fullDay = false,
   showViewAll = false,
@@ -210,7 +211,7 @@ export default function ChecklistWidget({
     return (
       <div className="space-y-3">
         {error ? <p className="text-sm text-red-600">{error}</p> : null}
-        <ChecklistRoleSections
+        {sections.length ? <ChecklistRoleSections
           sections={sections}
           completionDate={data.date}
           onComplete={handleComplete}
@@ -219,7 +220,7 @@ export default function ChecklistWidget({
           onSaveNote={handleSaveNote}
           rowBusy={rowBusy}
           scrollableLists
-        />
+        /> : null}
       </div>
     );
   }
@@ -260,4 +261,8 @@ export default function ChecklistWidget({
       </div>
     </section>
   );
+}
+
+export default function ChecklistWidget(props) {
+  return <div className="space-y-3"><DailyChecklist {...props} /><EquipmentChecklist fullDay={props.fullDay} /></div>;
 }

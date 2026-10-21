@@ -12,6 +12,12 @@ function LoginForm() {
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [stores, setStores] = useState([]);
+  const [storeId, setStoreId] = useState("07462");
+
+  useEffect(() => {
+    fetch("/api/auth/stores").then((response) => response.json()).then((data) => setStores(data.stores || [])).catch(() => {});
+  }, []);
 
   const submitPin = useCallback(
     async (value) => {
@@ -22,7 +28,7 @@ function LoginForm() {
         const res = await fetch("/api/auth/login", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ pin: value }),
+          body: JSON.stringify({ pin: value, store_id: storeId }),
         });
         const data = await res.json();
         if (!res.ok || !data.ok) {
@@ -30,7 +36,8 @@ function LoginForm() {
           setPin("");
           return;
         }
-        router.replace(from.startsWith("/login") ? "/" : from);
+        const destination = from.startsWith("/") && !from.startsWith("//") && !from.startsWith("/login") ? from : "/";
+        router.replace(storeId === "07462" ? destination : "/database");
         router.refresh();
       } catch {
         setError("Login failed. Try again.");
@@ -39,7 +46,7 @@ function LoginForm() {
         setLoading(false);
       }
     },
-    [from, router]
+    [from, router, storeId]
   );
 
   useEffect(() => {
@@ -49,6 +56,8 @@ function LoginForm() {
   }, [pin, submitPin]);
 
   return (
+    <>
+    {stores.length > 1 ? <label className="mb-5 flex flex-col gap-2 text-sm font-semibold">Store<select aria-label="Store" className="rounded-lg border border-zinc-300 bg-white p-3 text-zinc-900" value={storeId} onChange={(event) => { setStoreId(event.target.value); setPin(""); setError(""); }} disabled={loading}>{stores.map((store) => <option key={store.id} value={store.id}>{store.name}{store.number ? ` · ${store.number}` : ""}</option>)}</select></label> : null}
     <PinPad
       pin={pin}
       onChange={(next) => {
@@ -60,6 +69,7 @@ function LoginForm() {
       title="Enter your PIN"
       subtitle="4-digit employee code"
     />
+    </>
   );
 }
 

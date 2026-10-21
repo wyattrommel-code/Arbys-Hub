@@ -1,6 +1,5 @@
 import { secureJson } from "@/lib/security/http";
-import { getCurrentEmployee } from "@/lib/auth";
-import { STORE_ID } from "@/lib/constants";
+import { requireStoreSession } from "@/lib/store-auth";
 import { employeeDisplayName, resolveCompletionShift } from "@/lib/checklist";
 import { getCurrentShift, getStoreToday } from "@/lib/store-time";
 import { getSupabaseServer } from "@/lib/supabase-server";
@@ -8,7 +7,8 @@ import { canChangeCompletion, completionInputError } from "@/lib/security/checkl
 import { isGm } from "@/lib/permissions";
 
 export async function POST(request) {
-  const employee = await getCurrentEmployee();
+  const { employee, store, error: accessError } = await requireStoreSession();
+  if (accessError) return accessError;
   if (!employee) {
     return secureJson({ error: "Unauthorized" }, { status: 401 });
   }
@@ -26,7 +26,7 @@ export async function POST(request) {
       .from("checklist_tasks")
       .select("*")
       .eq("id", task_id)
-      .eq("store_id", STORE_ID)
+      .eq("store_id", employee.store_id)
       .maybeSingle();
 
     if (taskErr) throw taskErr;
@@ -34,9 +34,9 @@ export async function POST(request) {
       return secureJson({ error: "Task not found" }, { status: 404 });
     }
 
-    const date = completion_date || getStoreToday();
-    const shift = shiftParam || resolveCompletionShift(task, getCurrentShift());
-    const validation = completionInputError(employee, task, date, shift, getStoreToday(), false);
+    const date = completion_date || getStoreToday(new Date(), store.timezone);
+    const shift = shiftParam || resolveCompletionShift(task, getCurrentShift(new Date(), store.timezone));
+    const validation = completionInputError(employee, task, date, shift, getStoreToday(new Date(), store.timezone), false);
     if (validation || body.photo_url) return secureJson({ error: validation || "Use the upload endpoint for photos" }, { status: 403 });
     const name = employeeDisplayName(employee);
     const now = new Date().toISOString();
@@ -47,7 +47,7 @@ export async function POST(request) {
     const { data, error } = await supabase
       .from("checklist_completions")
       .insert({
-        store_id: STORE_ID,
+        store_id: employee.store_id,
         task_id,
         completion_date: date,
         shift,
@@ -69,14 +69,14 @@ export async function POST(request) {
           .eq("task_id", task_id)
           .eq("completion_date", date)
           .eq("shift", shift)
-          .eq("store_id", STORE_ID)
+          .eq("store_id", employee.store_id)
           .maybeSingle();
         if (existing?.id && noteText && canChangeCompletion(employee, existing)) {
           await supabase
             .from("checklist_completions")
             .update({ notes: noteText })
             .eq("id", existing.id)
-            .eq("store_id", STORE_ID);
+            .eq("store_id", employee.store_id);
           const { data: merged } = await supabase
             .from("checklist_completions")
             .select("*")
@@ -96,7 +96,8 @@ export async function POST(request) {
 }
 
 export async function PATCH(request) {
-  const employee = await getCurrentEmployee();
+  const { employee, store, error: accessError } = await requireStoreSession();
+  if (accessError) return accessError;
   if (!employee) {
     return secureJson({ error: "Unauthorized" }, { status: 401 });
   }
@@ -113,14 +114,14 @@ export async function PATCH(request) {
 
     const supabase = getSupabaseServer();
     const { data: existing, error: readError } = await supabase.from("checklist_completions")
-      .select("completed_by_employee_id").eq("id", completion_id).eq("store_id", STORE_ID).maybeSingle();
+      .select("completed_by_employee_id").eq("id", completion_id).eq("store_id", employee.store_id).maybeSingle();
     if (readError) throw readError;
     if (!canChangeCompletion(employee, existing)) return secureJson({ error: "Forbidden" }, { status: 403 });
     let query = supabase
       .from("checklist_completions")
       .update({ notes: noteText })
       .eq("id", completion_id)
-      .eq("store_id", STORE_ID);
+      .eq("store_id", employee.store_id);
     if (!isGm(employee.role)) query = query.eq("completed_by_employee_id", employee.employee_id);
     const { data, error } = await query.select().single();
 
@@ -132,7 +133,8 @@ export async function PATCH(request) {
 }
 
 export async function DELETE(request) {
-  const employee = await getCurrentEmployee();
+  const { employee, store, error: accessError } = await requireStoreSession();
+  if (accessError) return accessError;
   if (!employee) {
     return secureJson({ error: "Unauthorized" }, { status: 401 });
   }
@@ -148,7 +150,7 @@ export async function DELETE(request) {
         .from("checklist_completions")
         .delete()
         .eq("id", completion_id)
-        .eq("store_id", STORE_ID);
+        .eq("store_id", employee.store_id);
       if (!isGm(employee.role)) query = query.eq("completed_by_employee_id", employee.employee_id);
       const { error } = await query;
       if (error) throw error;
@@ -165,7 +167,7 @@ export async function DELETE(request) {
       .eq("task_id", task_id)
       .eq("shift", shift)
       .eq("completion_date", completion_date)
-      .eq("store_id", STORE_ID);
+      .eq("store_id", employee.store_id);
     if (!isGm(employee.role)) query = query.eq("completed_by_employee_id", employee.employee_id);
     const { error } = await query;
 

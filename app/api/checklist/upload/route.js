@@ -1,13 +1,14 @@
 import { secureJson } from "@/lib/security/http";
-import { getCurrentEmployee } from "@/lib/auth";
-import { CHECKLIST_PHOTOS_BUCKET, STORE_ID } from "@/lib/constants";
+import { requireStoreSession } from "@/lib/store-auth";
+import { CHECKLIST_PHOTOS_BUCKET } from "@/lib/constants";
 import { resolveCompletionShift } from "@/lib/checklist";
 import { getCurrentShift, getStoreToday } from "@/lib/store-time";
 import { getSupabaseServer } from "@/lib/supabase-server";
 import { canChangeCompletion, completionInputError } from "@/lib/security/checklist-policy";
 
 export async function POST(request) {
-  const employee = await getCurrentEmployee();
+  const { employee, store, error: accessError } = await requireStoreSession();
+  if (accessError) return accessError;
   if (!employee) {
     return secureJson({ error: "Unauthorized" }, { status: 401 });
   }
@@ -17,7 +18,7 @@ export async function POST(request) {
     const file = formData.get("file");
     const taskId = formData.get("task_id");
     const shiftParam = formData.get("shift");
-    const completionDate = formData.get("completion_date") || getStoreToday();
+    const completionDate = formData.get("completion_date") || getStoreToday(new Date(), store.timezone);
     const notesRaw = formData.get("notes");
     const noteText =
       typeof notesRaw === "string" && notesRaw.trim() ? notesRaw.trim() : null;
@@ -34,7 +35,7 @@ export async function POST(request) {
       .from("checklist_tasks")
       .select("*")
       .eq("id", taskId)
-      .eq("store_id", STORE_ID)
+      .eq("store_id", employee.store_id)
       .maybeSingle();
 
     if (taskErr) throw taskErr;
@@ -42,11 +43,11 @@ export async function POST(request) {
       return secureJson({ error: "Task not found" }, { status: 404 });
     }
 
-    const shift = shiftParam || resolveCompletionShift(task, getCurrentShift());
-    const validation = completionInputError(employee, task, String(completionDate), String(shift), getStoreToday(), true);
+    const shift = shiftParam || resolveCompletionShift(task, getCurrentShift(new Date(), store.timezone));
+    const validation = completionInputError(employee, task, String(completionDate), String(shift), getStoreToday(new Date(), store.timezone), true);
     if (validation) return secureJson({ error: validation }, { status: 403 });
     const timestamp = Date.now();
-    const path = `${STORE_ID}/${completionDate}/${taskId}-${timestamp}.jpg`;
+    const path = `${employee.store_id}/${completionDate}/${taskId}-${timestamp}.jpg`;
 
     const buffer = Buffer.from(await file.arrayBuffer());
     const { error: uploadErr } = await supabase.storage
@@ -67,7 +68,7 @@ export async function POST(request) {
     const { data: completion, error: insertErr } = await supabase
       .from("checklist_completions")
       .insert({
-        store_id: STORE_ID,
+        store_id: employee.store_id,
         task_id: taskId,
         completion_date: completionDate,
         shift,
@@ -89,14 +90,14 @@ export async function POST(request) {
           .eq("task_id", taskId)
           .eq("completion_date", completionDate)
           .eq("shift", shift)
-          .eq("store_id", STORE_ID)
+          .eq("store_id", employee.store_id)
           .maybeSingle();
         if (existing?.id && noteText && canChangeCompletion(employee, existing)) {
           await supabase
             .from("checklist_completions")
             .update({ notes: noteText })
             .eq("id", existing.id)
-            .eq("store_id", STORE_ID);
+            .eq("store_id", employee.store_id);
           const { data: merged } = await supabase
             .from("checklist_completions")
             .select("*")

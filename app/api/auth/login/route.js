@@ -2,9 +2,9 @@ import { guardPinAttempt } from "@/lib/security/pin-guard";
 import { secureJson } from "@/lib/security/http";
 import { hubRoleFromAccessTier } from "@/lib/access-tier";
 import { STORE_ID } from "@/lib/constants";
-import { fetchEmployeeByPin } from "@/lib/employees";
 import { getEffectiveAccess } from "@/lib/roles";
 import { getSupabaseServer } from "@/lib/supabase-server";
+import { resolveStoreAccess } from "@/lib/store-access-server";
 import {
   SESSION_COOKIE,
   createSessionToken,
@@ -23,7 +23,9 @@ export async function POST(request) {
     }
 
     const supabase = getSupabaseServer();
-    const employee = await fetchEmployeeByPin(supabase, pin, STORE_ID);
+    const storeId = typeof body.store_id === "string" && body.store_id ? body.store_id : STORE_ID;
+    const { data: employee, error: lookupError } = await supabase.rpc("get_hub_store_login", { p_store: storeId, p_pin: pin });
+    if (lookupError) throw lookupError;
 
     if (!employee) {
       return secureJson({ ok: false, error: "Invalid PIN" }, { status: 401 });
@@ -33,12 +35,14 @@ export async function POST(request) {
     if (tier === "none") return secureJson({ ok: false, error: "Invalid PIN" }, { status: 401 });
     const accessRole = hubRoleFromAccessTier(tier);
 
-    const sessionEmployee = {
+    const context = await resolveStoreAccess(supabase, {
       employee_id: employee.id,
       first_name: employee.first_name,
       last_name: employee.last_name,
       role: accessRole,
-    };
+      store_id: storeId,
+    });
+    const sessionEmployee = context.employee;
 
     const token = await createSessionToken(sessionEmployee);
     const response = secureJson({ ok: true, employee: sessionEmployee });

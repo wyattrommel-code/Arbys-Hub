@@ -1,5 +1,8 @@
 import { secureJson } from "@/lib/security/http";
 import { getCurrentEmployee } from "@/lib/auth";
+import { getSupabaseServer } from "@/lib/supabase-server";
+import { publicStore, resolveStoreAccess } from "@/lib/store-access-server";
+import { resourceApiError } from "@/lib/resources-api";
 import {
   SESSION_COOKIE,
   createSessionToken,
@@ -11,17 +14,10 @@ export async function GET() {
   if (!employee) {
     return secureJson({ employee: null }, { status: 401 });
   }
-  const role = employee.role;
-  const next = { ...employee, role, access_tier: role };
-  const response = secureJson({ employee: next });
-  {
-    const token = await createSessionToken({
-      employee_id: employee.employee_id,
-      first_name: employee.first_name,
-      last_name: employee.last_name,
-      role,
-    });
-    response.cookies.set(SESSION_COOKIE, token, sessionCookieOptions());
-  }
-  return response;
+  try {
+    const context = await resolveStoreAccess(getSupabaseServer(), employee);
+    const response = secureJson({ employee: { ...context.employee, access_tier: context.employee.role }, store: publicStore(context.store) });
+    response.cookies.set(SESSION_COOKIE, await createSessionToken(context.employee), sessionCookieOptions());
+    return response;
+  } catch (error) { return resourceApiError(error); }
 }
