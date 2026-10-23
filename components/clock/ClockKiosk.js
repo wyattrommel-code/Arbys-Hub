@@ -13,7 +13,7 @@ import PinPad from "@/components/PinPad";
 import { clockFetch, rememberOnlinePin } from "@/lib/offline-clock-store";
 import { STORE_TIMEZONE } from "@/lib/constants";
 import { formatClock } from "@/lib/schedule";
-import { formatStoreTime, getStoreToday } from "@/lib/store-time";
+import { formatStoreTime } from "@/lib/store-time";
 
 import { CORRECTION_LABELS, correctionTypes } from "@/lib/clock-corrections";
 import { toStoreDateTimeLocal } from "@/lib/store-time";
@@ -65,15 +65,13 @@ function firstLetter(name) {
 // Only the time display redraws each second, not the roster/PIN/camera screen.
 function LiveClock() {
   const [clock, setClock] = useState("");
-  const [today, setToday] = useState("");
   useEffect(() => {
-    const update = () => { setClock(nowLabel()); setToday(getStoreToday()); };
+    const update = () => setClock(nowLabel());
     update();
     const id = window.setInterval(update, 1000);
     return () => window.clearInterval(id);
   }, []);
-  return <><p className="mt-2 text-lg tabular-nums text-zinc-600 dark:text-zinc-300">{clock || "\u00a0"}</p>
-    <p className="text-sm text-zinc-400">{today || "\u00a0"}</p></>;
+  return <p className="text-xs tabular-nums text-zinc-600 dark:text-zinc-300">{clock || "\u00a0"}</p>;
 }
 
 export default function ClockKiosk() {
@@ -260,7 +258,7 @@ export default function ClockKiosk() {
         rememberOnlinePin(employee.id,value,data.offlinePin?.version).then(() => {
           window.dispatchEvent(new CustomEvent('clock-pin-cache-failed',{detail:''}));
         }).catch(() => {
-          window.dispatchEvent(new CustomEvent('clock-pin-cache-failed',{detail:'Online clocking works, but this PIN could not be prepared for offline use. Keep the iPad connected and try again.'}));
+          window.dispatchEvent(new CustomEvent('clock-pin-cache-failed',{detail:'Online clocking works, but this PIN could not be prepared for offline use. Keep the browser connected and try again.'}));
         });
         setSession(data);
         setStep("actions");
@@ -386,107 +384,46 @@ export default function ClockKiosk() {
   const onBreak = Boolean(session ? session.on_break : selected?.on_break);
 
   return (
-    <section className="relative flex h-dvh min-h-0 w-full flex-col overflow-hidden">
+    <section className="relative flex min-h-0 w-full flex-1 flex-col overflow-hidden">
       <CameraWarmup active={sheetOpen && step !== 'done' && step !== 'correction_done'} />
-      <header className="shrink-0 px-4 pb-3 pt-5 text-center">
-        <p className="text-sm font-semibold uppercase tracking-widest text-[#C8102E]">Arby&apos;s Hub</p>
-        <h1 className="mt-1 text-3xl font-bold text-zinc-900 dark:text-zinc-50">Time Clock</h1>
-        <LiveClock />
-        {syncedAt ? (
-          <p className="mt-1 text-xs text-zinc-400">Synced at {syncedLabel(syncedAt)}</p>
-        ) : null}
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
+        <h1 className="text-lg font-bold"><span className="text-[#C8102E]">Arby&apos;s</span> Time Clock</h1>
+        <div className="text-right" title={syncedAt ? 'Synced at ' + syncedLabel(syncedAt) : undefined}><LiveClock /></div>
       </header>
-
-      <div className="shrink-0 px-4 pb-3">
-        <label className="sr-only" htmlFor="clock-search">
-          Search employees
-        </label>
-        <input
-          id="clock-search"
-          type="search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search by name"
-          autoComplete="off"
-          className="h-14 w-full rounded-2xl border border-zinc-300 bg-white px-4 text-lg dark:border-zinc-700 dark:bg-zinc-900"
-        />
-      </div>
-
-      {listError ? (
-        <p className="px-4 pb-2 text-center text-sm font-medium text-red-600" role="alert">
-          {listError}
-        </p>
-      ) : null}
-
-      <div className="flex min-h-0 flex-1">
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-8 pr-2">
-          {loading && !employees.length ? (
-            <p className="py-16 text-center text-base text-zinc-500">Loading roster…</p>
-          ) : !filtered.length ? (
-            <p className="py-16 text-center text-base text-zinc-500">No matching employees.</p>
-          ) : (
-            grouped.map(([letter, rows]) => (
-              <div
-                key={letter}
-                ref={(node) => {
-                  sectionRefs.current[letter] = node;
-                }}
-              >
-                <p className="sticky top-0 z-10 bg-zinc-50/95 py-1 text-sm font-bold text-zinc-500 dark:bg-zinc-950/95">
-                  {letter}
-                </p>
-                <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
-                  {rows.map((emp) => (
-                    <li key={emp.id}>
-                      <button
-                        type="button"
-                        onClick={() => tapEmployee(emp)}
-                        className="flex min-h-20 w-full items-center gap-4 py-3 text-left"
-                      >
-                        <EmployeeAvatar name={emp.name} src={emp.profile_photo_url} size="lg" />
-                        <span className="min-w-0 flex-1 text-xl font-semibold text-zinc-900 dark:text-zinc-50">
-                          {emp.name}
-                        </span>
-                        <StatusPill clockedIn={emp.clocked_in} onBreak={emp.on_break} />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))
-          )}
+      {!sheetOpen && <>
+        <div className="flex shrink-0 items-center gap-3 px-3 py-2">
+          <label className="sr-only" htmlFor="clock-search">Search employees</label>
+          <input id="clock-search" type="search" value={query} onChange={e => setQuery(e.target.value)}
+            placeholder="Search by name" autoComplete="off"
+            className="h-10 min-w-0 flex-1 rounded-lg border border-zinc-300 bg-white px-3 text-sm dark:border-zinc-700 dark:bg-zinc-900" />
+          <p className="shrink-0 text-xs text-zinc-500">{filtered.length} employees</p>
         </div>
-        <nav
-          aria-label="Jump to letter"
-          className="flex w-11 shrink-0 flex-col items-center justify-center gap-0 overflow-y-auto border-l border-zinc-200 bg-zinc-100/80 py-2 dark:border-zinc-800 dark:bg-zinc-900/80"
-        >
-          {presentLetters.has("#") ? (
-            <button
-              type="button"
-              onClick={() => jumpTo("#")}
-              className="min-h-5 text-[11px] font-bold text-[#C8102E]"
-            >
-              #
-            </button>
-          ) : null}
-          {LETTERS.map((letter) => (
-            <button
-              key={letter}
-              type="button"
-              disabled={!presentLetters.has(letter)}
-              onClick={() => jumpTo(letter)}
-              className={`min-h-5 text-[11px] font-bold ${
-                presentLetters.has(letter) ? "text-[#C8102E]" : "text-zinc-300 dark:text-zinc-700"
-              }`}
-            >
-              {letter}
-            </button>
-          ))}
+        {listError && <p className="px-3 pb-2 text-sm font-medium text-red-600" role="alert">{listError}</p>}
+        <nav aria-label="Jump to letter" className="flex shrink-0 flex-wrap gap-1 px-3 pb-2">
+          {[...(presentLetters.has('#') ? ['#'] : []), ...LETTERS].filter(letter => presentLetters.has(letter)).map(letter =>
+            <button key={letter} type="button" onClick={() => jumpTo(letter)}
+              className="h-7 min-w-7 rounded border border-zinc-200 px-2 text-xs font-semibold text-[#C8102E] hover:bg-zinc-200 dark:border-zinc-700 dark:hover:bg-zinc-800">{letter}</button>)}
         </nav>
-      </div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-3">
+          {loading && !employees.length ? <p className="py-6 text-center text-sm text-zinc-500">Loading roster…</p>
+            : !filtered.length ? <p className="py-6 text-center text-sm text-zinc-500">No matching employees.</p>
+            : <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+              {grouped.flatMap(([letter, rows]) => rows.map((emp, index) => <li key={emp.id}
+                ref={index === 0 ? node => { sectionRefs.current[letter] = node; } : undefined}>
+                <button type="button" onClick={() => tapEmployee(emp)}
+                  className="flex min-h-11 w-full items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-left hover:border-zinc-400 hover:bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800">
+                  <EmployeeAvatar name={emp.name} src={emp.profile_photo_url} size="sm" />
+                  <span className="min-w-0 flex-1 break-words text-sm font-semibold">{emp.name}</span>
+                  <StatusPill clockedIn={emp.clocked_in} onBreak={emp.on_break} />
+                </button>
+              </li>))}
+            </ul>}
+        </div>
+      </>}
 
       {sheetOpen ? (
-        <div className="absolute inset-0 z-20 flex flex-col overflow-y-auto bg-zinc-50 px-4 py-6 dark:bg-zinc-950">
+        <div key={step} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3">
+          <div className={'mx-auto flex w-full flex-col ' + (step === 'pin' ? 'max-w-xs' : 'max-w-md')}>
           {step === "pin" && selected ? (
             <>
               <PunchHeader employee={selected} clockedIn={clockedIn} onBreak={onBreak} />
@@ -498,13 +435,13 @@ export default function ClockKiosk() {
                 }}
                 error={error}
                 loading={loading}
-                size="kiosk"
+                size="compact"
                 title="Enter your PIN"
-                subtitle="Confirms it's you"
+                subtitle="Type your PIN or use the keypad"
               />
               <button
                 type="button"
-                className="mt-6 min-h-12 w-full rounded-2xl border border-zinc-300 text-base font-semibold dark:border-zinc-700"
+                className="mt-3 min-h-11 w-full rounded-lg border border-zinc-300 text-base font-semibold dark:border-zinc-700"
                 onClick={reset}
               >
                 Cancel
@@ -538,13 +475,13 @@ export default function ClockKiosk() {
                   setError("");
                   setStep("manager_pin");
                 }}
-                className="mt-8 min-h-16 w-full rounded-2xl bg-[#C8102E] text-xl font-bold text-white disabled:opacity-40"
+                className="mt-4 min-h-11 w-full rounded-lg bg-[#C8102E] text-lg font-bold text-white disabled:opacity-40"
               >
                 Manager authorize
               </button>
               <button
                 type="button"
-                className="mt-3 min-h-12 w-full rounded-2xl border border-zinc-300 text-base font-semibold dark:border-zinc-700"
+                className="mt-3 min-h-11 w-full rounded-lg border border-zinc-300 text-base font-semibold dark:border-zinc-700"
                 onClick={reset}
               >
                 Cancel
@@ -566,7 +503,7 @@ export default function ClockKiosk() {
                 }}
                 error={error}
                 loading={loading}
-                size="kiosk"
+                size="compact"
                 title="Manager authorize"
                 subtitle="GM or assistant manager PIN"
               /></>}
@@ -574,13 +511,13 @@ export default function ClockKiosk() {
                 type="button"
                 disabled={loading || (!session?.canSelfAuthorize && managerPin.length !== 4)}
                 onClick={continueAfterManagerPin}
-                className="mt-8 min-h-16 w-full rounded-2xl bg-[#C8102E] text-xl font-bold text-white disabled:opacity-40"
+                className="mt-4 min-h-11 w-full rounded-lg bg-[#C8102E] text-lg font-bold text-white disabled:opacity-40"
               >
                 Authorize & continue
               </button>
               <button
                 type="button"
-                className="mt-3 min-h-12 w-full rounded-2xl border border-zinc-300 text-base font-semibold dark:border-zinc-700"
+                className="mt-3 min-h-11 w-full rounded-lg border border-zinc-300 text-base font-semibold dark:border-zinc-700"
                 onClick={reset}
               >
                 Cancel
@@ -595,47 +532,47 @@ export default function ClockKiosk() {
               {error && <p role="alert" className="mt-4 text-center text-red-700">{error}</p>}
               {onBreak ? (
                 <>
-                  <button disabled={loading} onClick={() => submitBreak("end")} className="mt-6 min-h-16 rounded-2xl bg-amber-500 text-xl font-bold text-white disabled:opacity-40">End Break</button>
+                  <button disabled={loading} onClick={() => submitBreak("end")} className="mt-3 min-h-11 rounded-lg bg-amber-500 text-lg font-bold text-white disabled:opacity-40">End Break</button>
                   <ClockScheduleNotice action="break_end" context={session.clock_schedule} settings={session.settings} />
                 </>
               ) : (
                 <>
                   {clockedIn && session.settings?.use_break_punches && <>
-                    <button disabled={loading} onClick={() => submitBreak("start")} className="mt-6 min-h-16 rounded-2xl bg-amber-500 text-xl font-bold text-white disabled:opacity-40">Start Break</button>
+                    <button disabled={loading} onClick={() => submitBreak("start")} className="mt-3 min-h-11 rounded-lg bg-amber-500 text-lg font-bold text-white disabled:opacity-40">Start Break</button>
                     <ClockScheduleNotice action="break_start" context={session.clock_schedule} settings={session.settings} />
                   </>}
                   <button disabled={loading} onClick={() => {
                     if (!clockedIn && session.needsAuthorization) setStep("unscheduled");
                     else beginPunch();
-                  }} className="mt-3 min-h-16 rounded-2xl bg-[#C8102E] text-xl font-bold text-white disabled:opacity-40">{clockedIn ? "Clock Out" : "Clock In"}</button>
+                  }} className="mt-3 min-h-11 rounded-lg bg-[#C8102E] text-lg font-bold text-white disabled:opacity-40">{clockedIn ? "Clock Out" : "Clock In"}</button>
                   {clockedIn && <ClockScheduleNotice action="clock_out" context={session.clock_schedule} settings={session.settings} />}
                 </>
               )}
-              <p className="mt-8 text-center font-semibold">Missed a punch?</p>
+              <p className="mt-4 text-center font-semibold">Missed a punch?</p>
               {correctionTypes(session).map(type => <button key={type} disabled={loading} onClick={() => {
                 setCorrection({ type, claimed_time: toStoreDateTimeLocal(new Date().toISOString()).slice(0,16), reason: "" });
                 setError(""); setStep("correction");
-              }} className="mt-3 min-h-14 rounded-2xl border-2 border-[#C8102E] px-3 text-lg font-semibold text-[#C8102E] disabled:opacity-40">{CORRECTION_LABELS[type]}</button>)}
-              <button disabled={loading} onClick={reset} className="mt-6 min-h-12 rounded-2xl border border-zinc-300 font-semibold">Cancel</button>
+              }} className="mt-3 min-h-11 rounded-lg border-2 border-[#C8102E] px-3 text-lg font-semibold text-[#C8102E] disabled:opacity-40">{CORRECTION_LABELS[type]}</button>)}
+              <button disabled={loading} onClick={reset} className="mt-3 min-h-11 rounded-lg border border-zinc-300 font-semibold">Cancel</button>
             </>
           ) : null}
 
           {step === "correction" && correction ? (
             <form onSubmit={event => { event.preventDefault(); setError(""); setStep("correction_photo"); }} className="mx-auto w-full max-w-lg">
               <PunchHeader employee={selected} clockedIn={clockedIn} onBreak={onBreak} />
-              <h2 className="mt-5 text-center text-2xl font-bold">{CORRECTION_LABELS[correction.type]}</h2>
+              <h2 className="mt-3 text-center text-lg font-bold">{CORRECTION_LABELS[correction.type]}</h2>
               <CorrectionContext type={correction.type} clockIn={session?.openPunch?.clock_in} breakStart={session?.openBreak?.break_start} lastClockOut={session?.last_clock_out} />
               <p className="mt-3 text-center">Your status updates immediately. A GM or assistant manager must review the corrected timecard.</p>
-              <label className="mt-5 block font-semibold">Actual date and time (restaurant time)
-                <input type="datetime-local" required value={correction.claimed_time} max={toStoreDateTimeLocal(new Date().toISOString()).slice(0,16)} onChange={e => setCorrection({ ...correction, claimed_time: e.target.value })} className="mt-2 min-h-14 w-full rounded-xl border border-zinc-300 p-3 dark:bg-zinc-900" />
+              <label className="mt-3 block font-semibold">Actual date and time (restaurant time)
+                <input type="datetime-local" required value={correction.claimed_time} max={toStoreDateTimeLocal(new Date().toISOString()).slice(0,16)} onChange={e => setCorrection({ ...correction, claimed_time: e.target.value })} className="mt-2 min-h-11 w-full rounded-xl border border-zinc-300 p-3 dark:bg-zinc-900" />
               </label>
               <p className="mt-1 text-sm text-zinc-500">Up to 7 days ago. For older corrections, contact your manager.</p>
               <label className="mt-4 block font-semibold">What happened?
                 <textarea required minLength={3} maxLength={1000} rows={3} value={correction.reason} onChange={e => setCorrection({ ...correction, reason: e.target.value })} className="mt-2 w-full rounded-xl border border-zinc-300 p-3 dark:bg-zinc-900" />
               </label>
               {error && <p role="alert" className="mt-3 text-red-700">{error}</p>}
-              <button disabled={loading} className="mt-5 min-h-16 w-full rounded-2xl bg-[#C8102E] text-xl font-bold text-white disabled:opacity-40">Continue to photo</button>
-              <button type="button" disabled={loading} onClick={() => { setStep("actions"); setError(""); }} className="mt-3 min-h-12 w-full rounded-2xl border border-zinc-300 font-semibold">Back</button>
+              <button disabled={loading} className="mt-3 min-h-11 w-full rounded-lg bg-[#C8102E] text-lg font-bold text-white disabled:opacity-40">Continue to photo</button>
+              <button type="button" disabled={loading} onClick={() => { setStep("actions"); setError(""); }} className="mt-3 min-h-11 w-full rounded-lg border border-zinc-300 font-semibold">Back</button>
             </form>
           ) : null}
 
@@ -650,10 +587,10 @@ export default function ClockKiosk() {
 
           {step === "correction_done" ? (
             <div className="m-auto text-center">
-              <h2 className="text-3xl font-bold text-green-700">Missed time saved</h2>
-              <p className="mt-4 text-xl">{result?.on_break ? "You are now on break." : result?.clocked_in ? "You are now clocked in and working." : "You are now clocked out."}</p>
+              <h2 className="text-lg font-bold text-green-700">Missed time saved</h2>
+              <p className="mt-4 text-lg">{result?.on_break ? "You are now on break." : result?.clocked_in ? "You are now clocked in and working." : "You are now clocked out."}</p>
               <p className="mt-3">Your timecard is flagged for manager review.</p>
-              <button onClick={reset} className="mt-6 min-h-14 w-full rounded-2xl bg-[#C8102E] px-6 text-lg font-bold text-white">Done</button>
+              <button onClick={reset} className="mt-3 min-h-11 w-full rounded-lg bg-[#C8102E] px-6 text-lg font-bold text-white">Done</button>
             </div>
           ) : null}
 
@@ -703,7 +640,7 @@ export default function ClockKiosk() {
                       ? "Break ended"
                       : "Clocked in"}
               </p>
-              <p className="mt-3 text-3xl font-bold text-zinc-900 dark:text-zinc-50">
+              <p className="mt-3 text-lg font-bold text-zinc-900 dark:text-zinc-50">
                 {result.action === "clock_out"
                   ? `Clocked out — ${formatWorkedHoursLabel(result.workedMinutes)}`
                   : result.action === "break_start"
@@ -716,12 +653,13 @@ export default function ClockKiosk() {
               <button
                 type="button"
                 onClick={reset}
-                className="mt-10 min-h-16 w-full max-w-md rounded-2xl bg-[#C8102E] text-xl font-bold text-white"
+                className="mt-4 min-h-11 w-full max-w-md rounded-lg bg-[#C8102E] text-lg font-bold text-white"
               >
                 Done
               </button>
             </div>
           ) : null}
+          </div>
         </div>
       ) : null}
     </section>
@@ -731,14 +669,14 @@ export default function ClockKiosk() {
 function StatusPill({ clockedIn, onBreak }) {
   if (onBreak) {
     return (
-      <span className="inline-flex shrink-0 min-w-[3.5rem] items-center justify-center rounded-full bg-amber-100 px-3 py-1 text-sm font-bold text-amber-900">
+      <span className="inline-flex shrink-0 min-w-10 items-center justify-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-900">
         BREAK
       </span>
     );
   }
   return (
     <span
-      className={`inline-flex shrink-0 min-w-[3.5rem] items-center justify-center rounded-full px-3 py-1 text-sm font-bold ${
+      className={`inline-flex shrink-0 min-w-10 items-center justify-center rounded-full px-2 py-0.5 text-[11px] font-bold ${
         clockedIn
           ? "bg-emerald-100 text-emerald-800"
           : "bg-zinc-300 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200"
@@ -752,10 +690,10 @@ function StatusPill({ clockedIn, onBreak }) {
 function PunchHeader({ employee, clockedIn, onBreak }) {
   if (!employee) return null;
   return (
-    <div className="mb-4 flex flex-col items-center text-center">
-      <EmployeeAvatar name={employee.name} src={employee.profile_photo_url} size="xl" />
-      <p className="mt-3 text-2xl font-bold text-zinc-900 dark:text-zinc-50">{employee.name}</p>
-      <div className="mt-2">
+    <div className="mb-3 flex items-center gap-2 border-b border-zinc-200 pb-3 dark:border-zinc-800">
+      <EmployeeAvatar name={employee.name} src={employee.profile_photo_url} size="sm" />
+      <p className="min-w-0 flex-1 break-words text-base font-bold text-zinc-900 dark:text-zinc-50">{employee.name}</p>
+      <div>
         <StatusPill clockedIn={clockedIn} onBreak={onBreak} />
       </div>
     </div>

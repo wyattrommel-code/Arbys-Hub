@@ -103,7 +103,7 @@ export default function FaceCapture({ actionLabel = "Clock in", onConfirm, onCan
         void tick();
       } catch (err) {
         if (!cancelled) setCameraError(err?.name === 'NotAllowedError'
-          ? 'Camera access is blocked. In Safari, open the page menu → Website Settings → Camera → Allow, then try again.'
+          ? 'Camera access is blocked. Open this browser’s site permissions, allow Camera, then try again.'
           : err?.message || 'Camera unavailable. Try again.');
       }
     }
@@ -144,9 +144,9 @@ export default function FaceCapture({ actionLabel = "Clock in", onConfirm, onCan
   const locked = busy || capturing || submitting || submitted;
   return (
     <div className="flex flex-col items-center">
-      <div className="relative w-full overflow-hidden rounded-2xl bg-black">
-        {photo ? <Image src={photo.url} alt="Captured photo" width={frameSize.width} height={frameSize.height} unoptimized loading="eager" className="h-[min(52vh,420px)] w-full object-contain" style={{ transform: 'scaleX(-1)' }} />
-          : <video ref={videoRef} className="h-[min(52vh,420px)] w-full object-contain" style={{ transform: "scaleX(-1)" }}
+      <div className="relative w-full overflow-hidden rounded-lg bg-black">
+        {photo ? <Image src={photo.url} alt="Captured photo" width={frameSize.width} height={frameSize.height} unoptimized loading="eager" className="h-[min(42dvh,300px)] w-full object-contain" style={{ transform: 'scaleX(-1)' }} />
+          : <video ref={videoRef} className="h-[min(42dvh,300px)] w-full object-contain" style={{ transform: "scaleX(-1)" }}
           playsInline muted autoPlay onLoadedData={() => setReady(true)}
           onResize={event => setFrameSize({ width: event.currentTarget.videoWidth, height: event.currentTarget.videoHeight })}
           aria-label="Camera preview" />}
@@ -158,15 +158,17 @@ export default function FaceCapture({ actionLabel = "Clock in", onConfirm, onCan
         </svg>
       </div>
       {cameraError && <p className="mt-4 text-center text-base font-medium text-red-600" role="alert">{cameraError}</p>}
-      {cameraError && !photo && <button type="button" disabled={locked} onClick={() => setAttempt(value => value + 1)} className="mt-3 min-h-12 w-full rounded-xl border font-semibold">Try camera again</button>}
+      {cameraError && !photo && <button type="button" disabled={locked} onClick={() => setAttempt(value => value + 1)} className="mt-3 min-h-11 w-full rounded-xl border font-semibold">Try camera again</button>}
       <button type="button" disabled={locked || !photo} onClick={confirm}
-        className="mt-6 min-h-16 w-full rounded-2xl bg-[#C8102E] text-xl font-bold text-white disabled:cursor-not-allowed disabled:bg-zinc-300 disabled:text-zinc-500 dark:disabled:bg-zinc-700 dark:disabled:text-zinc-400">
+        className="mt-3 min-h-11 w-full rounded-lg bg-[#C8102E] text-base font-bold text-white disabled:cursor-not-allowed disabled:bg-zinc-300 disabled:text-zinc-500 dark:disabled:bg-zinc-700 dark:disabled:text-zinc-400">
         {actionLabel}
       </button>
+      <div className="mt-2 flex w-full gap-2">
       {photo && <button type="button" disabled={locked} onClick={() => setPhoto(null)}
-        className="mt-3 min-h-12 w-full rounded-2xl border border-zinc-300 text-base font-semibold dark:border-zinc-700">Retake photo</button>}
+        className="min-h-11 flex-1 rounded-lg border border-zinc-300 text-base font-semibold dark:border-zinc-700">Retake photo</button>}
       <button type="button" disabled={locked} onClick={onCancel}
-        className="mt-3 min-h-12 w-full rounded-2xl border border-zinc-300 text-base font-semibold dark:border-zinc-700">Cancel</button>
+        className="min-h-11 flex-1 rounded-lg border border-zinc-300 text-base font-semibold dark:border-zinc-700">Cancel</button>
+      </div>
     </div>
   );
 }

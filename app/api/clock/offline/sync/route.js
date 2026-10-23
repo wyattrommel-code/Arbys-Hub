@@ -20,10 +20,10 @@ export async function POST(request) {
     if(!photo || typeof photo==='string' || photo.type!=='image/jpeg' || photo.size<4 || photo.size>3*1024*1024) throw new Error('Invalid photo.');
     bytes=Buffer.from(await photo.arrayBuffer());
     if(bytes[0]!==255 || bytes[1]!==216 || bytes[2]!==255 || bytes.at(-2)!==255 || bytes.at(-1)!==217) throw new Error('Invalid photo.');
-  } catch { return secureJson({ok:false,error:'The saved punch or photo could not be read. Keep it on this iPad and ask your manager for help.'},{status:400}); }
+  } catch { return secureJson({ok:false,error:'The saved punch or photo could not be read. Keep it in this browser and ask your manager for help.'},{status:400}); }
   try {
     const db=getSupabaseServer(), deviceHash=hashCredential((await cookies()).get(DEVICE_COOKIE).value);
-    if(!verifyOfflineLease(form.get('lease'),deviceHash,event.captured_at)) return secureJson({ok:false,error:'This offline punch belongs to a different or invalid iPad authorization. Keep it saved for your manager.'},{status:403});
+    if(!verifyOfflineLease(form.get('lease'),deviceHash,event.captured_at)) return secureJson({ok:false,error:'This offline punch belongs to a different or invalid browser authorization. Keep it saved for your manager.'},{status:403});
     const fingerprint=createHash('sha256').update(JSON.stringify(event)).update(bytes).update(String(form.get('sealed_pin'))).update(String(form.get('face_detected'))).digest('hex');
     const existing=await db.from('clock_offline_events').select('id,status,device_hash,fingerprint').eq('id',event.id).maybeSingle();
     if(existing.error) throw existing.error;
@@ -49,7 +49,7 @@ export async function POST(request) {
         }
       }
     }
-    if(Date.parse(event.captured_at)>Date.now()+120000) issue='The iPad clock was ahead of the server. Check the recorded time.';
+    if(Date.parse(event.captured_at)>Date.now()+120000) issue='The computer clock was ahead of the server. Check the recorded time.';
     const photoHash=createHash('sha256').update(bytes).digest('hex');
     const path=`payson/${event.employee_id}/offline-${event.id}-${photoHash}.jpg`;
     const bucket=db.storage.from('punch-photos');
@@ -64,6 +64,6 @@ export async function POST(request) {
     if(saved.data.punch) after(async()=>{try{await evaluatePunchAndSweep(getSupabaseServer(),saved.data.punch);}catch{console.error('Offline punch attendance evaluation failed.');}});
     return secureJson({ok:true,receipt:{id:event.id,status:saved.data.status}});
   } catch {
-    return secureJson({ok:false,error:'The Hub has not confirmed this punch yet. It is still saved on the iPad and will retry.'},{status:503});
+    return secureJson({ok:false,error:'The Hub has not confirmed this punch yet. It is still saved in the browser and will retry.'},{status:503});
   }
 }

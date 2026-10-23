@@ -34,7 +34,7 @@ self.addEventListener('fetch',event=>{
     event.respondWith((async()=>{
       const cache=await caches.open(CACHE),controller=new AbortController(),timer=setTimeout(()=>controller.abort(),4000);
       try{const response=await fetch(request,{signal:controller.signal});if(response.ok)return response;}catch{/* Use the last fully prepared shell. */}finally{clearTimeout(timer);}
-      return (await cache.match('/clock')) || new Response('Reconnect this iPad once to prepare the time clock.',{status:503,headers:{'Content-Type':'text/plain'}});
+      return (await cache.match('/clock')) || new Response('Reconnect this browser once to prepare the time clock.',{status:503,headers:{'Content-Type':'text/plain'}});
     })());
   }
 });

@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect } from "react";
+
 export const PIN_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "⌫"];
 
 export default function PinPad({
@@ -13,7 +15,26 @@ export default function PinPad({
   size = "default",
 }) {
   const kiosk = size === "kiosk";
+  const compact = size === "compact";
   const locked = loading || disabled;
+
+  useEffect(() => {
+    if (!compact) return;
+    function typePin(event) {
+      if (locked || event.ctrlKey || event.metaKey || event.altKey || event.repeat) return;
+      if (event.target?.closest?.('input, textarea, select, [contenteditable="true"]')) return;
+      const current = String(pin || "");
+      if (/^[0-9]$/.test(event.key)) {
+        event.preventDefault();
+        if (current.length < 4) onChange(current + event.key);
+      } else if (event.key === "Backspace") {
+        event.preventDefault();
+        onChange(current.slice(0, -1));
+      }
+    }
+    window.addEventListener("keydown", typePin);
+    return () => window.removeEventListener("keydown", typePin);
+  }, [compact, locked, onChange, pin]);
 
   function handleKey(key) {
     if (locked) return;
@@ -30,7 +51,7 @@ export default function PinPad({
       {title ? (
         <h2
           className={`text-center font-semibold text-zinc-900 dark:text-zinc-50 ${
-            kiosk ? "text-2xl" : "text-xl"
+            compact ? "text-lg" : kiosk ? "text-2xl" : "text-xl"
           }`}
         >
           {title}
@@ -43,7 +64,7 @@ export default function PinPad({
       ) : null}
 
       <div
-        className={`flex justify-center gap-3 ${kiosk ? "mt-8" : "mt-6"}`}
+        className={`flex justify-center gap-3 ${compact ? "mt-3" : kiosk ? "mt-8" : "mt-6"}`}
         aria-label="PIN entry progress"
       >
         {[0, 1, 2, 3].map((i) => (
@@ -62,14 +83,14 @@ export default function PinPad({
 
       {error ? (
         <p
-          className={`text-center font-medium text-red-600 ${kiosk ? "mt-5 text-base" : "mt-4 text-sm"}`}
+          className={`text-center font-medium text-red-600 ${compact ? "mt-2 text-sm" : kiosk ? "mt-5 text-base" : "mt-4 text-sm"}`}
           role="alert"
         >
           {error}
         </p>
       ) : null}
 
-      <div className={`grid grid-cols-3 gap-3 ${kiosk ? "mt-10" : "mt-8"}`}>
+      <div className={`grid grid-cols-3 ${compact ? "mt-3 gap-2" : kiosk ? "mt-10 gap-3" : "mt-8 gap-3"}`}>
         {PIN_KEYS.map((key, idx) =>
           key === "" ? (
             <div key={`sp-${idx}`} aria-hidden="true" />
@@ -80,7 +101,7 @@ export default function PinPad({
               disabled={locked}
               onClick={() => handleKey(key)}
               className={`flex items-center justify-center rounded-xl border border-zinc-200 bg-white font-semibold shadow-sm transition active:scale-95 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 ${
-                kiosk ? "min-h-[5.5rem] text-3xl" : "min-h-[4.5rem] text-2xl"
+                compact ? "h-12 text-xl" : kiosk ? "min-h-[5.5rem] text-3xl" : "min-h-[4.5rem] text-2xl"
               }`}
             >
               {key}
